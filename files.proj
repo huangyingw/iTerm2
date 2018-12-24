@@ -575,6 +575,7 @@
 "./ci/after_success.sh"
 "./ci/before_install.sh"
 "./ci/script.sh"
+"./error"
 "./iTerm2.entitlements"
 "./iTerm2.sdef"
 "./iTerm2.xcodeproj/project.pbxproj"
