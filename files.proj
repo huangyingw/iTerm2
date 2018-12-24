@@ -115,6 +115,7 @@
 "./OtherResources/image_decoder.sb"
 "./README.license"
 "./README.md"
+"./Scripts/AutoLaunch/move_current_tab.py"
 "./SignedArchive/.gitignore"
 "./SignedArchive/SignedArchive.xcodeproj/project.pbxproj"
 "./SignedArchive/SignedArchive.xcodeproj/project.xcworkspace/contents.xcworkspacedata"
