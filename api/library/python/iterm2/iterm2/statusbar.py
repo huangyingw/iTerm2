@@ -30,7 +30,12 @@ class CheckboxKnob:
     :param key: A unique string key identifying this knob.
     """
     def __init__(self, name, default_value, key):
-        self.__knob = Knob(iterm2.api_pb2.RPCRegistrationRequest.StatusBarComponentAttributes.Knob.Checkbox, name, "", json.dumps(default_value), key)
+        self.__knob = Knob(
+                iterm2.api_pb2.RPCRegistrationRequest.StatusBarComponentAttributes.Knob.Checkbox,
+                name,
+                "",
+                json.dumps(default_value),
+                key)
 
     def to_proto(self):
         return self.__knob.to_proto()
@@ -44,7 +49,12 @@ class StringKnob:
     :param key: A unique string key identifying this knob.
     """
     def __init__(self, name, placeholder, default_value, key):
-        self.__knob = Knob(iterm2.api_pb2.RPCRegistrationRequest.StatusBarComponentAttributes.Knob.Checkbox, name, placeholder, json.dumps(default_value), key)
+        self.__knob = Knob(
+                iterm2.api_pb2.RPCRegistrationRequest.StatusBarComponentAttributes.Knob.String,
+                name,
+                placeholder,
+                json.dumps(default_value),
+                key)
 
     def to_proto(self):
         return self.__knob.to_proto()
@@ -57,7 +67,12 @@ class PositiveFloatingPointKnob:
     :param key: A unique string key identifying this knob.
     """
     def __init__(self, name, default_value, key):
-        self.__knob = Knob(iterm2.api_pb2.RPCRegistrationRequest.StatusBarComponentAttributes.Knob.Checkbox, name, "", json.dumps(default_value), key)
+        self.__knob = Knob(
+                iterm2.api_pb2.RPCRegistrationRequest.StatusBarComponentAttributes.Knob.PositiveFloatingPoint,
+                name,
+                "",
+                json.dumps(default_value),
+                key)
 
     def to_proto(self):
         return self.__knob.to_proto()
@@ -70,7 +85,11 @@ class ColorKnob:
     :param key: A unique string key identifying this knob
     """
     def __init__(self, name, default_value, key):
-        self.__knob = Knob(iterm2.api_pb2.RPCRegistrationRequest.StatusBarComponentAttributes.Knob.Checkbox, name, "", default_value.json, key)
+        self.__knob = Knob(
+                iterm2.api_pb2.RPCRegistrationRequest.StatusBarComponentAttributes.Knob.Color,
+                name,
+                "",
+                default_value.json, key)
 
     def to_proto(self):
         return self.__knob.to_proto()
@@ -79,7 +98,6 @@ class ColorKnob:
 class StatusBarComponent:
     """Describes a script-provided status bar component showing a text value provided by a user-provided coroutine.
 
-    :param name: A unique name for this component.
     :param short_description: Short description shown below the component in the picker UI.
     :param detailed_description: Tool tip for th component in the picker UI.
     :param knobs: List of configuration knobs. See the various Knob classes for details.
@@ -87,10 +105,9 @@ class StatusBarComponent:
     :param update_cadence: How frequently in seconds to reload the value, or `None` if it does not need to be reloaded on a timer.
     :param identifier: A string uniquely identifying this component. Use a backwards domain name. For example, `com.example.calculator` for a calculator component provided by example.com.
     """
-    def __init__(self, name, short_description, detailed_description, knobs, exemplar, update_cadence, identifier):
+    def __init__(self, short_description, detailed_description, knobs, exemplar, update_cadence, identifier):
         """Initializes a status bar component.
         """
-        self.__name = name
         self.__short_description = short_description
         self.__detailed_description = detailed_description
         self.__knobs = knobs
@@ -98,10 +115,6 @@ class StatusBarComponent:
         self.__update_cadence = update_cadence
         self.__identifier = identifier
         self.__on_click = None
-
-    @property
-    def name(self):
-        return self.__name
 
     def set_fields_in_proto(self, proto):
         proto.short_description = self.__short_description
@@ -143,14 +156,12 @@ class StatusBarComponent:
         :param defaults: Gives default values. Names correspond to argument names in `arguments`. Values are in-scope variables of the session owning the status bar.
         """
         self.__connection = connection
-        await iterm2.registration.Registration.async_register_status_bar_component(
-                connection,
-                self,
-                coro,
-                timeout,
-                defaults)
+        await coro.async_register(connection, self)
         if self.__on_click:
-            await iterm2.registration.Registration.async_register_rpc_handler(
-                    connection,
-                    "__" + self.__identifier.replace(".", "_").replace("-", "_") + "__on_click",
-                    self.__on_click)
+            magic_name = "__" + self.__identifier.replace(".", "_").replace("-", "_") + "__on_click"
+            async def handle_rpc(session_id):
+                await self.__on_click(session_id)
+            handle_rpc.__name__ = magic_name
+            # This is an abuse of the RPC decorator, but it's a simple way to
+            # register a function with a modified name.
+            await iterm2.registration.RPC(handle_rpc).async_register(connection)

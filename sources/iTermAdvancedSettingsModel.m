@@ -9,49 +9,10 @@
 #import <Foundation/Foundation.h>
 
 #import "iTermAdvancedSettingsModel.h"
+#import "iTermUserDefaultsObserver.h"
 #import "NSApplication+iTerm.h"
 #import "NSStringITerm.h"
 #import <objc/runtime.h>
-
-static char iTermAdvancedSettingsModelKVOKey;
-
-@interface iTermAdvancedSettingsModelChangeObserver: NSObject
-- (void)observeKey:(NSString *)key block:(void (^)(void))block;
-@end
-
-@implementation iTermAdvancedSettingsModelChangeObserver {
-    NSMutableDictionary<NSString *, void (^)(void)> *_blocks;
-}
-
-- (instancetype)init {
-    self = [super init];
-    if (self) {
-        _blocks = [NSMutableDictionary dictionary];
-    }
-    return self;
-}
-
-- (void)observeKey:(NSString *)key block:(void (^)(void))block {
-    _blocks[key] = [block copy];
-    [[NSUserDefaults standardUserDefaults] addObserver:self
-                                            forKeyPath:key
-                                               options:NSKeyValueObservingOptionNew
-                                               context:(void *)&iTermAdvancedSettingsModelKVOKey];
-}
-
-// This is called when user defaults are changed anywhere.
-- (void)observeValueForKeyPath:(NSString *)keyPath
-                      ofObject:(id)object
-                        change:(NSDictionary *)change
-                       context:(void *)context {
-    if (context == &iTermAdvancedSettingsModelKVOKey) {
-        void (^block)(void) = _blocks[keyPath];
-        if (block) {
-            block();
-        }
-    }
-}
-@end
 
 
 NSString *const kAdvancedSettingIdentifier = @"kAdvancedSettingIdentifier";
@@ -340,7 +301,7 @@ DEFINE_BOOL(hideStuckTooltips, YES, SECTION_GENERAL @"Hide stuck tooltips.\nWhen
 DEFINE_BOOL(openFileOverridesSendText, YES, SECTION_GENERAL @"Should opening a script with iTerm2 disable the default profile's “Send Text at Start” setting?\nIf you use “open iTerm2 file.command” or drag a script onto iTerm2's icon and this setting is enabled then the script will be executed in lieu of the profile's “Send Text at Start” setting. If this setting is off then both will be executed.");
 DEFINE_BOOL(statusBarIcon, YES, SECTION_GENERAL @"Add status bar icon when excluded from dock?\nWhen you turn on “Exclude from Dock and ⌘-Tab Application Switcher” a status bar icon is added to the menu bar so you can switch the setting back off. Disable this to remove the status bar icon. Doing so makes it very hard to get to Preferences. You must restart iTerm2 after changing this setting.");
 DEFINE_BOOL(wrapFocus, YES, SECTION_GENERAL @"Should split pane navigation by direction wrap around?");
-DEFINE_BOOL(openUntitledFile, YES, SECTION_GENERAL @"Open a new window when you click the dock icon and no windows are already open?");
+DEFINE_BOOL(openUntitledFile, YES, SECTION_GENERAL @"Open a new window when you click the dock icon and no windows are already open, and also on app launch when no other windows are open?");
 DEFINE_BOOL(openNewWindowAtStartup, YES, SECTION_GENERAL @"Open a window at startup?\nThis is useful if you wish to use the system window restoration settings but not create a new window if none would be restored.");
 DEFINE_FLOAT(timeToWaitForEmojiPanel, 1, SECTION_GENERAL @"How long to wait for the emoji panel to open in seconds?\nFloating hotkey windows adjust their level when the emoji panel is open. If it’s really slow you might need to increase this value to prevent it from appearing beneath a floating hotkey window.");
 DEFINE_FLOAT(timeoutForStringEvaluation, 10, SECTION_GENERAL @"Timeout (seconds) for evaluating RPCs.\nThis applies to invoking functions registered by scripts when using the Swift syntax for inline expressions.");
@@ -349,7 +310,7 @@ DEFINE_STRING(pathToTelnet, @"telnet", SECTION_GENERAL @"Path to telnet for open
 DEFINE_STRING(fallbackLCCType, @"", SECTION_GENERAL @"Value to set LC_CTYPE to if the machine‘s combination of country and language are not supported.\nIf unset, the encoding (e.g., UTF-8) will be used.");
 // See issue 6994
 DEFINE_BOOL(useVirtualKeyCodesForDetectingDigits, NO, SECTION_GENERAL @"Treat the top row of keys like number keys on an English keyboard for the purposes of switching panes, tabs, and windows with modifier+number.\nFor example, AZERTY requires you to hold down Shift to enter a number. To switch tabs with ⌘+Number on an AZERTY keyboard, you must enable this setting. Then, for example, ⌘-& switches to tab 1. When this setting is enabled, some user-defined shortcuts may become unavailable because the tab/window/pane switching behavior takes precedence.");
-DEFINE_BOOL(hotkeyWindowsExcludedFromCycling, YES, SECTION_GENERAL @"Hotkey windows are excluded from Cycle Through Windows.");
+DEFINE_BOOL(hotkeyWindowsExcludedFromCycling, NO, SECTION_GENERAL @"Hotkey windows are excluded from Cycle Through Windows.");
 
 #pragma mark - Drawing
 
@@ -436,6 +397,7 @@ DEFINE_BOOL(noSyncNewWindowFromTmuxOpensTmux, NO, SECTION_TMUX @"Suppress alert 
 DEFINE_BOOL(noSyncNewTabFromTmuxOpensTmux, NO, SECTION_TMUX @"Suppress alert asking what kind of tab to open in tmux integration.\nNOTE: This only takes effect if the now-deprecated “Suppress alert asking what kind of tab/window to open in tmux integration” setting is off.");
 DEFINE_BOOL(tmuxUsesDedicatedProfile, YES, SECTION_TMUX @"Tmux always uses the “tmux” profile.\nIf disabled, tmux sessions use the profile of the session you ran tmux -CC in.");
 DEFINE_BOOL(tolerateUnrecognizedTmuxCommands, NO, SECTION_TMUX @"Tolerate unrecognized commands from server.\nIf enabled, an unknown command from tmux (such as output from ssh or wall) will end the session. Turning this off helps detect dead ssh sessions.");
+DEFINE_BOOL(useTmuxStatusBar, YES, SECTION_TMUX @"Always use the tmux status bar in tmux integration mode.");
 
 #pragma mark Warnings
 
@@ -544,8 +506,8 @@ DEFINE_STRING(pythonRuntimeDownloadURL, @"https://iterm2.com/downloads/pyenv/man
 
 + (void)initialize {
     if (self == [iTermAdvancedSettingsModel self]) {
-        static iTermAdvancedSettingsModelChangeObserver *observer;
-        observer = [[iTermAdvancedSettingsModelChangeObserver alloc] init];
+        static iTermUserDefaultsObserver *observer;
+        observer = [[iTermUserDefaultsObserver alloc] init];
         [self enumerateMethods:^(Method method, SEL selector) {
             NSString *name = NSStringFromSelector(selector);
             if ([name hasPrefix:@"load_"]) {

@@ -123,6 +123,9 @@ NS_ASSUME_NONNULL_BEGIN
     NSMutableDictionary<NSString *, NSMenu *> *submenus = [NSMutableDictionary dictionary];
     NSSet<NSString *> *scriptExtensions = [NSSet setWithArray:@[ @"scpt", @"app", @"py" ]];
     for (NSString *file in directoryEnumerator) {
+        if ([file caseInsensitiveCompare:@".DS_Store"] == NSOrderedSame) {
+            continue;
+        }
         NSString *path = [root stringByAppendingPathComponent:file];
         BOOL isDirectory = NO;
         [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDirectory];
@@ -131,13 +134,13 @@ NS_ASSUME_NONNULL_BEGIN
             if ([workspace isFilePackageAtPath:path] ||
                 [iTermAPIScriptLauncher environmentForScript:path checkForMain:NO]) {
                 [files addObject:file];
-            } else {
-                NSMenu *submenu = [[NSMenu alloc] initWithTitle:file];
-                submenus[file] = submenu;
-                [self addMenuItemsAt:path toMenu:submenu];
-                if (submenu.itemArray.count == 0) {
-                    [submenus removeObjectForKey:file];
-                }
+                continue;
+            }
+            NSMenu *submenu = [[NSMenu alloc] initWithTitle:file];
+            submenus[file] = submenu;
+            [self addMenuItemsAt:path toMenu:submenu];
+            if (submenu.itemArray.count == 0) {
+                [submenus removeObjectForKey:file];
             }
         } else if ([scriptExtensions containsObject:[file pathExtension]]) {
             [files addObject:file];
@@ -193,8 +196,11 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)chooseAndExportScript {
     [iTermScriptChooser chooseWithValidator:^BOOL(NSURL *url) {
         return [iTermScriptExporter urlIsScript:url];
-    } completion:^(NSURL *url) {
-        [iTermScriptExporter exportScriptAtURL:url completion:^(NSString *errorMessage, NSURL *zipURL) {
+    } completion:^(NSURL *url, SIGIdentity *signingIdentity) {
+        if (!url) {
+            return;
+        }
+        [iTermScriptExporter exportScriptAtURL:url signingIdentity:signingIdentity completion:^(NSString *errorMessage, NSURL *zipURL) {
             if (errorMessage || !zipURL) {
                 NSAlert *alert = [[NSAlert alloc] init];
                 alert.messageText = @"Export Failed";
@@ -210,7 +216,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (void)chooseAndImportScript {
     NSOpenPanel *panel = [[NSOpenPanel alloc] init];
-    panel.allowedFileTypes = @[ @"zip" ];
+    panel.allowedFileTypes = @[ @"zip", @"itermscript" ];
     if ([panel runModal] == NSModalResponseOK) {
         NSURL *url = panel.URL;
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -221,6 +227,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (void)importFromURL:(NSURL *)url {
     [iTermScriptImporter importScriptFromURL:url
+                               userInitiated:YES
                                   completion:^(NSString * _Nullable errorMessage) {
                                       // Mojave deadlocks if you do this without the dispatch_async
                                       dispatch_async(dispatch_get_main_queue(), ^{
@@ -272,7 +279,8 @@ NS_ASSUME_NONNULL_BEGIN
         NSString *name = fullPath.lastPathComponent;
         NSString *mainPyPath = [[[fullPath stringByAppendingPathComponent:name] stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"py"];
         [iTermAPIScriptLauncher launchScript:mainPyPath
-                              withVirtualEnv:venv];
+                              withVirtualEnv:venv
+                                 setupPyPath:[[fullPath stringByAppendingPathComponent:name] stringByAppendingPathComponent:@"setup.py"]];
         return;
     }
 
@@ -325,18 +333,22 @@ NS_ASSUME_NONNULL_BEGIN
     NSArray<NSString *> *dependencies = nil;
     NSURL *url = [self runSavePanelForNewScriptWithPicker:picker dependencies:&dependencies];
     if (url) {
-        [[iTermPythonRuntimeDownloader sharedInstance] downloadOptionalComponentsIfNeededWithConfirmation:YES withCompletion:^(BOOL ok) {
+#warning TODO: Make it possible to pick a python version
+        [[iTermPythonRuntimeDownloader sharedInstance] downloadOptionalComponentsIfNeededWithConfirmation:YES
+                                                                                            pythonVersion:nil
+                                                                                           withCompletion:^(BOOL ok) {
             if (!ok) {
                 return;
             }
-            [self reallyCreateNewPythonScriptAtURL:url picker:picker dependencies:dependencies];
+            [self reallyCreateNewPythonScriptAtURL:url picker:picker dependencies:dependencies pythonVersion:nil];
         }];
     }
 }
 
 - (void)reallyCreateNewPythonScriptAtURL:(NSURL *)url
                                   picker:(iTermScriptTemplatePickerWindowController *)picker
-                            dependencies:(NSArray<NSString *> *)dependencies {
+                            dependencies:(NSArray<NSString *> *)dependencies
+                           pythonVersion:(nullable NSString *)pythonVersion {
     if (picker.selectedEnvironment == iTermScriptEnvironmentPrivateEnvironment) {
         NSURL *folder = [NSURL fileURLWithPath:[self folderForFullEnvironmentSavePanelURL:url]];
         NSURL *existingEnv = [folder URLByAppendingPathComponent:@"iterm2env"];
@@ -349,7 +361,7 @@ NS_ASSUME_NONNULL_BEGIN
                                                                      [pleaseWait.window makeKeyAndOrderFront:nil];
                                                                  }];
         _disablePathWatcher++;
-        [[iTermPythonRuntimeDownloader sharedInstance] installPythonEnvironmentTo:folder dependencies:dependencies completion:^(BOOL ok) {
+        [[iTermPythonRuntimeDownloader sharedInstance] installPythonEnvironmentTo:folder pythonVersion:pythonVersion dependencies:dependencies createSetupPy:YES completion:^(BOOL ok) {
             [[NSNotificationCenter defaultCenter] removeObserver:token];
             [pleaseWait.window close];
             if (!ok) {
@@ -542,7 +554,7 @@ NS_ASSUME_NONNULL_BEGIN
     }
     return [self relativePathFrom:possibleSuper
                            toPath:[possibleSub stringByDeletingLastPathComponent]
-                         relative:[relative stringByAppendingPathComponent:possibleSub.lastPathComponent]];
+                         relative:[possibleSub.lastPathComponent stringByAppendingPathComponent:relative]];
 }
 
 - (NSString *)folderForFullEnvironmentSavePanelURL:(NSURL *)url {
@@ -583,7 +595,7 @@ NS_ASSUME_NONNULL_BEGIN
     if (picker.selectedEnvironment == iTermScriptEnvironmentPrivateEnvironment) {
         fullPath = [iTermAPIScriptLauncher prospectivePythonPathForPyenvScriptNamed:url.lastPathComponent];
     } else {
-        fullPath = [[iTermPythonRuntimeDownloader sharedInstance] pathToStandardPyenvPython];
+        fullPath = [[iTermPythonRuntimeDownloader sharedInstance] pathToStandardPyenvPythonWithPythonVersion:nil];
     }
     return fullPath;
 }
@@ -649,8 +661,15 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (void)runModernAutoLaunchScripts {
     NSString *scriptsPath = [[NSFileManager defaultManager] autolaunchScriptPath];
-    for (NSString *file in [[NSFileManager defaultManager] enumeratorAtPath:scriptsPath]) {
+    NSDirectoryEnumerator *enumerator = [[NSFileManager defaultManager] enumeratorAtPath:scriptsPath];
+    for (NSString *file in enumerator) {
+        if ([file caseInsensitiveCompare:@".DS_Store"] == NSOrderedSame) {
+            continue;
+        }
         NSString *path = [scriptsPath stringByAppendingPathComponent:file];
+        if ([[NSFileManager defaultManager] itemIsDirectory:path]) {
+            [enumerator skipDescendants];
+        }
         [self runAutoLaunchScript:path];
     }
 }

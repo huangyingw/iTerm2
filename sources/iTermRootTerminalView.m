@@ -281,13 +281,20 @@ static const CGFloat kMaximumToolbeltSizeAsFractionOfWindow = 0.5;
         return;
     }
     [self didChangeCompactness];
+    for (int i = 0; i < self.numberOfWindowButtons; i++) {
+        NSButton *button = _standardButtons[@(self.windowButtonTypes[i])];
+        if (self.windowButtonTypes[i] == NSWindowZoomButton) {
+            button.target = _standardWindowButtonsView;
+            button.action = @selector(zoomButtonEvent);
+        } else {
+            button.target = self.window;
+        }
+    }
 }
 
 - (void)didChangeCompactness {
     id<PTYWindow> ptyWindow = self.window.ptyWindow;
-    const BOOL needCustomButtons = (ptyWindow.isCompact &&
-                                    !self.delegate.anyFullScreen &&
-                                    !self.delegate.enteringLionFullscreen);
+    const BOOL needCustomButtons = (ptyWindow.isCompact && [self.delegate rootTerminalViewShouldDrawStoplightButtons]);
     if (!needCustomButtons) {
         [_standardWindowButtonsView removeFromSuperview];
         _standardWindowButtonsView = nil;
@@ -313,12 +320,7 @@ static const CGFloat kMaximumToolbeltSizeAsFractionOfWindow = 0.5;
         frame.origin.x = x;
         frame.origin.y = 4;
         button.frame = frame;
-        
-        if (self.windowButtonTypes[i] == NSWindowZoomButton) {
-            button.target = _standardWindowButtonsView;
-            button.action = @selector(zoomButtonEvent);
-        }
-        
+
         [_standardWindowButtonsView addSubview:button];
         _standardButtons[@(self.windowButtonTypes[i])] = button;
         x += stride;
@@ -336,6 +338,7 @@ static const CGFloat kMaximumToolbeltSizeAsFractionOfWindow = 0.5;
         
         [_standardWindowButtonsView setOptionModifier:optionKey];
     }
+    [super flagsChanged:event];
 }
 
 - (void)drawRect:(NSRect)dirtyRect {

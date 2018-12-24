@@ -5,6 +5,7 @@ import iterm2.app
 import iterm2.rpc
 import iterm2.session
 import iterm2.tab
+import iterm2.transaction
 import iterm2.util
 
 class CreateTabException(Exception):
@@ -54,7 +55,9 @@ class Window:
             profile_customizations=custom_dict)
         ctr = result.create_tab_response
         if ctr.status == iterm2.api_pb2.CreateTabResponse.Status.Value("OK"):
-            app = await iterm2.app.async_get_app(connection)
+            app = await iterm2.app.async_get_app(connection, False)
+            if not app:
+                return await Window._async_load(connection, ctr.window_id)
             session = app.get_session_by_id(ctr.session_id)
             window, _tab = app.get_tab_and_window_for_session(session)
             return window
@@ -62,6 +65,31 @@ class Window:
             raise CreateWindowException(
                 iterm2.api_pb2.CreateTabResponse.Status.Name(
                     result.create_tab_response.status))
+
+    @staticmethod
+    async def _async_load(connection, window_id):
+        response = await iterm2.rpc.async_list_sessions(connection)
+        list_sessions_response = response.list_sessions_response
+        for window in list_sessions_response.windows:
+            if window.window_id == window_id:
+                return Window.create_from_proto(connection, window)
+        return None
+
+    @staticmethod
+    def create_from_proto(connection, window):
+        tabs = []
+        for tab in window.tabs:
+            root = iterm2.session.Splitter.from_node(tab.root, connection)
+            if tab.HasField("tmux_window_id"):
+                tmux_window_id = tab.tmux_window_id
+            else:
+                tmux_window_id = None
+            tabs.append(iterm2.tab.Tab(connection, tab.tab_id, root, tmux_window_id, tab.tmux_connection_id))
+
+        if not tabs:
+            return None
+
+        return iterm2.window.Window(connection, window.window_id, tabs, window.frame, window.number)
 
     """Represents an iTerm2 window."""
     def __init__(self, connection, window_id, tabs, frame, number):
@@ -144,6 +172,8 @@ class Window:
 
     async def async_create_tmux_tab(self, tmux_connection):
         """Creates a new tmux tab in this window.
+
+        This may not be called from within a :class:`iterm2.Transaction`.
 
         :param tmux_connection: A :class:`TmuxConnection` that owns the new tab.
 
@@ -282,6 +312,19 @@ class Window:
             False,
             True,
             window_id=self.__window_id)
+
+    async def async_close(self, force=False):
+        """
+        Closes the window.
+
+        :param force: If True, the user will not be prompted for a confirmation.
+
+        :throws: :class:`RPCException` if something goes wrong.
+        """
+        result = await iterm2.rpc.async_close(self.connection, windows=[self.__window_id], force=force)
+        status = result.close_response.statuses[0]
+        if status != iterm2.api_pb2.CloseResponse.Status.Value("OK"):
+            raise iterm2.rpc.RPCException(iterm2.api_pb2.CloseResponse.Status.Name(status))
 
     async def async_save_window_as_arrangement(self, name):
         """Save the current window as a new arrangement.

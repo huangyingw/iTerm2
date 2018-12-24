@@ -427,8 +427,13 @@ static NSDate* lastResizeDate_;
     }
 }
 
+- (void)tabColorDidChange {
+    [_title updateBackgroundColor];
+}
+
 - (void)setNeedsDisplay:(BOOL)needsDisplay {
     [super setNeedsDisplay:needsDisplay];
+    [_title updateBackgroundColor];
     if (@available(macOS 10.11, *)) {
         if (needsDisplay) {
             [_metalView setNeedsDisplay:YES];
@@ -532,6 +537,10 @@ static NSDate* lastResizeDate_;
         [self updateMetalViewFrame];
     }
     DLog(@"After:\n%@", [self iterm_recursiveDescription]);
+}
+
+- (void)didBecomeVisible {
+    [[self.delegate sessionViewStatusBarViewController] updateColors];
 }
 
 - (void)updateMetalViewFrame {

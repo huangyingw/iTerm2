@@ -11,17 +11,23 @@ from iterm2.color import Color
 
 from iterm2.colorpresets import ColorPreset, ListPresetsException, GetPresetException
 
+from iterm2.customcontrol import CustomControlSequenceMonitor
+
 from iterm2.focus import FocusMonitor,  FocusUpdateApplicationActive, FocusUpdateWindowChanged, FocusUpdateSelectedTabChanged, FocusUpdateActiveSessionChanged, FocusUpdate, FocusMonitor
+
+from iterm2.lifecycle import SessionTerminationMonitor, LayoutChangeMonitor, NewSessionMonitor
 
 from iterm2.mainmenu import MenuItemState, MainMenu, MenuItemException
 
-from iterm2.notifications import async_unsubscribe, async_subscribe_to_new_session_notification, async_subscribe_to_keystroke_notification, async_subscribe_to_screen_update_notification, async_subscribe_to_prompt_notification, async_subscribe_to_location_change_notification, async_subscribe_to_custom_escape_sequence_notification, async_subscribe_to_terminate_session_notification, async_subscribe_to_layout_change_notification, async_subscribe_to_focus_change_notification, RPC_ROLE_GENERIC, RPC_ROLE_SESSION_TITLE, KeystrokePattern, MODIFIER_CONTROL, MODIFIER_OPTION, MODIFIER_COMMAND, MODIFIER_SHIFT, MODIFIER_FUNCTION, MODIFIER_NUMPAD
+from iterm2.keyboard import Modifier, Keycode, Keystroke, KeystrokePattern, KeystrokeMonitor, KeystrokeFilter
 
 from iterm2.preferences import PreferenceKeys, async_get_preference
 
 from iterm2.profile import Profile, PartialProfile, BadGUIDException, LocalWriteOnlyProfile
 
-from iterm2.registration import Registration
+from iterm2.prompt import PromptMonitor
+
+from iterm2.registration import RPC, TitleProviderRPC, StatusBarRPC, Reference
 
 from iterm2.screen import ScreenStreamer, LineContents, ScreenContents
 

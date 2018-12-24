@@ -55,7 +55,7 @@
 #import "iTermModifierRemapper.h"
 #import "iTermPreferences.h"
 #import "iTermPythonRuntimeDownloader.h"
-#import "iTermRemotePreferences.h"
+#import "iTermScriptImporter.h"
 #import "iTermAdvancedSettingsModel.h"
 #import "iTermOpenQuicklyWindowController.h"
 #import "iTermOrphanServerAdopter.h"
@@ -72,6 +72,7 @@
 #import "iTermQuickLookController.h"
 #import "iTermRemotePreferences.h"
 #import "iTermRestorableSession.h"
+#import "iTermRemotePreferences.h"
 #import "iTermScriptsMenuController.h"
 #import "iTermSystemVersion.h"
 #import "iTermTipController.h"
@@ -162,9 +163,6 @@ static BOOL hasBecomeActive = NO;
     IBOutlet NSMenuItem *logStop;
     IBOutlet NSMenuItem *closeTab;
     IBOutlet NSMenuItem *closeWindow;
-    IBOutlet NSMenuItem *sendInputToAllSessions;
-    IBOutlet NSMenuItem *sendInputToAllPanes;
-    IBOutlet NSMenuItem *sendInputNormally;
     IBOutlet NSMenuItem *irPrev;
     IBOutlet NSMenuItem *windowArrangements_;
     IBOutlet NSMenuItem *windowArrangementsAsTabs_;
@@ -216,6 +214,8 @@ static BOOL hasBecomeActive = NO;
         iTermUntitledFileOpenComplete,
         iTermUntitledFileOpenDisallowed
     } _untitledFileOpenStatus;
+    
+    BOOL _disableTermination;
 }
 
 - (instancetype)init {
@@ -531,34 +531,6 @@ static BOOL hasBecomeActive = NO;
     return [uploadsMenu_ submenu];
 }
 
-- (void)updateBroadcastMenuState {
-    BOOL sessions = NO;
-    BOOL panes = NO;
-    BOOL noBroadcast = NO;
-    PseudoTerminal *frontTerminal;
-    frontTerminal = [[iTermController sharedInstance] currentTerminal];
-    switch ([frontTerminal broadcastMode]) {
-        case BROADCAST_OFF:
-            noBroadcast = YES;
-            break;
-
-        case BROADCAST_TO_ALL_TABS:
-            sessions = YES;
-            break;
-
-        case BROADCAST_TO_ALL_PANES:
-            panes = YES;
-            break;
-
-        case BROADCAST_CUSTOM:
-            break;
-    }
-    [sendInputToAllSessions setState:sessions];
-    [sendInputToAllPanes setState:panes];
-    [sendInputNormally setState:noBroadcast];
-}
-
-
 #pragma mark - Application Delegate Overrides
 
 /**
@@ -574,6 +546,23 @@ static BOOL hasBecomeActive = NO;
  */
 - (BOOL)application:(NSApplication *)theApplication openFile:(NSString *)filename {
     DLog(@"application:%@ openFile:%@", theApplication, filename);
+    if ([[filename pathExtension] isEqualToString:@"itermscript"]) {
+        [iTermScriptImporter importScriptFromURL:[NSURL fileURLWithPath:filename]
+                                   userInitiated:NO
+                                      completion:^(NSString * _Nullable errorMessage) {
+                                          if (errorMessage) {
+                                              NSAlert *alert = [[NSAlert alloc] init];
+                                              alert.messageText = @"Script Not Installed";
+                                              alert.informativeText = errorMessage;
+                                              [alert runModal];
+                                          } else {
+                                              NSAlert *alert = [[NSAlert alloc] init];
+                                              alert.messageText = @"Script Imported Successfully";
+                                              [alert runModal];
+                                          }
+                                      }];
+        return YES;
+    }
     if ([filename hasSuffix:@".itermcolors"]) {
         DLog(@"Importing color presets from %@", filename);
         if ([iTermColorPresets importColorPresetFromFile:filename]) {
@@ -683,10 +672,28 @@ static BOOL hasBecomeActive = NO;
                afterDelay:[iTermAdvancedSettingsModel updateScreenParamsDelay]];
 }
 
+- (void)didToggleTraditionalFullScreenMode {
+    // LOL
+    // When you have only one window, and you do windowController.window = something new
+    // then it thinks you closed the only window and asks if you want to terminate the
+    // app. We run into this problem with compact windows, as other window types are
+    // able to simply change the window style without actually replacing the window.
+    // This awful hack catches that case. It takes two spins of the runloop because
+    // everything is terrible.
+    _disableTermination = YES;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        dispatch_async(dispatch_get_main_queue(), ^{
+            _disableTermination = NO;
+        });
+    });
+}
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSNotification *)theNotification {
     DLog(@"applicationShouldTerminate:");
     NSArray *terminals;
-
+    if (_disableTermination) {
+        return NSTerminateCancel;
+    }
+    
     terminals = [[iTermController sharedInstance] terminals];
     int numSessions = 0;
 
@@ -919,7 +926,19 @@ static BOOL hasBecomeActive = NO;
         if (hotkeyWindowsStates) {
             // We have to create the hotkey window now because we need to attach to servers before
             // launch finishes; otherwise any running hotkey window jobs will be treated as orphans.
-            [[iTermHotKeyController sharedInstance] createHiddenWindowsFromRestorableStates:hotkeyWindowsStates];
+            const NSInteger count = [[iTermHotKeyController sharedInstance] createHiddenWindowsFromRestorableStates:hotkeyWindowsStates];
+            if (count > 0) {
+                switch (_untitledFileOpenStatus) {
+                    case iTermUntitledFileOpenUnsafe:
+                    case iTermUntitledFileOpenAllowed:
+                    case iTermUntitledFileOpenDisallowed:
+                        _untitledFileOpenStatus = iTermUntitledFileOpenDisallowed;
+                        break;
+                    case iTermUntitledFileOpenPending:
+                    case iTermUntitledFileOpenComplete:
+                        break;
+                }
+            }
         } else {
             // Restore hotkey window from pre-3.1 version.
             legacyState = [coder decodeObjectForKey:kHotkeyWindowRestorableState];
@@ -1037,7 +1056,7 @@ static BOOL hasBecomeActive = NO;
     BOOL highContrast = NO;
     BOOL minimal = NO;
 
-    switch ([iTermPreferences intForKey:kPreferenceKeyTabStyle]) {
+    switch ((iTermPreferencesTabStyle)[iTermPreferences intForKey:kPreferenceKeyTabStyle]) {
         case TAB_STYLE_DARK:
             dark = YES;
             break;
@@ -2088,7 +2107,9 @@ static BOOL hasBecomeActive = NO;
 }
 
 - (IBAction)installPythonRuntime:(id)sender {  // Explicit request from menu item
-    [[iTermPythonRuntimeDownloader sharedInstance] downloadOptionalComponentsIfNeededWithConfirmation:NO withCompletion:^(BOOL ok) {}];
+    [[iTermPythonRuntimeDownloader sharedInstance] downloadOptionalComponentsIfNeededWithConfirmation:NO
+                                                                                        pythonVersion:nil
+                                                                                       withCompletion:^(BOOL ok) {}];
 }
 
 - (IBAction)buildScriptMenu:(id)sender {
@@ -2097,14 +2118,16 @@ static BOOL hasBecomeActive = NO;
 }
 
 - (IBAction)openREPL:(id)sender {
-    [[iTermPythonRuntimeDownloader sharedInstance] downloadOptionalComponentsIfNeededWithConfirmation:YES withCompletion:^(BOOL ok) {
+    [[iTermPythonRuntimeDownloader sharedInstance] downloadOptionalComponentsIfNeededWithConfirmation:YES
+                                                                                        pythonVersion:nil
+                                                                                       withCompletion:^(BOOL ok) {
         if (!ok) {
             return;
         }
         if (![iTermAPIHelper sharedInstance]) {
             return;
         }
-        NSString *command = [[[[[iTermPythonRuntimeDownloader sharedInstance] pathToStandardPyenvPython] stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"apython"] stringWithEscapedShellCharactersIncludingNewlines:YES];
+        NSString *command = [[[[[iTermPythonRuntimeDownloader sharedInstance] pathToStandardPyenvPythonWithPythonVersion:nil] stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"apython"] stringWithEscapedShellCharactersIncludingNewlines:YES];
         NSURL *bannerURL = [[NSBundle mainBundle] URLForResource:@"repl_banner" withExtension:@"txt"];
         command = [command stringByAppendingFormat:@" --banner=\"`cat %@`\"", bannerURL.path];
         NSString *cookie = [[iTermWebSocketCookieJar sharedInstance] newCookie];
@@ -2229,6 +2252,10 @@ static BOOL hasBecomeActive = NO;
             return @"most of the window is not visible.";
         case iTermMetalUnavailableReasonContextAllocationFailure:
             return @"of a temporary failure to allocate a graphics context.";
+        case iTermMetalUnavailableReasonTabDragInProgress:
+            return @"a tab is being dragged.";
+        case iTermMetalUnavailableReasonSessionHasNoWindow:
+            return @"the current session has no window (this shouldn't happen).";
     }
 
     return @"of an internal error. Please file a bug report!";
@@ -2429,13 +2456,17 @@ static BOOL hasBecomeActive = NO;
 
 #pragma mark - iTermPasswordManagerDelegate
 
-- (void)iTermPasswordManagerEnterPassword:(NSString *)password {
+- (void)iTermPasswordManagerEnterPassword:(NSString *)password broadcast:(BOOL)broadcast {
   [[[[iTermController sharedInstance] currentTerminal] currentSession] enterPassword:password];
 }
 
 - (BOOL)iTermPasswordManagerCanEnterPassword {
   PTYSession *session = [[[iTermController sharedInstance] currentTerminal] currentSession];
   return session && ![session exited];
+}
+
+- (BOOL)iTermPasswordManagerCanBroadcast {
+    return NO;
 }
 
 - (void)currentSessionDidChange {

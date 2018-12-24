@@ -65,7 +65,6 @@ extern NSString *const iTermDidToggleSecureInputNotification;
 
 - (void)updateMaximizePaneMenuItem;
 - (void)updateUseTransparencyMenuItem;
-- (void)updateBroadcastMenuState;
 
 - (void)makeHotKeyWindowKeyIfOpen;
 
@@ -74,6 +73,7 @@ extern NSString *const iTermDidToggleSecureInputNotification;
 
 - (void)openPasswordManagerToAccountName:(NSString *)name inSession:(PTYSession *)session;
 - (void)updateBuriedSessionsMenu;
+- (void)didToggleTraditionalFullScreenMode;
 
 #pragma mark - Actions
 
