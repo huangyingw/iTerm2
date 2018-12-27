@@ -31,11 +31,13 @@ Visit the :ref:`examples <examples-index>` for a collection of working examples.
    broadcast
    color
    colorpresets
+   customcontrol
    connection
    focus
    keyboard
    lifecycle
    mainmenu
+   preferences
    profile
    prompt
    registration
