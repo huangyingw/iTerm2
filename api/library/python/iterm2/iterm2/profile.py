@@ -779,6 +779,7 @@ class WriteOnlyProfile:
     """A profile that can be modified but not read. Useful for changing many
     sessions' profiles at once without knowing what they are."""
     def __init__(self, session_id, connection, guid=None):
+        assert session_id != "all"
         self.connection = connection
         self.session_id = session_id
         self.__guid = guid
@@ -1578,9 +1579,9 @@ class Profile(WriteOnlyProfile):
     def get_color_with_key(self, key):
         """Returns the color for the request key, or None.
 
-        :param key: A string describing the color. Corresponds to the keys in :class:`iterm2.ColorPreset.Color`.
+        :param key: A string describing the color. Corresponds to the keys in :class:`~iterm2.ColorPreset.Color`.
 
-        :returns: Either a :class:`iterm2.color.Color` or `None`.
+        :returns: Either a :class:`~iterm2.color.Color` or `None`.
         """
         try:
             color = iterm2.color.Color()

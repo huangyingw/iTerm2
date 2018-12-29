@@ -47,6 +47,7 @@
 NSString *const iTermRemoveAPIServerSubscriptionsNotification = @"iTermRemoveAPIServerSubscriptionsNotification";
 NSString *const iTermAPIRegisteredFunctionsDidChangeNotification = @"iTermAPIRegisteredFunctionsDidChangeNotification";
 NSString *const iTermAPIDidRegisterSessionTitleFunctionNotification = @"iTermAPIDidRegisterSessionTitleFunctionNotification";
+NSString *const iTermAPIDidRegisterStatusBarComponentNotification = @"iTermAPIDidRegisterStatusBarComponentNotification";
 
 const NSInteger iTermAPIHelperFunctionCallUnregisteredErrorCode = 100;
 const NSInteger iTermAPIHelperFunctionCallOtherErrorCode = 1;
@@ -58,6 +59,37 @@ static id sAPIHelperInstance;
 @interface iTermAllSessionsSubscription : NSObject
 @property (nonatomic, strong) ITMNotificationRequest *request;
 @property (nonatomic, copy) NSString *connectionKey;
+@end
+
+@implementation iTermSessionTitleProvider
+
+- (instancetype)initWithNotificationRequest:(ITMNotificationRequest *)req {
+    self = [super init];
+    if (self) {
+        if (req.rpcRegistrationRequest.role != ITMRPCRegistrationRequest_Role_SessionTitle) {
+            return nil;
+        }
+        _invocation = [self invocationOfRegistrationRequest:req.rpcRegistrationRequest];
+        if (!_invocation) {
+            return nil;
+        }
+        _displayName = [req.rpcRegistrationRequest.sessionTitleAttributes.displayName copy];
+        if (!_displayName) {
+            return nil;
+        }
+        _uniqueIdentifier = req.rpcRegistrationRequest.sessionTitleAttributes.uniqueIdentifier;
+        if (!_uniqueIdentifier) {
+            return nil;
+        }
+    }
+    return self;
+}
+
+- (NSString *)invocationOfRegistrationRequest:(ITMRPCRegistrationRequest *)req {
+    return [iTermAPIHelper invocationWithName:req.name
+                                     defaults:req.defaultsArray];
+}
+
 @end
 
 @implementation ITMRPCRegistrationRequest(Extensions)
@@ -248,7 +280,7 @@ static id sAPIHelperInstance;
     return [sAPIHelperInstance registeredFunctionSignatureDictionary] ?: @{};
 }
 
-+ (NSArray<iTermTuple<NSString *, NSString *> *> *)sessionTitleFunctions {
++ (NSArray<iTermSessionTitleProvider *> *)sessionTitleFunctions {
     return [sAPIHelperInstance sessionTitleFunctions] ?: @[];
 }
 
@@ -702,10 +734,6 @@ static id sAPIHelperInstance;
     return result;
 }
 
-- (NSString *)invocationOfRegistrationRequest:(ITMRPCRegistrationRequest *)req {
-    return [iTermAPIHelper invocationWithName: req.name defaults:req.defaultsArray];
-}
-
 + (NSString *)invocationWithName:(NSString *)name
                         defaults:(NSArray<ITMRPCRegistrationRequest_RPCArgument*> *)defaultsArray {
     NSArray<ITMRPCRegistrationRequest_RPCArgument*> *sortedDefaults =
@@ -720,17 +748,21 @@ static id sAPIHelperInstance;
     return [NSString stringWithFormat:@"%@(%@)", name, [defaults componentsJoinedByString:@","]];
 }
 
-- (NSArray<iTermTuple<NSString *,NSString *> *> *)sessionTitleFunctions {
++ (NSString *)userDefaultsKeyForNameOfScriptVendingStatusBarComponentWithID:(NSString *)uniqueID {
+    return [NSString stringWithFormat:@"NoSyncScriptNameForStatusBarComponent_%@", uniqueID];
+}
+
++ (NSString *)nameOfScriptVendingStatusBarComponentWithUniqueIdentifier:(NSString *)uniqueID {
+    return [[NSUserDefaults standardUserDefaults] objectForKey:[self userDefaultsKeyForNameOfScriptVendingStatusBarComponentWithID:uniqueID]];
+}
+
+- (NSArray<iTermSessionTitleProvider *> *)sessionTitleFunctions {
     return [self.serverOriginatedRPCSubscriptions.allKeys mapWithBlock:^id(NSString *signature) {
         ITMNotificationRequest *req = self.serverOriginatedRPCSubscriptions[signature].secondObject;
         if (!req) {
             return nil;
         }
-        if (req.rpcRegistrationRequest.role != ITMRPCRegistrationRequest_Role_SessionTitle) {
-            return nil;
-        }
-        NSString *invocation = [self invocationOfRegistrationRequest:req.rpcRegistrationRequest];
-        return [iTermTuple tupleWithObject:req.rpcRegistrationRequest.sessionTitleAttributes.displayName andObject:invocation];
+        return [[iTermSessionTitleProvider alloc] initWithNotificationRequest:req];
     }];
 }
 
@@ -744,6 +776,12 @@ static id sAPIHelperInstance;
             return nil;
         }
         return req.rpcRegistrationRequest;
+    }];
+}
+
++ (ITMRPCRegistrationRequest *)registrationRequestForStatusBarComponentWithUniqueIdentifier:(NSString *)uniqueIdentifier {
+    return [[[self sharedInstance] statusBarComponentProviderRegistrationRequests] objectPassingTest:^BOOL(ITMRPCRegistrationRequest *request, NSUInteger index, BOOL *stop) {
+        return [request.statusBarComponentAttributes.uniqueIdentifier isEqualToString:uniqueIdentifier];
     }];
 }
 
@@ -1191,6 +1229,24 @@ static id sAPIHelperInstance;
     return notification;
 }
 
+- (void)didRegisterStatusBarComponent:(ITMRPCRegistrationRequest_StatusBarComponentAttributes *)attributes
+                         onConnection:(NSString *)connectionKey {
+    [[NSNotificationCenter defaultCenter] postNotificationName:iTermAPIDidRegisterStatusBarComponentNotification
+                                                        object:attributes.uniqueIdentifier];
+    NSString *key = connectionKey ? [_apiServer websocketKeyForConnectionKey:connectionKey] : nil;
+    iTermScriptHistoryEntry *entry = key ? [[iTermScriptHistory sharedInstance] entryWithIdentifier:key] : nil;
+    if (!entry) {
+        return;
+    }
+    NSString *fullPath = entry.fullPath;
+    if (!fullPath) {
+        return;
+    }
+    NSString *uniqueID = attributes.uniqueIdentifier;
+    return [[NSUserDefaults standardUserDefaults] setObject:fullPath
+                                                     forKey:[self.class userDefaultsKeyForNameOfScriptVendingStatusBarComponentWithID:uniqueID]];
+}
+
 - (ITMNotificationResponse *)handleAPINotificationRequest:(ITMNotificationRequest *)request
                                             connectionKey:(NSString *)connectionKey {
     ITMNotificationResponse *response = [[ITMNotificationResponse alloc] init];
@@ -1236,7 +1292,10 @@ static id sAPIHelperInstance;
                                                                         object:request.rpcRegistrationRequest.name];
                     break;
                 case ITMRPCRegistrationRequest_Role_Generic:
+                    break;
                 case ITMRPCRegistrationRequest_Role_StatusBarComponent:
+                    [self didRegisterStatusBarComponent:request.rpcRegistrationRequest.statusBarComponentAttributes
+                                           onConnection:connectionKey];
                     break;
             }
         } else {
@@ -2149,9 +2208,6 @@ static id sAPIHelperInstance;
             return;
         }
         [tab setActiveSession:session];
-        response.status = ITMActivateResponse_Status_Ok;
-        handler(response);
-        return;
     }
 
     if (request.selectTab) {

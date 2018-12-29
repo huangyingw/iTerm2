@@ -27,7 +27,7 @@ from iterm2.preferences import PreferenceKey, async_get_preference
 
 from iterm2.profile import Profile, PartialProfile, BadGUIDException, LocalWriteOnlyProfile, BackgroundImageMode, CursorType, ThinStrokes, UnicodeNormalization, CharacterEncoding, OptionKeySends, InitialWorkingDirectory
 
-from iterm2.prompt import PromptMonitor
+from iterm2.prompt import PromptMonitor, async_get_last_prompt
 
 from iterm2.registration import RPC, TitleProviderRPC, StatusBarRPC, Reference
 
@@ -47,7 +47,7 @@ from iterm2.tmux import TmuxException, TmuxConnection, async_get_tmux_connection
 
 from iterm2.tool import async_register_web_view_tool
 
-from iterm2.util import frame_str, size_str, Size, Point, Frame, CoordRange, Range, WindowedCoordRange
+from iterm2.util import frame_str, size_str, Size, Point, Frame, CoordRange, Range, WindowedCoordRange, async_wait_forever
 
 from iterm2.window import CreateTabException, SetPropertyException, GetPropertyException, Window
 

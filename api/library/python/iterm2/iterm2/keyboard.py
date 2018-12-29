@@ -267,7 +267,7 @@ class KeystrokePattern:
 class KeystrokeMonitor:
     """Monitors keystrokes in one or all sessions.
 
-    :param connection: The :class:`iterm2.Connection` to use.
+    :param connection: The :class:`~iterm2.Connection` to use.
     :param session: The session ID to affect, or `None` meaning all sessions.
 
     Example:
@@ -290,8 +290,7 @@ class KeystrokeMonitor:
         self.__token = await iterm2.notifications.async_subscribe_to_keystroke_notification(
                 self.__connection,
                 callback,
-                self.__session,
-                [])
+                self.__session)
         return self
 
     async def async_get(self) -> Keystroke:
@@ -305,7 +304,7 @@ class KeystrokeMonitor:
 class KeystrokeFilter:
     """An async context manager that disables the regular handling of keystrokes matching patterns during its lifetime.
 
-    :param connection: The :class:`iterm2.Connection` to use.
+    :param connection: The :class:`~iterm2.Connection` to use.
     :param patterns: A list of :class:`KeystrokePattern` objects specifying keystrokes whose regular handling should be disabled.
     :param session: The session ID to affect, or None meaning all.
 
@@ -320,7 +319,7 @@ class KeystrokeFilter:
 
            filter = iterm2.KeystrokeFilter(connection, [ctrl])
            async with filter as mon:
-               await mon.async_wait_forever()
+               await iterm2.async_wait_forever()
     """
     def __init__(
             self,
@@ -337,10 +336,6 @@ class KeystrokeFilter:
                 self.__patterns,
                 self.__session)
         return self
-
-    async def async_wait_forever(self):
-        """A convenience function that never returns."""
-        await asyncio.wait([asyncio.Future()])
 
     async def __aexit__(self, exc_type, exc, _tb):
         await iterm2.notifications.async_unsubscribe(self.__connection, self.__token)
