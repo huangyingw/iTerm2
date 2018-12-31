@@ -7,4 +7,4 @@ xcodebuild -list -project iTerm2.xcodeproj
 xcodebuild -target iTerm2Shared
 xcodebuild -target SSKeychain
 xcodebuild
-open /Users/huangyingw/Dropbox/myproject/git/mac/gnachman/iTerm2/build/Development/iTerm2.app
+open build/Development/iTerm2.app
