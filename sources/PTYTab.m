@@ -13,7 +13,7 @@
 #import "iTermPromptOnCloseReason.h"
 #import "iTermProfilePreferences.h"
 #import "iTermSwiftyString.h"
-#import "iTermVariables.h"
+#import "iTermVariableScope.h"
 #import "MovePaneController.h"
 #import "NSAppearance+iTerm.h"
 #import "NSArray+iTerm.h"
@@ -378,6 +378,7 @@ static void SetAgainstGrainDim(BOOL isVertical, NSSize *dest, CGFloat value) {
     _userVariables = [[iTermVariables alloc] initWithContext:iTermVariablesSuggestionContextTab
                                                        owner:self];
     [self.variablesScope setValue:_userVariables forVariableNamed:@"user"];
+    [self.variablesScope setValue:[iTermVariables globalInstance] forVariableNamed:iTermVariableKeyGlobalScopeName];
 
     self.tmuxWindow = -1;
     _sessionsWithDeferredFontChanges = [[NSMutableArray alloc] init];
@@ -4068,7 +4069,6 @@ static void SetAgainstGrainDim(BOOL isVertical, NSSize *dest, CGFloat value) {
 - (iTermVariableScope *)variablesScope {
     iTermVariableScope *scope = [[iTermVariableScope alloc] init];
     [scope addVariables:_variables toScopeNamed:nil];
-    [scope addVariables:[iTermVariables globalInstance] toScopeNamed:iTermVariableKeyGlobalScopeName];
     return scope;
 }
 

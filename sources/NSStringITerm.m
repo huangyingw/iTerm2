@@ -29,7 +29,7 @@
 #import "iTermAdvancedSettingsModel.h"
 #import "iTermSwiftyStringParser.h"
 #import "iTermTuple.h"
-#import "iTermVariables.h"
+#import "iTermVariableScope.h"
 #import "NSData+iTerm.h"
 #import "NSLocale+iTerm.h"
 #import "NSMutableAttributedString+iTerm.h"
@@ -2058,6 +2058,10 @@ static TECObjectRef CreateTECConverterForUTF8Variants(TextEncodingVariant varian
         }
     }
     return numberOfLines;
+}
+
+- (BOOL)it_hasPrefix:(NSString *)prefix {
+    return prefix.length == 0 || [self hasPrefix:prefix];
 }
 
 @end
