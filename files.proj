@@ -1559,6 +1559,8 @@
 "./sources/iTermRPCTrigger.m"
 "./sources/iTermRateLimitedUpdate.h"
 "./sources/iTermRateLimitedUpdate.m"
+"./sources/iTermRawKeyMapper.h"
+"./sources/iTermRawKeyMapper.m"
 "./sources/iTermRecentDirectoryMO+Additions.h"
 "./sources/iTermRecentDirectoryMO+Additions.m"
 "./sources/iTermRecordedVariable.h"
