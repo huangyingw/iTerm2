@@ -36,6 +36,7 @@
 #import "iTermAppHotKeyProvider.h"
 #import "iTermAdvancedSettingsModel.h"
 #import "iTermBuriedSessions.h"
+#import "iTermCPUProfilerUI.h"
 #import "iTermColorPresets.h"
 #import "iTermController.h"
 #import "iTermDisclosableView.h"
@@ -374,7 +375,15 @@ static BOOL hasBecomeActive = NO;
     } else if ([menuItem action] == @selector(showTipOfTheDay:)) {
         return ![[iTermTipController sharedInstance] showingTip];
     } else if ([menuItem action] == @selector(toggleSecureInput:)) {
-        menuItem.state = IsSecureEventInputEnabled() ? NSOnState : NSOffState;
+        if (IsSecureEventInputEnabled()) {
+            if (secureInputDesired_) {
+                menuItem.state = NSControlStateValueOn;
+            } else {
+                menuItem.state = NSControlStateValueMixed;
+            }
+        } else {
+            menuItem.state = secureInputDesired_ ? NSOnState : NSOffState;
+        }
         return YES;
     } else if ([menuItem action] == @selector(togglePinHotkeyWindow:)) {
         iTermProfileHotKey *profileHotkey = self.currentProfileHotkey;
@@ -1638,6 +1647,16 @@ static BOOL hasBecomeActive = NO;
     return found;
 }
 
+- (IBAction)createCPUProfile:(id)sender {
+    [iTermCPUProfilerUI createProfileWithCompletion:^(iTermCPUProfile * _Nonnull profile) {
+        NSString *string = [profile stringTree];
+        NSString *path = [NSFileManager pathToSaveFileInFolder:[[NSFileManager defaultManager] desktopDirectory]
+                                                 preferredName:@"iTerm2Sample.txt"];
+        [string writeToURL:[NSURL fileURLWithPath:path] atomically:NO encoding:NSUTF8StringEncoding error:NULL];
+        [[NSWorkspace sharedWorkspace] openFile:path withApplication:@"Finder"];
+    }];
+}
+
 - (IBAction)checkForIncompatibleSoftware:(id)sender {
     if (![self notifyAboutIncompatibleSoftware]) {
         NSAlert *alert = [[[NSAlert alloc] init] autorelease];
@@ -2059,7 +2078,7 @@ static BOOL hasBecomeActive = NO;
 
 - (IBAction)toggleSecureInput:(id)sender {
     // Set secureInputDesired_ to the opposite of the current state.
-    secureInputDesired_ = !IsSecureEventInputEnabled();
+    secureInputDesired_ = !secureInputDesired_;
     DLog(@"toggleSecureInput called. Setting desired to %d", (int)secureInputDesired_);
 
     // Try to set the system's state of secure input to the desired state.

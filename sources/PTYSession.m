@@ -1645,7 +1645,9 @@ ITERM_WEAKLY_REFERENCEABLE
     self.lastResize = [NSDate timeIntervalSinceReferenceDate];
     DLog(@"Set session %@ to %@", self, VT100GridSizeDescription(size));
     [_screen setSize:size];
-    [_shell setSize:size];
+    if (!self.delegate || [self.delegate sessionShouldSendWindowSizeIOCTL:self]) {
+        [_shell setSize:size];
+    }
     [_textview clearHighlights:NO];
     [[_delegate realParentWindow] invalidateRestorableState];
     if (!_tailFindTimer &&
@@ -10241,7 +10243,7 @@ ITERM_WEAKLY_REFERENCEABLE
     state.visible = [_delegate sessionBelongsToVisibleTab];
 
     if (self.useMetal) {
-        if ([iTermPreferences boolForKey:kPreferenceKeyMetalMaximizeThroughput] &&
+        if ([iTermPreferences maximizeMetalThroughput] &&
             !_terminal.softAlternateScreenMode) {
             state.useAdaptiveFrameRate = YES;
         } else {
