@@ -137,6 +137,9 @@ extern NSString *const SessionViewWasSelectedForInspectionNotification;
 - (iTermStatusBarViewController *)sessionViewStatusBarViewController;
 
 - (iTermVariableScope *)sessionViewScope;
+
+- (BOOL)sessionViewUseSeparateStatusBarsPerPane;
+
 @end
 
 @interface SessionView : NSView <SessionTitleViewDelegate>
@@ -215,6 +218,7 @@ extern NSString *const SessionViewWasSelectedForInspectionNotification;
 - (BOOL)hasHoverURL;
 - (void)reallyUpdateMetalViewFrame;
 - (void)invalidateStatusBar;
+- (void)updateFindDriver;
 
 - (void)addSubviewBelowFindView:(NSView *)aView;
 

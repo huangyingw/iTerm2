@@ -88,6 +88,7 @@ NSString *const kPreferenceKeyDisableFullscreenTransparencyByDefault = @"Disable
 NSString *const kPreferenceKeyEnableDivisionView = @"EnableDivisionView";
 NSString *const kPreferenceKeyEnableProxyIcon = @"EnableProxyIcon";
 NSString *const kPreferenceKeyDimBackgroundWindows = @"DimBackgroundWindows";
+NSString *const kPreferenceKeySeparateStatusBarsPerPane = @"SeparateStatusBarsPerPane";
 
 NSString *const kPreferenceKeyControlRemapping = @"Control";
 NSString *const kPreferenceKeyLeftOptionRemapping = @"LeftOption";
@@ -147,6 +148,10 @@ static NSString *sPreviousVersion;
 @implementation iTermPreferences
 
 + (NSString *)appVersionBeforeThisLaunch {
+    if (!sPreviousVersion) {
+        NSUserDefaults *userDefaults = [NSUserDefaults standardUserDefaults];
+        sPreviousVersion = [[userDefaults objectForKey:kPreferenceKeyAppVersion] copy];
+    }
     return sPreviousVersion;
 }
 
@@ -170,7 +175,8 @@ static NSString *sPreviousVersion;
 
     // Store the current app version in prefs
     NSDictionary *infoDictionary = [[NSBundle bundleForClass:[self class]] infoDictionary];
-    sPreviousVersion = [[userDefaults objectForKey:kPreferenceKeyAppVersion] copy];
+    // Force it to be lazy-loaded.
+    [self appVersionBeforeThisLaunch];
     [userDefaults setObject:infoDictionary[@"CFBundleVersion"] forKey:kPreferenceKeyAppVersion];
 
     // Disable under-titlebar mirror view.
@@ -271,6 +277,7 @@ static NSString *sPreviousVersion;
                   kPreferenceKeyEnableDivisionView: @YES,
                   kPreferenceKeyEnableProxyIcon: @NO,
                   kPreferenceKeyDimBackgroundWindows: @NO,
+                  kPreferenceKeySeparateStatusBarsPerPane: @NO,
 
                   kPreferenceKeyControlRemapping: @(kPreferencesModifierTagControl),
                   kPreferenceKeyLeftOptionRemapping: @(kPreferencesModifierTagLeftOption),

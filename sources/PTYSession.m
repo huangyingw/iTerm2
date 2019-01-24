@@ -13,6 +13,7 @@
 #import "iTermApplicationDelegate.h"
 #import "iTermAutomaticProfileSwitcher.h"
 #import "iTermBackgroundDrawingHelper.h"
+#import "iTermBadgeLabel.h"
 #import "iTermBuriedSessions.h"
 #import "iTermBuiltInFunctions.h"
 #import "iTermCacheableImage.h"
@@ -205,6 +206,7 @@ static NSString *const SESSION_ARRANGEMENT_ENVIRONMENT = @"Environment";  // Dic
 static NSString *const SESSION_ARRANGEMENT_IS_UTF_8 = @"Is UTF-8";  // TTY is in utf-8 mode
 static NSString *const SESSION_ARRANGEMENT_HOTKEY = @"Session Hotkey";  // NSDictionary iTermShortcut dictionaryValue
 static NSString *const SESSION_ARRANGEMENT_FONT_OVERRIDES = @"Font Overrides";  // Not saved; just used internally when creating a new tmux session.
+static NSString *const SESSION_ARRANGEMENT_SHORT_LIVED_SINGLE_USE = @"Short Lived Single Use";  // BOOL
 
 // Keys for dictionary in SESSION_ARRANGEMENT_PROGRAM
 static NSString *const kProgramType = @"Type";  // Value will be one of the kProgramTypeXxx constants.
@@ -240,6 +242,7 @@ static const NSUInteger kMaxHosts = 100;
 @interface PTYSession () <
     iTermAutomaticProfileSwitcherDelegate,
     iTermBackgroundDrawingHelperDelegate,
+    iTermBadgeLabelDelegate,
     iTermCoprocessDelegate,
     iTermHotKeyNavigableSession,
     iTermMetaFrustrationDetector,
@@ -475,7 +478,6 @@ static const NSUInteger kMaxHosts = 100;
     NSMutableSet *_metalDisabledTokens;
     BOOL _metalDeviceChanging;
 
-    iTermVariables *_sessionVariables;
     iTermVariables *_userVariables;
     iTermSwiftyString *_badgeSwiftyString;
     iTermSwiftyString *_autoNameSwiftyString;
@@ -575,9 +577,8 @@ static const NSUInteger kMaxHosts = 100;
 
         _variables = [[iTermVariables alloc] initWithContext:iTermVariablesSuggestionContextSession
                                                        owner:self];
-        _sessionVariables = [[iTermVariables alloc] initWithContext:iTermVariablesSuggestionContextNone
-                                                              owner:self];
-        [self.variablesScope setValue:_sessionVariables forVariableNamed:@"session"];
+        // Alias for legacy paths
+        [self.variablesScope setValue:_variables forVariableNamed:@"session" weak:YES];
         _userVariables = [[iTermVariables alloc] initWithContext:iTermVariablesSuggestionContextNone
                                                            owner:self];
         [self.variablesScope setValue:_userVariables forVariableNamed:@"user"];
@@ -753,7 +754,6 @@ ITERM_WEAKLY_REFERENCEABLE
     [self recycleQueuedTokens];
     [_queuedTokens release];
     [_variables release];
-    [_sessionVariables release];
     [_userVariables release];
     [_program release];
     [_environment release];
@@ -1123,7 +1123,8 @@ ITERM_WEAKLY_REFERENCEABLE
     }
 
     if (arrangement[SESSION_ARRANGEMENT_SELECTION]) {
-        [aSession.textview.selection setFromDictionaryValue:arrangement[SESSION_ARRANGEMENT_SELECTION]];
+        [aSession.textview.selection setFromDictionaryValue:arrangement[SESSION_ARRANGEMENT_SELECTION]
+                                                      width:aSession.screen.width];
     }
     if (arrangement[SESSION_ARRANGEMENT_APS]) {
         aSession.automaticProfileSwitcher =
@@ -1322,6 +1323,7 @@ ITERM_WEAKLY_REFERENCEABLE
         haveSavedProgramData = NO;
     }
 
+    aSession.shortLivedSingleUse = [arrangement[SESSION_ARRANGEMENT_SHORT_LIVED_SINGLE_USE] boolValue];
 
     if (arrangement[SESSION_ARRANGEMENT_SUBSTITUTIONS]) {
         aSession.substitutions = arrangement[SESSION_ARRANGEMENT_SUBSTITUTIONS];
@@ -2097,7 +2099,7 @@ ITERM_WEAKLY_REFERENCEABLE
     if ([[self textview] isFindingCursor]) {
         [[self textview] endFindCursor];
     }
-    if (_exited) {
+    if (_exited && !_shortLivedSingleUse) {
         [self _maybeWarnAboutShortLivedSessions];
     }
     if (self.tmuxMode == TMUX_CLIENT) {
@@ -2916,21 +2918,34 @@ ITERM_WEAKLY_REFERENCEABLE
         [_terminal resetByUserRequest:NO];
         [self appendBrokenPipeMessage:@"Session Restarted"];
         [self replaceTerminatedShellWithNewInstance];
-    } else if ([self autoClose] && [_delegate sessionShouldAutoClose:self]) {
+        return;
+    }
+
+    if (_shortLivedSingleUse) {
+        [[iTermBuriedSessions sharedInstance] restoreSession:self];
+        [self appendBrokenPipeMessage:@"Finished"];
+        [_delegate closeSession:self];
+        return;
+    }
+    if ([self autoClose] && [_delegate sessionShouldAutoClose:self]) {
         [self appendBrokenPipeMessage:@"Broken Pipe"];
         [_delegate closeSession:self];
-    } else {
-        // Offer to restart the session by rerunning its program.
-        [self appendBrokenPipeMessage:@"Broken Pipe"];
-        if ([self isRestartable]) {
-            [self queueRestartSessionAnnouncement];
-        }
-        [self updateDisplayBecause:@"broken pipe"];
+        return;
     }
+
+    // Offer to restart the session by rerunning its program.
+    [self appendBrokenPipeMessage:@"Broken Pipe"];
+    if ([self isRestartable]) {
+        [self queueRestartSessionAnnouncement];
+    }
+    [self updateDisplayBecause:@"broken pipe"];
 }
 
 - (void)queueRestartSessionAnnouncement {
     if ([iTermAdvancedSettingsModel suppressRestartAnnouncement]) {
+        return;
+    }
+    if (_shortLivedSingleUse) {
         return;
     }
     iTermAnnouncementViewController *announcement =
@@ -3297,6 +3312,9 @@ ITERM_WEAKLY_REFERENCEABLE
 
 - (BOOL)shouldPostUserNotification {
     if (!_screen.postUserNotifications) {
+        return NO;
+    }
+    if (_shortLivedSingleUse) {
         return NO;
     }
     if (![_delegate sessionBelongsToVisibleTab]) {
@@ -3737,18 +3755,20 @@ ITERM_WEAKLY_REFERENCEABLE
                     _statusBarViewController.delegate = nil;
                     _statusBarViewController = nil;
                 }
-                [_view invalidateStatusBar];
+                [self invalidateStatusBar];
             }
         }
     } else {
         [_statusBarViewController release];
         _statusBarViewController = nil;
-        [_view invalidateStatusBar];
+        [self invalidateStatusBar];
     }
     _tmuxStatusBarMonitor.active = [iTermProfilePreferences boolForKey:KEY_SHOW_STATUS_BAR inProfile:aDict];
     _screen.appendToScrollbackWithStatusBar = [iTermProfilePreferences boolForKey:KEY_SCROLLBACK_WITH_STATUS_BAR
                                                                         inProfile:aDict];
     self.badgeFormat = [iTermProfilePreferences stringForKey:KEY_BADGE_FORMAT inProfile:aDict];
+    // forces the badge to update
+    _textview.badgeLabel = @"";
     [self updateBadgeLabel];
     [self setFont:[ITAddressBookMgr fontWithDesc:aDict[KEY_NORMAL_FONT]]
         nonAsciiFont:[ITAddressBookMgr fontWithDesc:aDict[KEY_NON_ASCII_FONT]]
@@ -3778,6 +3798,11 @@ ITERM_WEAKLY_REFERENCEABLE
                                      image:[self tabGraphicForProfile:aDict]];
     [self.delegate sessionUpdateMetalAllowed];
     [self profileNameDidChangeTo:self.profile[KEY_NAME]];
+}
+
+- (void)invalidateStatusBar {
+    [_view invalidateStatusBar];
+    [_delegate sessionDidInvalidateStatusBar:self];
 }
 
 - (void)setBadgeFormat:(NSString *)badgeFormat {
@@ -4304,6 +4329,7 @@ ITERM_WEAKLY_REFERENCEABLE
     }
     result[SESSION_ARRANGEMENT_ENVIRONMENT] = self.environment ?: @{};
     result[SESSION_ARRANGEMENT_IS_UTF_8] = @(self.isUTF8);
+    result[SESSION_ARRANGEMENT_SHORT_LIVED_SINGLE_USE] = @(self.shortLivedSingleUse);
 
     NSDictionary *shortcutDictionary = [[[iTermSessionHotkeyController sharedInstance] shortcutForSession:self] dictionaryValue];
     if (shortcutDictionary) {
@@ -4868,10 +4894,12 @@ ITERM_WEAKLY_REFERENCEABLE
     [_view showFindUI];
 }
 
+// Note that the caller is responsible for respecting swapFindNextPrevious
 - (void)searchNext {
     [_view.findDriver searchNext];
 }
 
+// Note that the caller is responsible for respecting swapFindNextPrevious
 - (void)searchPrevious {
     [_view.findDriver searchPrevious];
 }
@@ -6592,10 +6620,12 @@ ITERM_WEAKLY_REFERENCEABLE
             break;
 
         case KEY_FIND_AGAIN_DOWN:
+            // The UI exposes this as "find down" so it doesn't respect swapFindNextPrevious
             [self searchNext];
             break;
 
         case KEY_FIND_AGAIN_UP:
+            // The UI exposes this as "find up" so it doesn't respect swapFindNextPrevious
             [self searchPrevious];
             break;
 
@@ -7780,6 +7810,14 @@ ITERM_WEAKLY_REFERENCEABLE
     [_terminal gentleReset];
 }
 
+- (CGFloat)textViewBadgeTopMargin {
+    return [iTermProfilePreferences floatForKey:KEY_BADGE_TOP_MARGIN inProfile:self.profile];
+}
+
+- (CGFloat)textViewBadgeRightMargin {
+    return [iTermProfilePreferences floatForKey:KEY_BADGE_RIGHT_MARGIN inProfile:self.profile];
+}
+
 - (void)bury {
     [_textview setDataSource:nil];
     [_textview setDelegate:nil];
@@ -8732,6 +8770,10 @@ ITERM_WEAKLY_REFERENCEABLE
             [_textview.indicatorsHelper beginFlashingFullScreen];
             break;
     }
+}
+
+- (void)screenDisinterSession {
+    [[iTermBuriedSessions sharedInstance] restoreSession:self];
 }
 
 - (void)screenSetBackgroundImageFile:(NSString *)filename {
@@ -10207,6 +10249,16 @@ ITERM_WEAKLY_REFERENCEABLE
     return self.variablesScope;
 }
 
+- (BOOL)sessionViewUseSeparateStatusBarsPerPane {
+    if (![iTermPreferences boolForKey:kPreferenceKeySeparateStatusBarsPerPane]) {
+        return NO;
+    }
+    if (self.isTmuxClient) {
+        return NO;
+    }
+    return YES;
+}
+
 #pragma mark - iTermCoprocessDelegate
 
 - (void)coprocess:(Coprocess *)coprocess didTerminateWithErrorOutput:(NSString *)errors {
@@ -10479,6 +10531,10 @@ ITERM_WEAKLY_REFERENCEABLE
         case ITMNotificationType_NotifyOnServerOriginatedRpc:
         case ITMNotificationType_NotifyOnBroadcastChange:
         case ITMNotificationType_NotifyOnProfileChange:
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        case ITMNotificationType_NotifyOnLocationChange:
+#pragma clang diagnostic pop
             // We won't get called for this
             assert(NO);
             break;
@@ -10665,7 +10721,8 @@ ITERM_WEAKLY_REFERENCEABLE
 
 - (NSColor *)textColorForStatusBar {
     if (self.view.window.ptyWindow.it_terminalWindowUseMinimalStyle) {
-        return [self.view.window.ptyWindow it_terminalWindowDecorationTextColorForBackgroundColor:nil];
+        NSColor *color = [self.view.window.ptyWindow it_terminalWindowDecorationTextColorForBackgroundColor:nil];
+        return [_colorMap colorByDimmingTextColor:[color colorUsingColorSpace:[NSColorSpace sRGBColorSpace]]];
     } else if (@available(macOS 10.14, *)) {
         return [NSColor labelColor];
     } else if ([_view.effectiveAppearance.name isEqualToString:NSAppearanceNameVibrantDark]) {
@@ -10692,6 +10749,22 @@ ITERM_WEAKLY_REFERENCEABLE
 
 - (void)updateStatusBarStyle {
     [_statusBarViewController updateColors];
+}
+
+- (NSFont *)statusBarTerminalFont {
+    return _textview.font;
+}
+
+- (NSColor *)statusBarTerminalBackgroundColor {
+    return [self processedBackgroundColor];
+}
+
+- (void)statusBarWriteString:(NSString *)string {
+    [self writeTask:string];
+}
+
+- (void)statusBarDidUpdate {
+    [_view updateFindDriver];
 }
 
 #pragma mark - iTermMetaFrustrationDetectorDelegate
@@ -10820,6 +10893,30 @@ ITERM_WEAKLY_REFERENCEABLE
         .applicationKeypadMode = _terminal.output.keypadMode
     };
     termkeyKeyMaper.configuration = configuration;
+}
+
+#pragma mark - iTermBadgeLabelDelegate
+
+- (NSFont *)badgeLabelFontOfSize:(CGFloat)pointSize {
+    NSFontManager *fontManager = [NSFontManager sharedFontManager];
+    NSString *fontName = [iTermProfilePreferences stringForKey:KEY_BADGE_FONT inProfile:self.profile];
+    NSFont *font;
+
+    font = [NSFont fontWithName:fontName size:pointSize];
+    if (!font) {
+        font = [NSFont fontWithName:@"Helvetica" size:pointSize];
+    }
+    if ([iTermAdvancedSettingsModel badgeFontIsBold]) {
+        font = [fontManager convertFont:font
+                            toHaveTrait:NSBoldFontMask];
+    }
+    return font;
+}
+
+- (NSSize)badgeLabelSizeFraction {
+    const CGFloat width = [iTermProfilePreferences floatForKey:KEY_BADGE_MAX_WIDTH inProfile:self.profile];
+    const CGFloat height = [iTermProfilePreferences floatForKey:KEY_BADGE_MAX_HEIGHT inProfile:self.profile];
+    return NSMakeSize(width, height);
 }
 
 @end
