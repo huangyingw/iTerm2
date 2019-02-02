@@ -20,7 +20,7 @@ extern const CGFloat iTermStatusBarHeight;
 
 @protocol iTermStatusBarViewControllerDelegate<NSObject>
 - (NSColor *)statusBarDefaultTextColor;
-- (NSColor *)statusBarSeparatorColor;
+- (nullable NSColor *)statusBarSeparatorColor;
 - (NSColor *)statusBarBackgroundColor;
 - (NSColor *)statusBarTerminalBackgroundColor;
 - (NSFont *)statusBarTerminalFont;
@@ -40,6 +40,7 @@ extern const CGFloat iTermStatusBarHeight;
 @property (nullable, nonatomic, strong) id<iTermStatusBarComponent> temporaryLeftComponent;
 @property (nullable, nonatomic, strong) id<iTermStatusBarComponent> temporaryRightComponent;
 @property (nonatomic, weak) id<iTermStatusBarViewControllerDelegate> delegate;
+@property (nonatomic) BOOL mustShowSearchComponent;
 
 - (instancetype)initWithLayout:(iTermStatusBarLayout *)layout
                          scope:(iTermVariableScope *)scope NS_DESIGNATED_INITIALIZER;

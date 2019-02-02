@@ -34,6 +34,8 @@
 #import "iTermInitialDirectory.h"
 #import "iTermKeyBindingMgr.h"
 #import "iTermKeyLabels.h"
+#import "iTermScriptConsole.h"
+#import "iTermScriptHistory.h"
 #import "iTermStandardKeyMapper.h"
 #import "iTermRawKeyMapper.h"
 #import "iTermTermkeyKeyMapper.h"
@@ -497,6 +499,7 @@ static const NSUInteger kMaxHosts = 100;
 
     id<iTermKeyMapper> _keyMapper;
     BOOL _useLibTickit;
+    NSString *_badgeFontName;
 }
 
 + (NSMapTable<NSString *, PTYSession *> *)sessionMap {
@@ -808,6 +811,7 @@ ITERM_WEAKLY_REFERENCEABLE
     [_jobPidRef release];
     [_customIcon release];
     [_keyMapper release];
+    [_badgeFontName release];
 
     [super dealloc];
 }
@@ -1148,7 +1152,7 @@ ITERM_WEAKLY_REFERENCEABLE
             aSession.textview.highlightCursorLine = [arrangement[SESSION_ARRANGEMENT_CURSOR_GUIDE] boolValue];
         }
         aSession->_lastMark = [aSession.screen.lastMark retain];
-        aSession.lastRemoteHost = [aSession.screen.lastRemoteHost retain];
+        aSession.lastRemoteHost = aSession.screen.lastRemoteHost;
         if (arrangement[SESSION_ARRANGEMENT_LAST_DIRECTORY]) {
             [aSession->_lastDirectory autorelease];
             aSession->_lastDirectory = [arrangement[SESSION_ARRANGEMENT_LAST_DIRECTORY] copy];
@@ -1452,7 +1456,7 @@ ITERM_WEAKLY_REFERENCEABLE
                                                  oldCWD:oldCWD
                                          forceUseOldCWD:contents != nil && oldCWD.length
                                                 command:commandArg
-                                                 isUTF8:@(aSession.isUTF8)
+                                                 isUTF8:isUTF8Arg
                                           substitutions:substitutionsArg
                                        windowController:(PseudoTerminal *)aSession.delegate.realParentWindow
                                              completion:completion];
@@ -2368,10 +2372,10 @@ ITERM_WEAKLY_REFERENCEABLE
     BOOL moved = NO;
     if ((event.modifierFlags & mask) == NSEventModifierFlagControl) {
         switch (code) {
-            case 2:  // ^B
+            case 'b':  // ^B
                 moved = [_copyModeState pageUp];
                 break;
-            case 6: // ^F
+            case 'f': // ^F
                 moved = [_copyModeState pageDown];
                 break;
             case ' ':
@@ -2542,8 +2546,21 @@ ITERM_WEAKLY_REFERENCEABLE
                      responseSelector:@selector(printTmuxCommandOutputToScreen:)];
         }
     } else if (unicode == 'X') {
-        [self printTmuxMessage:@"Exiting tmux mode, but tmux client may still be running."];
-        [self tmuxHostDisconnected:[[_tmuxGateway.dcsID copy] autorelease]];
+        [self forceTmuxDetach];
+    }
+}
+
+- (void)forceTmuxDetach {
+    switch (self.tmuxMode) {
+        case TMUX_GATEWAY:
+            [self printTmuxMessage:@"Exiting tmux mode, but tmux client may still be running."];
+            [self tmuxHostDisconnected:[[_tmuxGateway.dcsID copy] autorelease]];
+            return;
+        case TMUX_NONE:
+            return;
+        case TMUX_CLIENT:
+            [self.tmuxGatewaySession forceTmuxDetach];
+            return;
     }
 }
 
@@ -3766,6 +3783,9 @@ ITERM_WEAKLY_REFERENCEABLE
     _tmuxStatusBarMonitor.active = [iTermProfilePreferences boolForKey:KEY_SHOW_STATUS_BAR inProfile:aDict];
     _screen.appendToScrollbackWithStatusBar = [iTermProfilePreferences boolForKey:KEY_SCROLLBACK_WITH_STATUS_BAR
                                                                         inProfile:aDict];
+    [_badgeFontName release];
+    _badgeFontName = [[iTermProfilePreferences stringForKey:KEY_BADGE_FONT inProfile:aDict] copy];
+
     self.badgeFormat = [iTermProfilePreferences stringForKey:KEY_BADGE_FORMAT inProfile:aDict];
     // forces the badge to update
     _textview.badgeLabel = @"";
@@ -4962,13 +4982,20 @@ ITERM_WEAKLY_REFERENCEABLE
     [_textview clearHighlights:YES];
 }
 
-- (void)findViewControllerVisibilityDidChange:(id)sender {
+- (void)findViewControllerVisibilityDidChange:(id<iTermFindViewController>)sender {
     if (@available(macOS 10.11, *)) {
         [_delegate sessionUpdateMetalAllowed];
+    }
+    if (sender.driver.isVisible) {
+        return;
     }
     if (_view.findViewHasKeyboardFocus) {
         [_view findViewDidHide];
     }
+}
+
+- (void)findViewControllerDidCeaseToBeMandatory:(id<iTermFindViewController>)sender {
+    [_view findViewDidHide];
 }
 
 - (NSImage *)snapshot {
@@ -5196,7 +5223,6 @@ ITERM_WEAKLY_REFERENCEABLE
             }
             return NO;
         }
-#warning TODO: This is wrong. Is it called too soon when closing the dropdown find panel?
         if (_view.isDropDownSearchVisible) {
             if (reason) {
                 *reason = iTermMetalUnavailableReasonFindPanel;
@@ -5638,11 +5664,12 @@ ITERM_WEAKLY_REFERENCEABLE
     if (self.tmuxMode != TMUX_NONE) {
         return;
     }
+    NSString *preferredTmuxClientName = [self preferredTmuxClientName];
     self.tmuxMode = TMUX_GATEWAY;
     _tmuxGateway = [[TmuxGateway alloc] initWithDelegate:self dcsID:dcsID];
     ProfileModel *model;
     Profile *profile;
-    if ([iTermAdvancedSettingsModel tmuxUsesDedicatedProfile]) {
+    if ([iTermPreferences useTmuxProfile]) {
         model = [ProfileModel sharedInstance];
         profile = [[ProfileModel sharedInstance] tmuxProfile];
     } else {
@@ -5654,7 +5681,7 @@ ITERM_WEAKLY_REFERENCEABLE
         profile = self.profile;
     }
     _tmuxController = [[TmuxController alloc] initWithGateway:_tmuxGateway
-                                                   clientName:[self preferredTmuxClientName]
+                                                   clientName:preferredTmuxClientName
                                                       profile:profile
                                                  profileModel:model];
     [self.variablesScope setValue:_tmuxController.clientName forVariableNamed:iTermVariableKeySessionTmuxClientName];
@@ -6112,7 +6139,7 @@ ITERM_WEAKLY_REFERENCEABLE
 
 - (NSInteger)tmuxNumberOfLinesOfScrollbackHistory {
     Profile *profile = _tmuxController.profile;
-    if ([iTermAdvancedSettingsModel tmuxUsesDedicatedProfile]) {
+    if ([iTermPreferences useTmuxProfile]) {
         profile = [[ProfileModel sharedInstance] tmuxProfile];
     }
     if ([profile[KEY_UNLIMITED_SCROLLBACK] boolValue]) {
@@ -6120,6 +6147,46 @@ ITERM_WEAKLY_REFERENCEABLE
         return 10 * 1000 * 1000;
     } else {
         return [profile[KEY_SCROLLBACK_LINES] integerValue];
+    }
+}
+
+- (void)tmuxDoubleAttachForSessionGUID:(NSString *)sessionGUID {
+    NSArray<NSString *> *actions = @[ @"OK", @"Reveal" ];
+    TmuxController *controller = [[TmuxControllerRegistry sharedInstance] tmuxControllerWithSessionGUID:sessionGUID];
+    if (!controller) {
+        actions = @[ @"OK" ];
+    }
+    const iTermWarningSelection selection =
+    [iTermWarning showWarningWithTitle:@"This instance of iTerm2 is already attached to this session"
+                               actions:actions
+                             accessory:nil
+                            identifier:@"AlreadyAttachedToTmuxSession"
+                           silenceable:kiTermWarningTypePersistent
+                               heading:@"Cannot Attach"
+                                window:self.view.window];
+    if (selection != kiTermWarningSelection1) {
+        return;
+    }
+    NSArray<NSWindow *> *windows = [[[controller.clientSessions mapWithBlock:^id(PTYSession *anObject) {
+        return anObject.view.window;
+    }] sortedArrayUsingComparator:^NSComparisonResult(id  _Nonnull obj1, id  _Nonnull obj2) {
+        intptr_t p1 = (intptr_t)obj1;
+        intptr_t p2 = (intptr_t)obj2;
+        return [@(p1) compare:@(p2)];
+    }] uniq];
+
+    if (windows.count == 0) {
+        iTermApplicationDelegate *delegate = [iTermApplication.sharedApplication delegate];
+        [delegate openDashboard:nil];
+        return;
+    }
+
+    for (NSWindow *window in windows) {
+        if (window.miniaturized) {
+            [window deminiaturize:nil];
+        } else {
+            [window orderFront:nil];
+        }
     }
 }
 
@@ -6310,22 +6377,26 @@ ITERM_WEAKLY_REFERENCEABLE
     NSString *message = [NSString stringWithFormat:@"Error running “%@”:\n%@",
                          invocation, error.localizedDescription];
     NSString *traceback = error.localizedFailureReason;
-    iTermDisclosableView *accessory = nil;
+    NSArray *actions = @[ @"OK" ];
     if (traceback) {
-        accessory = [[iTermDisclosableView alloc] initWithFrame:NSZeroRect
-                                                         prompt:@"Traceback"
-                                                        message:traceback];
-        accessory.textView.selectable = YES;
-        accessory.frame = NSMakeRect(0, 0, accessory.intrinsicContentSize.width, accessory.intrinsicContentSize.height);
+        actions = [actions arrayByAddingObject:@"Reveal in Script Console"];
     }
-    [iTermWarning showWarningWithTitle:message
-                               actions:@[ @"OK" ]
-                             accessory:accessory
-                            identifier:@"NoSyncFunctionCallError"
-                           silenceable:kiTermWarningTypeTemporarilySilenceable
-                               heading:[NSString stringWithFormat:@"%@ Function Call Failed", origin]
-                                window:window];
-
+    NSString *connectionKey = error.userInfo[iTermAPIHelperFunctionCallErrorUserInfoKeyConnection];
+    iTermScriptHistoryEntry *entry = [[iTermScriptHistory sharedInstance] entryWithIdentifier:connectionKey];
+    [entry addOutput:[NSString stringWithFormat:@"An error occurred while running the function invocation “%@”:\n%@\n\nTraceback:\n%@",
+                      invocation,
+                      error.localizedDescription,
+                      traceback]];
+    iTermWarningSelection selection = [iTermWarning showWarningWithTitle:message
+                                                                 actions:actions
+                                                               accessory:nil
+                                                              identifier:@"NoSyncFunctionCallError"
+                                                             silenceable:kiTermWarningTypeTemporarilySilenceable
+                                                                 heading:[NSString stringWithFormat:@"%@ Function Call Failed", origin]
+                                                                  window:window];
+    if (selection == kiTermWarningSelection1) {
+        [[iTermScriptConsole sharedInstance] revealTailOfHistoryEntry:entry];
+    }
 }
 
 - (void)invokeFunctionCall:(NSString *)invocation
@@ -7819,6 +7890,13 @@ ITERM_WEAKLY_REFERENCEABLE
 }
 
 - (void)bury {
+    if (self.isTmuxClient) {
+        if (!self.delegate) {
+            return;
+        }
+        [_tmuxController hideWindow:self.delegate.tmuxWindow];
+        return;
+    }
     [_textview setDataSource:nil];
     [_textview setDelegate:nil];
     [[iTermBuriedSessions sharedInstance] addBuriedSession:self];
@@ -10806,14 +10884,11 @@ ITERM_WEAKLY_REFERENCEABLE
     NSArray<NSString *> *actions;
     NSInteger thisProfile = 0;
     NSInteger allProfiles = -1;
-    NSInteger stopAsking = -1;
     if ([[[ProfileModel sharedInstance] bookmarks] count] == 1) {
         actions = @[ @"Yes", @"Stop Asking" ];
-        stopAsking = 1;
     } else {
         actions = @[ @"Change This Profile", @"Change All Profiles", @"Stop Asking" ];
         allProfiles = 1;
-        stopAsking = 2;
     }
 
     Profile *profileToChange = [[ProfileModel sharedInstance] bookmarkWithGuid:self.profile[KEY_GUID]];
@@ -10899,10 +10974,7 @@ ITERM_WEAKLY_REFERENCEABLE
 
 - (NSFont *)badgeLabelFontOfSize:(CGFloat)pointSize {
     NSFontManager *fontManager = [NSFontManager sharedFontManager];
-    NSString *fontName = [iTermProfilePreferences stringForKey:KEY_BADGE_FONT inProfile:self.profile];
-    NSFont *font;
-
-    font = [NSFont fontWithName:fontName size:pointSize];
+    NSFont *font = [NSFont fontWithName:_badgeFontName size:pointSize];
     if (!font) {
         font = [NSFont fontWithName:@"Helvetica" size:pointSize];
     }

@@ -44,7 +44,6 @@
 #import "iTermExpose.h"
 #import "iTermFileDescriptorSocketPath.h"
 #import "iTermFontPanel.h"
-#import "iTermFullDiskAccessManager.h"
 #import "iTermFullScreenWindowManager.h"
 #import "iTermHotKeyController.h"
 #import "iTermHotKeyProfileBindingController.h"
@@ -135,8 +134,6 @@ static NSString *const kURLStoreRestorableStateKey = @"kURLStoreRestorableStateK
 static NSString *const kHotkeyWindowRestorableState = @"kHotkeyWindowRestorableState";  // deprecated
 static NSString *const kHotkeyWindowsRestorableStates = @"kHotkeyWindowsRestorableState";  // deprecated
 static NSString *const iTermBuriedSessionState = @"iTermBuriedSessionState";
-
-static NSString *const kHaveWarnedAboutIncompatibleSoftware = @"NoSyncHaveWarnedAboutIncompatibleSoftware";  // deprecated
 
 static NSString *const kRestoreDefaultWindowArrangementShortcut = @"R";
 NSString *const iTermApplicationWillTerminate = @"iTermApplicationWillTerminate";
@@ -318,9 +315,7 @@ static BOOL hasBecomeActive = NO;
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem {
-    if ([menuItem action] == @selector(openDashboard:)) {
-        return [[iTermController sharedInstance] haveTmuxConnection];
-    } else if ([menuItem action] == @selector(toggleUseBackgroundPatternIndicator:)) {
+    if ([menuItem action] == @selector(toggleUseBackgroundPatternIndicator:)) {
       [menuItem setState:[self useBackgroundPatternIndicator]];
       return YES;
     } else if ([menuItem action] == @selector(undo:)) {
@@ -555,20 +550,15 @@ static BOOL hasBecomeActive = NO;
  */
 - (BOOL)application:(NSApplication *)theApplication openFile:(NSString *)filename {
     DLog(@"application:%@ openFile:%@", theApplication, filename);
-    if ([[filename pathExtension] isEqualToString:@"itermscript"]) {
+    if ([[filename pathExtension] isEqualToString:@"its"]) {
         [iTermScriptImporter importScriptFromURL:[NSURL fileURLWithPath:filename]
                                    userInitiated:NO
-                                      completion:^(NSString * _Nullable errorMessage) {
-                                          if (errorMessage) {
-                                              NSAlert *alert = [[NSAlert alloc] init];
-                                              alert.messageText = @"Script Not Installed";
-                                              alert.informativeText = errorMessage;
-                                              [alert runModal];
-                                          } else {
-                                              NSAlert *alert = [[NSAlert alloc] init];
-                                              alert.messageText = @"Script Imported Successfully";
-                                              [alert runModal];
+                                      completion:^(NSString * _Nullable errorMessage, BOOL quiet, NSURL *location) {
+                                          if (quiet) {
+                                              return;
                                           }
+                                          [self->_scriptsMenuController importDidFinishWithErrorMessage:errorMessage
+                                                                                               location:location];
                                       }];
         return YES;
     }
@@ -1575,7 +1565,6 @@ static BOOL hasBecomeActive = NO;
 
 - (IBAction)checkForUpdatesFromMenu:(id)sender {
     [suUpdater checkForUpdates:(sender)];
-    [[iTermPythonRuntimeDownloader sharedInstance] upgradeIfPossible];
 }
 
 #pragma mark - Main Menu
@@ -2002,6 +1991,7 @@ static BOOL hasBecomeActive = NO;
 - (IBAction)installPythonRuntime:(id)sender {  // Explicit request from menu item
     [[iTermPythonRuntimeDownloader sharedInstance] downloadOptionalComponentsIfNeededWithConfirmation:NO
                                                                                         pythonVersion:nil
+                                                                                   requiredToContinue:NO
                                                                                        withCompletion:^(BOOL ok) {}];
 }
 
@@ -2013,6 +2003,7 @@ static BOOL hasBecomeActive = NO;
 - (IBAction)openREPL:(id)sender {
     [[iTermPythonRuntimeDownloader sharedInstance] downloadOptionalComponentsIfNeededWithConfirmation:YES
                                                                                         pythonVersion:nil
+                                                                                   requiredToContinue:YES
                                                                                        withCompletion:^(BOOL ok) {
         if (!ok) {
             return;
@@ -2023,7 +2014,7 @@ static BOOL hasBecomeActive = NO;
         NSString *command = [[[[[iTermPythonRuntimeDownloader sharedInstance] pathToStandardPyenvPythonWithPythonVersion:nil] stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"apython"] stringWithEscapedShellCharactersIncludingNewlines:YES];
         NSURL *bannerURL = [[NSBundle mainBundle] URLForResource:@"repl_banner" withExtension:@"txt"];
         command = [command stringByAppendingFormat:@" --banner=\"`cat %@`\"", [bannerURL.path stringWithEscapedShellCharactersIncludingNewlines:YES]];
-        NSString *cookie = [[iTermWebSocketCookieJar sharedInstance] newCookie];
+        NSString *cookie = [[iTermWebSocketCookieJar sharedInstance] randomStringForCooke];
         NSDictionary *environment = @{ @"ITERM2_COOKIE": cookie };
         [[iTermController sharedInstance] openSingleUseWindowWithCommand:command
                                                                   inject:nil
