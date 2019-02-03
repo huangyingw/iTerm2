@@ -179,6 +179,7 @@ typedef struct {
         [self addSubview:_windowNumberLabel];
 
         _windowTitleLabel = [NSTextField newLabelStyledTextField];
+        _windowTitleLabel.alphaValue = 0.75;
         _windowTitleLabel.alignment = NSTextAlignmentCenter;
         _windowTitleLabel.hidden = YES;
         _windowTitleLabel.autoresizingMask = (NSViewMinYMargin | NSViewWidthSizable);
@@ -669,11 +670,10 @@ typedef struct {
 }
 
 - (void)updateWindowNumberFont {
-    const iTermPreferencesTabStyle preferredStyle = [iTermPreferences intForKey:kPreferenceKeyTabStyle];
-    if (preferredStyle == TAB_STYLE_MINIMAL) {
-        _windowNumberLabel.font = [NSFont systemFontOfSize:[NSFont systemFontSize]];
-    } else {
+    if ([self tabBarShouldBeVisible]) {
         _windowNumberLabel.font = [NSFont systemFontOfSize:[NSFont smallSystemFontSize]];
+    } else {
+        _windowNumberLabel.font = [NSFont systemFontOfSize:[NSFont systemFontSize]];
     }
 }
 
