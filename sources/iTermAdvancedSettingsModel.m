@@ -196,7 +196,7 @@ DEFINE_FLOAT(coloredSelectedTabOutlineStrength, 0.5, SECTION_TABS @"How prominen
 DEFINE_FLOAT(minimalTabStyleBackgroundColorDifference, 0.05, SECTION_TABS @"In minimal tab style, how different should the background color of the selected tab be from the others?\nTakes a value in 0 to 1, where 0 is no difference and 1 very different.");
 DEFINE_FLOAT(minimalTabStyleOutlineStrength, 0.2, SECTION_TABS @"In minimal tab style, how prominent should the tab outline be?\nTakes a value in 0 to 1, where 0 is invisible and 1 is very prominent");
 DEFINE_FLOAT(minimalSplitPaneDividerProminence, 0.15, SECTION_TABS @"In minimal tab style, how prominent should split pane dividers be?\nTakes a value in 0 to 1, where 0 is invisible and 1 is very prominent");
-DEFINE_FLOAT(coloredUnselectedTabTextProminence, 0.1, SECTION_TABS @"How prominent should the text in a non-selected tab be when there are colored tabs in a window?\nTakes a value in 0 to 0.5, the distance from middle gray.");
+DEFINE_FLOAT(coloredUnselectedTabTextProminence, 0.5, SECTION_TABS @"How prominent should the text in a non-selected tab be when there are colored tabs in a window?\nTakes a value in 0 to 1, the alpha value.");
 DEFINE_FLOAT(compactMinimalTabBarHeight, 40, SECTION_TABS @"Tab bar height (points) for compact windows with minimal theme.");
 DEFINE_FLOAT(defaultTabBarHeight, 24, SECTION_TABS @"Default tab bar height")
 
@@ -505,6 +505,7 @@ DEFINE_BOOL(sshURLsSupportPath, YES_IF_BETA_ELSE_NO, SECTION_EXPERIMENTAL @"SSH 
 DEFINE_BOOL(useDivorcedProfileToSplit, YES_IF_BETA_ELSE_NO, SECTION_EXPERIMENTAL @"When splitting a pane, use the profile with local modifications, not the backing profile.");
 DEFINE_BOOL(synergyModifierRemappingEnabled, YES_IF_BETA_ELSE_NO, SECTION_EXPERIMENTAL @"Support modifier remapping for keystrokes originated by Synergy.");
 DEFINE_BOOL(shouldSetLCTerminal, YES, SECTION_EXPERIMENTAL @"Set LC_TERMINAL=iTerm2.\nopenssh and mosh pass this to hosts you connect to. It communicates the current terminal emulator. This is useful for enabling terminal emulator-specific features.");
+DEFINE_BOOL(clearBellIconAggressively, YES, SECTION_EXPERIMENTAL @"Clear bell icon when a session becomes active.\nWhen off, you must type in the session to clear the bell icon.");
 
 #pragma mark - Scripting
 #define SECTION_SCRIPTING @"Scripting: "

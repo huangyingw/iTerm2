@@ -77,6 +77,7 @@ typedef struct {
     NSTextField *_windowTitleLabel;
     iTermTabBarBacking *_tabBarBacking NS_AVAILABLE_MAC(10_14);
     iTermGenericStatusBarContainer *_statusBarContainer;
+    NSDictionary *_desiredToolbeltProportions;
 }
 
 - (instancetype)initWithFrame:(NSRect)frameRect
@@ -164,10 +165,13 @@ typedef struct {
 
         // Create the toolbelt with its current default size.
         _toolbeltWidth = [iTermPreferences floatForKey:kPreferenceKeyDefaultToolbeltWidth];
-        [self constrainToolbeltWidth];
 
         self.toolbelt = [[iTermToolbeltView alloc] initWithFrame:self.toolbeltFrame
                                                         delegate:(id)_delegate];
+        // Wait until whoever is creating the window sets it to its proper size before laying out the toolbelt.
+        // The hope is that the window controller will call updateToolbeltProportionsIfNeeded during this spin
+        // of the runloop, but if not we'll get it next time 'round.
+        [self setToolbeltProportions:[iTermToolbeltView savedProportions]];
         _toolbelt.autoresizingMask = (NSViewMinXMargin | NSViewHeightSizable);
         [self addSubview:_toolbelt];
         [self updateToolbelt];
@@ -508,6 +512,20 @@ typedef struct {
     [_tabBarControl setNeedsDisplay:YES];
 }
 
+- (void)setToolbeltProportions:(NSDictionary *)proportions {
+    _desiredToolbeltProportions = [proportions copy];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self updateToolbeltProportionsIfNeeded];
+    });
+}
+
+- (void)updateToolbeltProportionsIfNeeded {
+    if (_desiredToolbeltProportions) {
+        [self.toolbelt setProportions:_desiredToolbeltProportions];
+        _desiredToolbeltProportions = nil;
+    }
+}
+
 #pragma mark - Division View
 
 - (void)updateDivisionViewAndWindowNumberLabel {
@@ -571,11 +589,15 @@ typedef struct {
 }
 
 - (void)constrainToolbeltWidth {
+    _toolbeltWidth = [self maximumToolbeltWidthForViewWidth:self.frame.size.width];
+}
+
+- (CGFloat)maximumToolbeltWidthForViewWidth:(CGFloat)viewWidth {
     CGFloat minSize = MIN(kMinimumToolbeltSizeInPoints,
-                          self.frame.size.width * kMinimumToolbeltSizeAsFractionOfWindow);
-    _toolbeltWidth = MAX(MIN(_toolbeltWidth,
-                             self.frame.size.width * kMaximumToolbeltSizeAsFractionOfWindow),
-                         minSize);
+                          viewWidth * kMinimumToolbeltSizeAsFractionOfWindow);
+    return MAX(MIN(_toolbeltWidth,
+                   viewWidth * kMaximumToolbeltSizeAsFractionOfWindow),
+               minSize);
 }
 
 - (NSRect)toolbeltFrame {
@@ -600,9 +622,6 @@ typedef struct {
     }
     _shouldShowToolbelt = shouldShowToolbelt;
     _toolbelt.hidden = !shouldShowToolbelt;
-    if (shouldShowToolbelt) {
-        [self constrainToolbeltWidth];
-    }
 }
 
 - (void)updateToolbeltFrame {
@@ -961,7 +980,9 @@ typedef struct {
 
     // The tab view frame (calculated below) is based on the toolbelt's width. If the toolbelt is
     // too big for the current window size, you could end up with a negative-width tab view frame.
-    [self constrainToolbeltWidth];
+    if (_shouldShowToolbelt) {
+        [self constrainToolbeltWidth];
+    }
     _tabViewFrameReduced = NO;
     if (![self tabBarShouldBeVisible]) {
         [self layoutSubviewsWithHiddenTabBarForWindow:thisWindow];

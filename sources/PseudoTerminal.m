@@ -147,6 +147,7 @@ static NSString *const TERMINAL_GUID = @"TerminalGuid";
 static NSString *const TERMINAL_ARRANGEMENT_HAS_TOOLBELT = @"Has Toolbelt";
 static NSString *const TERMINAL_ARRANGEMENT_HIDING_TOOLBELT_SHOULD_RESIZE_WINDOW = @"Hiding Toolbelt Should Resize Window";
 static NSString *const TERMINAL_ARRANGEMENT_USE_TRANSPARENCY = @"Use Transparency";
+static NSString *const TERMINAL_ARRANGEMENT_TOOLBELT_PROPORTIONS = @"Toolbelt Proportions";
 
 static NSRect iTermRectCenteredHorizontallyWithinRect(NSRect frameToCenter, NSRect container) {
     CGFloat centerOfContainer = NSMidX(container);
@@ -1048,31 +1049,43 @@ ITERM_WEAKLY_REFERENCEABLE
                         forKey:kPreferenceKeyDefaultToolbeltWidth];
 }
 
+- (BOOL)showToolbeltNotFullScreen {
+    BOOL didResizeWindow = NO;
+    // Tweak the window's frame to avoid shrinking content, if possible.
+    NSRect windowFrame = self.window.frame;
+    windowFrame.size.width += _contentView.toolbeltWidth;
+    NSRect screenFrame = self.window.screen.visibleFrame;
+    CGFloat rightLimit = NSMaxX(screenFrame);
+    CGFloat overage = NSMaxX(windowFrame) - rightLimit;
+    if (overage > 0) {
+        // Compensate by making the toolbelt a little smaller, unless that would make it too
+        // small.
+        if (_contentView.toolbeltWidth - overage > 100) {
+            windowFrame.size.width -= overage;
+            const NSSize decorationSize = [self windowDecorationSize];
+            const CGFloat viewWidth = windowFrame.size.width - decorationSize.width;
+            const CGFloat proposedToolbeltWidth = _contentView.toolbeltWidth - overage;
+            const CGFloat desiredNonToolbeltWidth = windowFrame.size.width - proposedToolbeltWidth;
+            _contentView.toolbeltWidth = MIN([_contentView maximumToolbeltWidthForViewWidth:viewWidth],
+                                             proposedToolbeltWidth);
+            windowFrame.size.width = desiredNonToolbeltWidth + _contentView.toolbeltWidth;
+            overage = 0;
+        }
+    }
+    if (overage <= 0 && !NSEqualRects(self.window.frame, windowFrame)) {
+        didResizeWindow = YES;
+        [self.window setFrame:windowFrame display:YES];
+    }
+    hidingToolbeltShouldResizeWindow_ = didResizeWindow;
+    return didResizeWindow;
+}
+
 - (IBAction)toggleToolbeltVisibility:(id)sender {
     _contentView.shouldShowToolbelt = !_contentView.shouldShowToolbelt;
     BOOL didResizeWindow = NO;
     if (_contentView.shouldShowToolbelt) {
         if (![self anyFullScreen]) {
-            // Tweak the window's frame to avoid shrinking content, if possible.
-            NSRect windowFrame = self.window.frame;
-            windowFrame.size.width += _contentView.toolbeltWidth;
-            NSRect screenFrame = self.window.screen.visibleFrame;
-            CGFloat rightLimit = NSMaxX(screenFrame);
-            CGFloat overage = NSMaxX(windowFrame) - rightLimit;
-            if (overage > 0) {
-                // Compensate by making the toolbelt a little smaller, unless that would make it too
-                // small.
-                if (_contentView.toolbeltWidth - overage > 100) {
-                    _contentView.toolbeltWidth = _contentView.toolbeltWidth - overage;
-                    windowFrame.size.width -= overage;
-                    overage = 0;
-                }
-            }
-            if (overage <= 0 && !NSEqualRects(self.window.frame, windowFrame)) {
-                didResizeWindow = YES;
-                [self.window setFrame:windowFrame display:YES];
-            }
-            hidingToolbeltShouldResizeWindow_ = didResizeWindow;
+            didResizeWindow = [self showToolbeltNotFullScreen];
         }
 
         [self refreshTools];
@@ -2645,6 +2658,9 @@ ITERM_WEAKLY_REFERENCEABLE
     }
 
     _contentView.shouldShowToolbelt = [arrangement[TERMINAL_ARRANGEMENT_HAS_TOOLBELT] boolValue];
+    [_contentView constrainToolbeltWidth];
+    [_contentView setToolbeltProportions:arrangement[TERMINAL_ARRANGEMENT_TOOLBELT_PROPORTIONS]];
+
     hidingToolbeltShouldResizeWindow_ = [arrangement[TERMINAL_ARRANGEMENT_HIDING_TOOLBELT_SHOULD_RESIZE_WINDOW] boolValue];
     hidingToolbeltShouldResizeWindowInitialized_ = YES;
 
@@ -2742,6 +2758,10 @@ ITERM_WEAKLY_REFERENCEABLE
     DLog(@"While creating arrangement for %@ save frame of %@", self, NSStringFromRect(rect));
     DLog(@"%@", [NSThread callStackSymbols]);
     result[TERMINAL_ARRANGEMENT_HAS_TOOLBELT] = @(_contentView.shouldShowToolbelt);
+    NSDictionary *proportions = _contentView.toolbelt.proportions;
+    if (proportions) {
+        result[TERMINAL_ARRANGEMENT_TOOLBELT_PROPORTIONS] = proportions;
+    }
     result[TERMINAL_ARRANGEMENT_HIDING_TOOLBELT_SHOULD_RESIZE_WINDOW] =
             @(hidingToolbeltShouldResizeWindow_);
 
@@ -3075,6 +3095,9 @@ ITERM_WEAKLY_REFERENCEABLE
     }
     [self notifyTmuxOfTabChange];
 
+    if ([iTermAdvancedSettingsModel clearBellIconAggressively]) {
+        [self.currentSession setBell:NO];
+    }
     [self updateUseMetalInAllTabs];
     [_contentView updateDivisionViewAndWindowNumberLabel];
 }
@@ -3891,6 +3914,7 @@ ITERM_WEAKLY_REFERENCEABLE
 
     // If the toolbelt changed size by autoresizing, keep things in sync.
     _contentView.toolbeltWidth = _contentView.toolbelt.frame.size.width;
+    [_contentView updateToolbeltProportionsIfNeeded];
 }
 
 - (void)clearTransientTitle {
@@ -3928,6 +3952,10 @@ ITERM_WEAKLY_REFERENCEABLE
 {
     useTransparency_ = !useTransparency_;
     [self updateUseTransparency];
+    [_contentView setNeedsDisplay:YES];
+    for (PTYSession *session in self.currentTab.sessions) {
+        [session setNeedsDisplay:YES];
+    }
     restoreUseTransparency_ = NO;
 }
 
@@ -5063,6 +5091,9 @@ ITERM_WEAKLY_REFERENCEABLE
     }
     [self updateProxyIcon];
     [_contentView layoutIfStatusBarChanged];
+    if ([iTermAdvancedSettingsModel clearBellIconAggressively]) {
+        [self.currentSession setBell:NO];
+    }
     [self updateUseMetalInAllTabs];
     [self.scope setValue:self.currentTab.variables forVariableNamed:iTermVariableKeyWindowCurrentTab];
     [self updateWindowShadow:self.ptyWindow];
@@ -6894,6 +6925,9 @@ ITERM_WEAKLY_REFERENCEABLE
     [[NSNotificationCenter defaultCenter] postNotificationName:kCurrentSessionDidChange object:nil];
     if ([[PreferencePanel sessionsInstance] isWindowLoaded] && ![iTermAdvancedSettingsModel pinEditSession]) {
         [self editSession:self.currentSession makeKey:NO];
+    }
+    if ([iTermAdvancedSettingsModel clearBellIconAggressively]) {
+        [self.currentSession setBell:NO];
     }
     [self updateTouchBarIfNeeded:NO];
     [self updateProxyIcon];

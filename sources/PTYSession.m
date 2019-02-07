@@ -875,6 +875,10 @@ ITERM_WEAKLY_REFERENCEABLE
     }
 }
 
+- (void)setNeedsDisplay:(BOOL)needsDisplay {
+    [_wrapper setNeedsDisplay:needsDisplay];
+}
+
 - (void)irAdvance:(int)dir
 {
     if (!_dvr) {
@@ -1581,6 +1585,8 @@ ITERM_WEAKLY_REFERENCEABLE
     int width = (contentSize.width - [iTermAdvancedSettingsModel terminalMargin]*2) / [_textview charWidth];
     int height = (contentSize.height - [iTermAdvancedSettingsModel terminalVMargin]*2) / [_textview lineHeight];
     [_screen destructivelySetScreenWidth:width height:height];
+    [self.variablesScope setValuesFromDictionary:@{ iTermVariableKeySessionColumns: @(width),
+                                                    iTermVariableKeySessionRows: @(height) }];
 
     [_textview setDataSource:_screen];
     [_textview setDelegate:self];
@@ -1660,6 +1666,8 @@ ITERM_WEAKLY_REFERENCEABLE
     if (@available(macOS 10.11, *)) {
         [self updateMetalDriver];
     }
+    [self.variablesScope setValuesFromDictionary:@{ iTermVariableKeySessionColumns: @(_screen.width),
+                                                    iTermVariableKeySessionRows: @(_screen.height) }];
 }
 
 - (void)setSplitSelectionMode:(SplitSelectionMode)mode move:(BOOL)move {
@@ -4830,6 +4838,21 @@ ITERM_WEAKLY_REFERENCEABLE
     _isDivorced = NO;
 }
 
+// TBH I'm not 100% sure this is correct. Don't use it for anything critical until this whole mess
+// has been burned to the ground and rebuilt.
+- (NSString *)guidOfUnderlyingProfile {
+    if (!self.isDivorced) {
+        return self.profile[KEY_GUID];
+    }
+
+    NSString *guid = _originalProfile[KEY_GUID];
+    if (guid && [[ProfileModel sharedInstance] bookmarkWithGuid:guid]) {
+        return guid;
+    }
+
+    return nil;
+}
+
 - (NSString*)divorceAddressBookEntryFromPreferences
 {
     Profile* bookmark = [self profile];
@@ -5448,8 +5471,8 @@ ITERM_WEAKLY_REFERENCEABLE
     }
     if (iTermTextIsMonochrome()) {
         // Mojave can use a glyph size larger than cell size because compositing is trivial without subpixel AA.
-        glyphSize.width = MAX(cellSize.width, NSMaxX(rect));
-        glyphSize.height = MAX(cellSize.height, NSMaxY(rect));
+        glyphSize.width = round(0.49 + MAX(cellSize.width, NSMaxX(rect)));
+        glyphSize.height = round(0.49 + MAX(cellSize.height, NSMaxY(rect)));
     } else {
         glyphSize = cellSize;
     }
@@ -7996,11 +8019,8 @@ ITERM_WEAKLY_REFERENCEABLE
     }
 }
 
-- (NSString *)valueForLanguageEnvironmentVariable {
-    DLog(@"Looking for a locale...");
-    const NSInteger numberOfLanguagesToConsider = 1;
-    DLog(@"Consider %@ of languages: %@", @(numberOfLanguagesToConsider), [NSLocale preferredLanguages]);
-    NSArray<NSString *> *languageCodes = [[[NSLocale preferredLanguages] subarrayToIndex:numberOfLanguagesToConsider] mapWithBlock:^id(NSString *language) {
+- (NSArray<NSString *> *)preferredLanguageCodesByRemovingCountry {
+    return [[NSLocale preferredLanguages] mapWithBlock:^id(NSString *language) {
         DLog(@"Found preferred language: %@", language);
         NSUInteger index = [language rangeOfString:@"-" options:0].location;
         if (index == NSNotFound) {
@@ -8009,7 +8029,23 @@ ITERM_WEAKLY_REFERENCEABLE
             return [language substringToIndex:index];
         }
     }];
-    DLog(@"Preferred languages are: %@", languageCodes);
+}
+
+- (NSArray<NSString *> *)languageCodesUpToAndIncludingFirstTwoLetterCode:(NSArray<NSString *> *)allCodes {
+    NSInteger lastIndexToInclude = [allCodes indexOfObjectPassingTest:^BOOL(NSString * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
+        return obj.length <= 2;
+    }];
+    if (lastIndexToInclude == NSNotFound) {
+        return allCodes;
+    }
+    return [allCodes subarrayToIndex:lastIndexToInclude + 1];
+}
+
+- (NSString *)valueForLanguageEnvironmentVariable {
+    DLog(@"Looking for a locale...");
+    DLog(@"Preferred languages are: %@", [NSLocale preferredLanguages]);
+    NSArray<NSString *> *languageCodes = [self languageCodesUpToAndIncludingFirstTwoLetterCode:[self preferredLanguageCodesByRemovingCountry]];
+    DLog(@"Considering these languages: %@", languageCodes);
 
     NSString *const countryCode = [[NSLocale currentLocale] objectForKey:NSLocaleCountryCode];
     NSArray<NSString *> *languagePlusCountryCodes = @[];
@@ -10840,6 +10876,33 @@ ITERM_WEAKLY_REFERENCEABLE
 
 - (void)statusBarDidUpdate {
     [_view updateFindDriver];
+}
+
+- (void)statusBarOpenPreferencesToComponent:(nullable id<iTermStatusBarComponent>)component {
+    PreferencePanel *panel;
+    NSString *guid;
+    if (self.isDivorced && [_overriddenFields containsObject:KEY_STATUS_BAR_LAYOUT]) {
+        panel = [PreferencePanel sessionsInstance];
+        guid = _profile[KEY_GUID];
+    } else {
+        panel = [PreferencePanel sharedInstance];
+        guid = _originalProfile[KEY_GUID];
+    }
+    [panel openToProfileWithGuid:guid andEditComponentWithIdentifier:component.statusBarComponentIdentifier tmux:self.isTmuxClient];
+}
+
+
+- (void)statusBarSetLayout:(nonnull iTermStatusBarLayout *)layout {
+    ProfileModel *model;
+    if (self.isDivorced && [_overriddenFields containsObject:KEY_STATUS_BAR_LAYOUT]) {
+        model = [ProfileModel sessionsInstance];
+    } else {
+        model = [ProfileModel sharedInstance];
+    }
+    [iTermProfilePreferences setObject:[layout dictionaryValue]
+                                forKey:KEY_STATUS_BAR_LAYOUT
+                             inProfile:self.originalProfile
+                                 model:model];
 }
 
 #pragma mark - iTermMetaFrustrationDetectorDelegate
