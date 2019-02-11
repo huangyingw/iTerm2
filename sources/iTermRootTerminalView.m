@@ -183,7 +183,7 @@ typedef struct {
         [self addSubview:_windowNumberLabel];
 
         _windowTitleLabel = [NSTextField newLabelStyledTextField];
-        _windowTitleLabel.alphaValue = 0.75;
+        _windowTitleLabel.alphaValue = 1;
         _windowTitleLabel.alignment = NSTextAlignmentCenter;
         _windowTitleLabel.hidden = YES;
         _windowTitleLabel.autoresizingMask = (NSViewMinYMargin | NSViewWidthSizable);
@@ -276,10 +276,11 @@ typedef struct {
     const CGFloat baselineOffset = -_windowTitleLabel.font.descender;
     const CGFloat capHeight = _windowTitleLabel.font.capHeight;
     const CGFloat myHeight = self.frame.size.height;
-    NSEdgeInsets insets = [self.delegate tabBarInsets];
-    return NSMakeRect(insets.left,
+    const NSEdgeInsets insets = [self.delegate tabBarInsets];
+    const CGFloat sideInset = MAX(MAX(insets.left, insets.right), iTermRootTerminalViewWindowNumberLabelMargin);
+    return NSMakeRect(sideInset,
                       myHeight - tabBarHeight + (tabBarHeight - capHeight) / 2.0 - baselineOffset,
-                      MAX(0, self.frame.size.width - insets.left - iTermRootTerminalViewWindowNumberLabelMargin),
+                      MAX(0, self.frame.size.width - sideInset * 2),
                       _windowTitleLabel.frame.size.height);
 }
 
@@ -1151,6 +1152,14 @@ typedef struct {
 
 - (BOOL)iTermTabBarCanDragWindow {
     return[ _delegate iTermTabBarCanDragWindow];
+}
+
+- (BOOL)iTermTabBarShouldHideBacking {
+    if (@available(macOS 10.14, *)) {
+        const iTermPreferencesTabStyle preferredStyle = [iTermPreferences intForKey:kPreferenceKeyTabStyle];
+        return (preferredStyle == TAB_STYLE_MINIMAL);
+    }
+    return YES;
 }
 
 #pragma mark - iTermDragHandleViewDelegate

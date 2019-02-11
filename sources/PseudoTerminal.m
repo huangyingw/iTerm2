@@ -4244,7 +4244,7 @@ ITERM_WEAKLY_REFERENCEABLE
     self.windowType = WINDOW_TYPE_TRADITIONAL_FULL_SCREEN;
     [self.window setOpaque:NO];
     self.window.alphaValue = 0;
-    if (savedWindowType_ == WINDOW_TYPE_COMPACT) {
+    if (self.ptyWindow.isCompact) {
         [self replaceWindowWithWindowOfType:WINDOW_TYPE_TRADITIONAL_FULL_SCREEN];
     } else {
         self.window.styleMask = [self styleMask];
@@ -4256,7 +4256,7 @@ ITERM_WEAKLY_REFERENCEABLE
 
 - (void)willExitTraditionalFullScreenMode {
     self.windowType = savedWindowType_;
-    if (savedWindowType_ == WINDOW_TYPE_COMPACT) {
+    if ([PseudoTerminal windowType:savedWindowType_ shouldBeCompactWithSavedWindowType:savedWindowType_]) {
         [self replaceWindowWithWindowOfType:savedWindowType_];
     } else {
         // NOTE: Setting the style mask causes the presentation options to be
@@ -5419,7 +5419,9 @@ ITERM_WEAKLY_REFERENCEABLE
         if (willShowTabBar && [iTermPreferences intForKey:kPreferenceKeyTabPosition] == PSMTab_LeftTab) {
             [_contentView willShowTabBar];
         }
-        [self fitWindowToTabs];
+        if (![iTermPreferences boolForKey:kPreferenceKeyPreserveWindowSizeWhenTabBarVisibilityChanges]) {
+            [self fitWindowToTabs];
+        }
         [self repositionWidgets];
         if (wasDraggedFromAnotherWindow_) {
             wasDraggedFromAnotherWindow_ = NO;
@@ -7565,10 +7567,16 @@ ITERM_WEAKLY_REFERENCEABLE
         return [_contentView.tabBarControl.style textColorForCell:_contentView.tabBarControl.cells.firstObject];
     }
     
-    // The window number will be displayed over the tabbar color.
-    return [_contentView.tabBarControl.style textColorDefaultSelected:YES
-                                                      backgroundColor:nil
-                                                          windowIsKey:(self.window.isKeyWindow && NSApp.isActive)];
+    // The window number will be displayed over the tabbar color. For non-key windows, use the
+    // non-selected tab text color because that more closely matches the titlebar color.
+    const BOOL windowIsKey = (self.window.isKeyWindow && NSApp.isActive);
+    NSColor *color = [_contentView.tabBarControl.style textColorDefaultSelected:windowIsKey
+                                                                backgroundColor:nil
+                                                                    windowIsKey:windowIsKey];
+    if (windowIsKey) {
+        return [color colorWithAlphaComponent:0.65];
+    }
+    return color;
 }
 
 - (NSColor *)rootTerminalViewTabBarTextColorForWindowNumber {
@@ -8664,22 +8672,27 @@ ITERM_WEAKLY_REFERENCEABLE
 }
 
 // Move a tab to a new window due to a context menu selection.
-- (void)moveTabToNewWindowContextualMenuAction:(id)sender
-{
-    NSWindowController<iTermWindowController> *term;
+- (void)moveTabToNewWindowContextualMenuAction:(id)sender {
     NSTabViewItem *aTabViewItem = [sender representedObject];
     PTYTab *aTab = [aTabViewItem identifier];
+    [self moveTabToNewWindow:aTab];
+}
 
+- (PseudoTerminal *)moveTabToNewWindow:(PTYTab *)aTab {
     if (aTab == nil) {
-        return;
+        return nil;
     }
-
+    if (self.tabs.count < 2) {
+        return nil;
+    }
+    NSAssert([self.tabs containsObject:aTab], @"Called on wrong window");
+    NSTabViewItem *aTabViewItem = aTab.tabViewItem;
     NSPoint point = [[self window] frame].origin;
     point.x += 10;
     point.y += 10;
-    term = [self terminalDraggedFromAnotherWindowAtPoint:point];
+    NSWindowController<iTermWindowController> *term = [self terminalDraggedFromAnotherWindowAtPoint:point];
     if (term == nil) {
-        return;
+        return nil;
     }
 
     // temporarily retain the tabViewItem
@@ -8695,6 +8708,8 @@ ITERM_WEAKLY_REFERENCEABLE
 
     // release the tabViewItem
     [aTabViewItem release];
+
+    return [PseudoTerminal castFrom:term];
 }
 
 // Change the tab color to the selected menu color
@@ -8863,6 +8878,14 @@ ITERM_WEAKLY_REFERENCEABLE
 
 - (BOOL)iTermTabBarCanDragWindow {
     return (windowType_ == WINDOW_TYPE_COMPACT);
+}
+
+- (BOOL)iTermTabBarShouldHideBacking {
+    if (@available(macOS 10.14, *)) {
+        iTermPreferencesTabStyle preferredStyle = [iTermPreferences intForKey:kPreferenceKeyTabStyle];
+        return (preferredStyle != TAB_STYLE_MINIMAL);
+    }
+    return YES;
 }
 
 - (PTYSession *)createTabWithProfile:(Profile *)profile
