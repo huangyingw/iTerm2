@@ -44,6 +44,7 @@
 #import "iTermMetalGlue.h"
 #import "iTermMetalDriver.h"
 #import "iTermMouseCursor.h"
+#import "iTermNotificationCenter.h"
 #import "iTermPasteHelper.h"
 #import "iTermPreferences.h"
 #import "iTermProcessCache.h"
@@ -67,6 +68,7 @@
 #import "iTermStatusBarLayout+tmux.h"
 #import "iTermStatusBarViewController.h"
 #import "iTermSwiftyString.h"
+#import "iTermSwiftyStringGraph.h"
 #import "iTermSystemVersion.h"
 #import "iTermTextExtractor.h"
 #import "iTermThroughputEstimator.h"
@@ -74,6 +76,8 @@
 #import "iTermUpdateCadenceController.h"
 #import "iTermVariableReference.h"
 #import "iTermVariableScope.h"
+#import "iTermVariableScope+Global.h"
+#import "iTermVariableScope+Session.h"
 #import "iTermWarning.h"
 #import "iTermWorkingDirectoryPoller.h"
 #import "MovePaneController.h"
@@ -257,7 +261,7 @@ static const NSUInteger kMaxHosts = 100;
     iTermUpdateCadenceControllerDelegate,
     iTermWorkingDirectoryPollerDelegate>
 @property(nonatomic, retain) Interval *currentMarkOrNotePosition;
-@property(nonatomic, retain) TerminalFile *download;
+@property(nonatomic, retain) TerminalFileDownload *download;
 @property(nonatomic, retain) TerminalFileUpload *upload;
 
 // Time since reference date when last output was received. New output in a brief period after the
@@ -491,7 +495,6 @@ static const NSUInteger kMaxHosts = 100;
     
     iTermGraphicSource *_graphicSource;
     iTermVariableReference *_jobPidRef;
-    iTermVariableReference *_autoNameFormatRef;
     iTermCacheableImage *_customIcon;
     CGContextRef _metalContext;
     BOOL _errorCreatingMetalContext;
@@ -499,6 +502,7 @@ static const NSUInteger kMaxHosts = 100;
     id<iTermKeyMapper> _keyMapper;
     BOOL _useLibTickit;
     NSString *_badgeFontName;
+    iTermVariableScope *_variablesScope;
 }
 
 + (NSMapTable<NSString *, PTYSession *> *)sessionMap {
@@ -599,12 +603,16 @@ static const NSUInteger kMaxHosts = 100;
             [weakSelf jobPidDidChange];
         };
 
-        _autoNameFormatRef = [[iTermVariableReference alloc] initWithPath:iTermVariableKeySessionAutoNameFormat scope:self.variablesScope];
-        _autoNameFormatRef.onChangeBlock = ^{
-            [weakSelf updateAutoNameSwiftyStringIfNeeded];
+        [_autoNameSwiftyString invalidate];
+        [_autoNameSwiftyString autorelease];
+        _autoNameSwiftyString = [[iTermSwiftyString alloc] initWithScope:self.variablesScope
+                                                              sourcePath:iTermVariableKeySessionAutoNameFormat
+                                                         destinationPath:iTermVariableKeySessionAutoName];
+        _autoNameSwiftyString.observer = ^(NSString * _Nonnull newValue) {
+            if ([weakSelf checkForCyclesInSwiftyStrings]) {
+                weakSelf.variablesScope.autoNameFormat = @"[Cycle detected]";
+            }
         };
-        [self updateAutoNameSwiftyStringIfNeeded];
-
         _tmuxSecureLogging = NO;
         _tailFindContext = [[FindContext alloc] init];
         _commandRange = VT100GridCoordRangeMake(-1, -1, -1, -1);
@@ -811,6 +819,7 @@ ITERM_WEAKLY_REFERENCEABLE
     [_customIcon release];
     [_keyMapper release];
     [_badgeFontName release];
+    [_variablesScope release];
 
     [super dealloc];
 }
@@ -1794,39 +1803,6 @@ ITERM_WEAKLY_REFERENCEABLE
 
 - (void)didMoveSession {
     [self.variablesScope setValue:self.sessionId forVariableNamed:iTermVariableKeySessionTermID];
-}
-
-- (void)updateAutoNameSwiftyStringIfNeeded {
-    NSString *autoNameFormat = [self.variablesScope valueForVariableName:iTermVariableKeySessionAutoNameFormat];
-    if (!_autoNameSwiftyString ||
-        ![_autoNameSwiftyString.swiftyString isEqualToString:autoNameFormat]) {
-        __weak __typeof(self) weakSelf = self;
-        iTermSwiftyString *temp = [[iTermSwiftyString alloc] initWithString:autoNameFormat ?: @""
-                                                                      scope:self.variablesScope
-                                                                   observer:^(NSString * _Nonnull newValue) {
-                                                                       [weakSelf didEvaluateAutoName:newValue];
-                                                                   }];
-        NSArray *pathsPossiblyComputedFromAutoName = @[iTermVariableKeySessionAutoNameFormat,
-                                                       iTermVariableKeySessionAutoName,
-                                                       iTermVariableKeySessionName];
-        BOOL hasCycle = [self checkForCycleInSwiftyString:temp paths:pathsPossiblyComputedFromAutoName];
-        if (!hasCycle) {
-            hasCycle = ([self doesSwiftyString:_badgeSwiftyString referencePaths:pathsPossiblyComputedFromAutoName] &&
-                        [self doesSwiftyString:temp referencePaths:@[ iTermVariableKeySessionBadge ]]);
-        }
-        if (hasCycle) {
-            [temp release];
-            DLog(@"cycle detected in %@", autoNameFormat);
-            temp = [[iTermSwiftyString alloc] initWithString:@"[CYCLE DETECTED]"
-                                                       scope:self.variablesScope
-                                                    observer:^(NSString * _Nonnull newValue) {
-                                                        [weakSelf didEvaluateAutoName:newValue];
-                                                    }];
-        }
-        DLog(@"Set autoNameFormat to %@", temp.swiftyString);
-        [_autoNameSwiftyString autorelease];
-        _autoNameSwiftyString = temp;
-    }
 }
 
 - (void)didEvaluateAutoName:(NSString *)evaluated {
@@ -3839,6 +3815,8 @@ ITERM_WEAKLY_REFERENCEABLE
         return;
     }
     __weak __typeof(self) weakSelf = self;
+    [_badgeSwiftyString invalidate];
+    [_badgeSwiftyString autorelease];
     _badgeSwiftyString = [[iTermSwiftyString alloc] initWithString:badgeFormat
                                                              scope:self.variablesScope
                                                           observer:^(NSString * _Nonnull newValue) {
@@ -3892,28 +3870,28 @@ ITERM_WEAKLY_REFERENCEABLE
     return NO;
 }
 
-- (BOOL)checkForCycleInSwiftyString:(iTermSwiftyString *)swiftyString
-                              paths:(NSArray<NSString *> *)paths {
-    NSMutableArray *badRefs = [NSMutableArray array];
-    for (iTermVariableReference *ref in swiftyString.refs) {
-        for (NSString *path in paths) {
-            if ([self.variablesScope variableNamed:path isReferencedBy:ref]) {
-                [badRefs addObject:ref];
-            }
-        }
+- (BOOL)checkForCyclesInSwiftyStrings {
+    iTermSwiftyStringGraph *graph = [[[iTermSwiftyStringGraph alloc] init] autorelease];
+    [graph addSwiftyString:_autoNameSwiftyString
+            withFormatPath:iTermVariableKeySessionAutoNameFormat
+            evaluationPath:iTermVariableKeySessionAutoName
+                     scope:self.variablesScope];
+    if (_badgeSwiftyString) {
+        [graph addSwiftyString:_badgeSwiftyString
+                withFormatPath:nil
+                evaluationPath:iTermVariableKeySessionBadge
+                         scope:self.variablesScope];
     }
-    if (badRefs.count) {
-        for (iTermVariableReference *ref in badRefs) {
-            [ref removeAllLinks];
-        }
-        return YES;
-    }
-    return NO;
+    [self.delegate sessionAddSwiftyStringsToGraph:graph];
+    [graph addEdgeFromPath:iTermVariableKeySessionAutoNameFormat
+                    toPath:iTermVariableKeySessionName
+                     scope:self.variablesScope];
+    return graph.containsCycle;
 }
 
 - (void)updateBadgeLabel {
-    if ([self checkForCycleInSwiftyString:_badgeSwiftyString paths:@[iTermVariableKeySessionBadge]]) {
-        [self setSessionSpecificProfileValues:@{ KEY_BADGE_FORMAT: @"[CYCLE DETECTED]" }];
+    if ([self checkForCyclesInSwiftyStrings]) {
+        [self setBadgeFormat:@"[Cycle detected]"];
         return;
     }
     [self updateBadgeLabel:[self badgeLabel]];
@@ -5201,6 +5179,13 @@ ITERM_WEAKLY_REFERENCEABLE
         }
         return NO;
     }
+    if ([PTYNoteViewController anyNoteVisible]) {
+        // When metal is enabled the note's superview (PTYTextView) has alphaValue=0 so it will not be visible.
+        if (reason) {
+            *reason = iTermMetalUnavailableReasonAnnotations;
+        }
+        return NO;
+    }
 
     if (_textview.transparencyAlpha < 1) {
         BOOL transparencyAllowed = NO;
@@ -5247,12 +5232,6 @@ ITERM_WEAKLY_REFERENCEABLE
             return NO;
         }
         
-        if ([PTYNoteViewController anyNoteVisible]) {
-            if (reason) {
-                *reason = iTermMetalUnavailableReasonAnnotations;
-            }
-            return NO;
-        }
         if (_view.isDropDownSearchVisible) {
             if (reason) {
                 *reason = iTermMetalUnavailableReasonFindPanel;
@@ -5857,6 +5836,18 @@ ITERM_WEAKLY_REFERENCEABLE
     [note makeFirstResponder];
 }
 
+- (void)addNoteWithText:(NSString *)text inAbsoluteRange:(VT100GridAbsCoordRange)absRange {
+    VT100GridCoordRange range = VT100GridCoordRangeFromAbsCoordRange(absRange,
+                                                                     _screen.totalScrollbackOverflow);
+    if (range.start.x < 0) {
+        return;
+    }
+    PTYNoteViewController *note = [[[PTYNoteViewController alloc] init] autorelease];
+    [note setString:text];
+    [note sizeToFit];
+    [_screen addNote:note inRange:range];
+}
+
 - (void)textViewToggleAnnotations {
     VT100GridCoordRange range =
         VT100GridCoordRangeMake(0,
@@ -5874,6 +5865,7 @@ ITERM_WEAKLY_REFERENCEABLE
     for (PTYNoteViewController *note in notes) {
         [note setNoteHidden:anyNoteIsVisible];
     }
+    [self.delegate sessionUpdateMetalAllowed];
 }
 
 - (void)highlightMarkOrNote:(id<IntervalTreeObject>)obj {
@@ -7376,6 +7368,13 @@ ITERM_WEAKLY_REFERENCEABLE
     [_delegate previousSession];
 }
 
+- (void)textViewPasteSpecialWithStringConfiguration:(NSString *)configuration
+                                      fromSelection:(BOOL)fromSelection {
+    NSString *string = fromSelection ? [[iTermController sharedInstance] lastSelection] : [NSString stringFromPasteboard];
+    [_pasteHelper pasteString:string
+                 stringConfig:configuration];
+}
+
 - (void)textViewEditSession {
     [[_delegate realParentWindow] editSession:self makeKey:YES];
 }
@@ -7682,11 +7681,11 @@ ITERM_WEAKLY_REFERENCEABLE
     return _variables.stringValuedDictionary;
 }
 
-- (iTermVariableScope *)variablesScope {
-    iTermVariableScope *scope = [[iTermVariableScope alloc] init];
-    [scope addVariables:self.variables toScopeNamed:nil];
-    [scope addVariables:[iTermVariables globalInstance] toScopeNamed:iTermVariableKeyGlobalScopeName];
-    return [scope autorelease];
+- (iTermVariableScope<iTermSessionScope> *)variablesScope {
+    if (_variablesScope == nil) {
+        _variablesScope = [iTermVariableScope newSessionScopeWithVariables:self.variables];
+    }
+    return _variablesScope;
 }
 
 - (BOOL)textViewSuppressingAllOutput {
@@ -8767,7 +8766,7 @@ ITERM_WEAKLY_REFERENCEABLE
 - (void)screenWillReceiveFileNamed:(NSString *)filename ofSize:(int)size {
     [self.download stop];
     [self.download endOfData];
-    self.download = [[[TerminalFile alloc] initWithName:filename size:size] autorelease];
+    self.download = [[[TerminalFileDownload alloc] initWithName:filename size:size] autorelease];
     [self.download download];
 }
 
@@ -10101,6 +10100,7 @@ ITERM_WEAKLY_REFERENCEABLE
 
 - (void)sessionViewDraggingExited:(id<NSDraggingInfo>)sender {
     [self.delegate sessionDraggingExited:self];
+    [_textview setNeedsDisplay:YES];
 }
 
 - (NSDragOperation)sessionViewDraggingEntered:(id<NSDraggingInfo>)sender {
@@ -10898,7 +10898,10 @@ ITERM_WEAKLY_REFERENCEABLE
         panel = [PreferencePanel sharedInstance];
         guid = _originalProfile[KEY_GUID];
     }
-    [panel openToProfileWithGuid:guid andEditComponentWithIdentifier:component.statusBarComponentIdentifier tmux:self.isTmuxClient];
+    [panel openToProfileWithGuid:guid
+  andEditComponentWithIdentifier:component.statusBarComponentIdentifier
+                            tmux:self.isTmuxClient
+                           scope:self.variablesScope];
 }
 
 

@@ -28,9 +28,11 @@ NSString *const iTermVariableKeyApplicationLocalhostName = @"localhostName";
 NSString *const iTermVariableKeyApplicationEffectiveTheme = @"effectiveTheme";
 
 NSString *const iTermVariableKeyTabTitleOverride = @"titleOverride";
+NSString *const iTermVariableKeyTabTitleOverrideFormat = @"titleOverrideFormat";
 NSString *const iTermVariableKeyTabCurrentSession = @"currentSession";
 NSString *const iTermVariableKeyTabTmuxWindow = @"tmuxWindow";
 NSString *const iTermVariableKeyTabID = @"id";
+NSString *const iTermVariableKeyTabWindow = @"window";
 
 NSString *const iTermVariableKeySessionAutoLogID = @"autoLogId";
 NSString *const iTermVariableKeySessionColumns = @"columns";
@@ -64,6 +66,7 @@ NSString *const iTermVariableKeySessionMouseReportingMode = @"mouseReportingMode
 NSString *const iTermVariableKeySessionBadge = @"badge";
 NSString *const iTermVariableKeySessionTab = @"tab";
 
+NSString *const iTermVariableKeyWindowTitleOverrideFormat = @"titleOverrideFormat";
 NSString *const iTermVariableKeyWindowTitleOverride = @"titleOverride";
 NSString *const iTermVariableKeyWindowCurrentTab = @"currentTab";
 
@@ -242,6 +245,17 @@ NSString *const iTermVariableKeyWindowCurrentTab = @"currentTab";
     for (iTermVariableReference *ref in refs) {
         [ref invalidate];
     }
+}
+
+// This is useful for debugging purposes.
+- (NSString *)linksDescription {
+    return [[_resolvedLinks.allKeys mapWithBlock:^NSString *(NSString *key) {
+        NSArray<iTermVariableReference *> *refs = [self strongArrayFromWeakArray:self->_resolvedLinks[key]];
+        NSString *refsString = [[refs mapWithBlock:^id(iTermVariableReference *ref) {
+            return [NSString stringWithFormat:@"%@=%p", ref.path, (__bridge void *)ref.onChangeBlock];
+        }] componentsJoinedByString:@", "];
+        return [NSString stringWithFormat:@"%@ -> %@", key, refsString];
+    }] componentsJoinedByString:@"\n"];
 }
 
 - (void)didChangeTerminalValueWithPath:(NSString *)name {

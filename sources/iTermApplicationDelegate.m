@@ -35,6 +35,7 @@
 #import "iTermAboutWindowController.h"
 #import "iTermAppHotKeyProvider.h"
 #import "iTermAdvancedSettingsModel.h"
+#import "iTermBuiltInFunctions.h"
 #import "iTermBuriedSessions.h"
 #import "iTermCPUProfilerUI.h"
 #import "iTermColorPresets.h"
@@ -82,7 +83,7 @@
 #import "iTermTipWindowController.h"
 #import "iTermToolbeltView.h"
 #import "iTermURLStore.h"
-#import "iTermVariableScope.h"
+#import "iTermVariableScope+Global.h"
 #import "iTermWarning.h"
 #import "iTermWebSocketCookieJar.h"
 #import "MovePaneController.h"
@@ -570,7 +571,8 @@ static BOOL hasBecomeActive = NO;
                                               return;
                                           }
                                           [self->_scriptsMenuController importDidFinishWithErrorMessage:errorMessage
-                                                                                               location:location];
+                                                                                               location:location
+                                                                                            originalURL:[NSURL fileURLWithPath:filename]];
                                       }];
         return YES;
     }
@@ -1147,6 +1149,7 @@ static BOOL hasBecomeActive = NO;
 
     [PTYSession registerBuiltInFunctions];
     [PTYTab registerBuiltInFunctions];
+    [iTermArrayCountBuiltInFunction registerBuiltInFunction];
     
     [iTermMigrationHelper migrateApplicationSupportDirectoryIfNeeded];
     [self buildScriptMenu:nil];
@@ -1502,7 +1505,8 @@ static BOOL hasBecomeActive = NO;
                [[[iTermController sharedInstance] terminals] count] == 0 &&
                ![self isAppleScriptTestApp] &&
                [[[iTermHotKeyController sharedInstance] profileHotKeys] count] == 0 &&
-               [[[iTermBuriedSessions sharedInstance] buriedSessions] count] == 0) {
+               [[[iTermBuriedSessions sharedInstance] buriedSessions] count] == 0 &&
+               ![[NSApplication sharedApplication] isRunningUnitTests]) {
         [self newWindow:nil];
     }
     if (_untitledFileOpenStatus == iTermUntitledFileOpenDisallowed) {

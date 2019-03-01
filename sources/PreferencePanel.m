@@ -215,7 +215,7 @@ static PreferencePanel *gSessionsPreferencePanel;
     if (_editCurrentSessionMode) {
         [self layoutSubviewsForEditCurrentSessionMode];
     } else {
-        [self resizeWindowForTabViewItem:_globalTabViewItem];
+        [self resizeWindowForTabViewItem:_globalTabViewItem animated:NO];
     }
 }
 
@@ -231,10 +231,12 @@ static PreferencePanel *gSessionsPreferencePanel;
 #pragma mark - API
 
 - (void)configureHotkeyForProfile:(Profile *)profile {
+    _profilesViewController.scope = nil;
     [self window];
     [self selectProfilesTab];
     [self run];
-    [_profilesViewController openToProfileWithGuidAndEditHotKey:profile[KEY_GUID]];
+    [_profilesViewController openToProfileWithGuidAndEditHotKey:profile[KEY_GUID]
+                                                          scope:nil];
 }
 
 - (void)selectProfilesTab {
@@ -254,22 +256,34 @@ static PreferencePanel *gSessionsPreferencePanel;
 }
 
 // NOTE: Callers should invoke makeKeyAndOrderFront if they are so inclined.
-- (void)openToProfileWithGuid:(NSString*)guid selectGeneralTab:(BOOL)selectGeneralTab tmux:(BOOL)tmux {
+- (void)openToProfileWithGuid:(NSString*)guid
+             selectGeneralTab:(BOOL)selectGeneralTab
+                         tmux:(BOOL)tmux
+                        scope:(iTermVariableScope<iTermSessionScope> *)scope {
     _tmux = tmux;
     _profilesViewController.tmuxSession = tmux;
+    _profilesViewController.scope = scope;
     [self window];
     [self selectProfilesTab];
     [self run];
-    [_profilesViewController openToProfileWithGuid:guid selectGeneralTab:selectGeneralTab];
+    [_profilesViewController openToProfileWithGuid:guid
+                                  selectGeneralTab:selectGeneralTab
+                                             scope:scope];
 }
 
-- (void)openToProfileWithGuid:(NSString *)guid andEditComponentWithIdentifier:(NSString *)identifier tmux:(BOOL)tmux {
+- (void)openToProfileWithGuid:(NSString *)guid
+andEditComponentWithIdentifier:(NSString *)identifier
+                         tmux:(BOOL)tmux
+                        scope:(iTermVariableScope<iTermSessionScope> *)scope {
     _tmux = tmux;
     _profilesViewController.tmuxSession = tmux;
+    _profilesViewController.scope = scope;
     [self window];
     [self selectProfilesTab];
     [self run];
-    [_profilesViewController openToProfileWithGuid:guid andEditComponentWithIdentifier:identifier];
+    [_profilesViewController openToProfileWithGuid:guid
+                    andEditComponentWithIdentifier:identifier
+                                             scope:scope];
 }
 
 - (NSWindow *)window {
@@ -484,18 +498,52 @@ static PreferencePanel *gSessionsPreferencePanel;
 
 #pragma mark - NSTabViewDelegate
 
+- (iTermPreferencesBaseViewController *)viewControllerForTabViewItem:(NSTabViewItem *)tabViewItem {
+    if (tabViewItem == _globalTabViewItem) {
+        return _generalPreferencesViewController;
+    }
+    if (tabViewItem == _appearanceTabViewItem) {
+        return _appearancePreferencesViewController;
+    }
+    if (tabViewItem == _keyboardTabViewItem) {
+        return _keysViewController;
+    }
+    if (tabViewItem == _arrangementsTabViewItem) {
+        // TODO: the arrangements vc doesn't have the right superclass
+        return nil;
+    }
+    if (tabViewItem == _bookmarksTabViewItem) {
+        return _profilesViewController;
+    }
+    if (tabViewItem == _mouseTabViewItem) {
+        return _pointerViewController;
+    }
+    if (tabViewItem == _advancedTabViewItem) {
+        // TODO: the advanced vc doesn't have the right superclass
+        return nil;
+    }
+    return nil;
+}
+
 - (void)tabView:(NSTabView *)tabView didSelectTabViewItem:(NSTabViewItem *)tabViewItem {
     if (tabViewItem == _bookmarksTabViewItem) {
         if (_disableResize == 0) {
             [_profilesViewController resizeWindowForCurrentTabAnimated:YES];
         }
-    } else {
-        [self resizeWindowForTabViewItem:tabViewItem];
-        [_profilesViewController invalidateSavedSize];
+        return;
     }
+
+    [self resizeWindowForTabViewItem:tabViewItem animated:YES];
+    [_profilesViewController invalidateSavedSize];
 }
 
-- (void)resizeWindowForTabViewItem:(NSTabViewItem *)tabViewItem {
+- (void)resizeWindowForTabViewItem:(NSTabViewItem *)tabViewItem animated:(BOOL)animated {
+    iTermPreferencesBaseViewController *viewController = [self viewControllerForTabViewItem:tabViewItem];
+    if (viewController.tabView != nil) {
+        [viewController resizeWindowForCurrentTabAnimated:animated];
+        return;
+    }
+
     iTermSizeRememberingView *theView = (iTermSizeRememberingView *)tabViewItem.view;
     [theView resetToOriginalSize];
     NSRect rect = self.window.frame;
@@ -507,7 +555,7 @@ static PreferencePanel *gSessionsPreferencePanel;
     rect.size.width += 26;
     rect.origin = topLeft;
     rect.origin.y -= rect.size.height;
-    [[self window] setFrame:rect display:YES animate:YES];
+    [[self window] setFrame:rect display:YES animate:animated];
 }
 
 @end

@@ -52,6 +52,7 @@ extern NSString *const iTermAdvancedSettingsDidChange;
 + (double)badgeMaxWidthFraction;
 + (int)badgeRightMargin;
 + (int)badgeTopMargin;
++ (BOOL)bootstrapDaemon;
 + (BOOL)clearBellIconAggressively;
 + (BOOL)cmdClickWhenInactiveInvokesSemanticHistory;
 + (double)coloredSelectedTabOutlineStrength;
@@ -111,6 +112,7 @@ extern NSString *const iTermAdvancedSettingsDidChange;
 + (BOOL)jiggleTTYSizeOnClearBuffer;
 + (BOOL)killJobsInServersOnQuit;
 + (BOOL)killSessionsOnLogout;
++ (BOOL)loadFromFindPasteboard;
 + (BOOL)logDrawingPerformance;
 + (BOOL)logRestorableStateSize;
 + (BOOL)lowFiCombiningMarks;
@@ -256,6 +258,7 @@ extern NSString *const iTermAdvancedSettingsDidChange;
 #endif
 
 + (BOOL)useModernScrollWheelAccumulator;
++ (BOOL)useOldStyleDropDownViews;
 + (BOOL)useOpenDirectory;
 + (BOOL)useSystemCursorWhenPossible;
 + (BOOL)useUnevenTabs;

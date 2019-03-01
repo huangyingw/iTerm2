@@ -199,8 +199,16 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
 }
 
 - (iTermDropDownFindViewController *)newDropDownFindView {
+    NSString *nibName;
+    if ([iTermAdvancedSettingsModel useOldStyleDropDownViews]) {
+        nibName = @"FindView";
+    } else {
+        nibName = @"MinimalFindView";
+    }
+
     iTermDropDownFindViewController *dropDownViewController =
-        [[iTermDropDownFindViewController alloc] initWithNibName:@"FindView" bundle:[NSBundle bundleForClass:self.class]];
+        [[iTermDropDownFindViewController alloc] initWithNibName:nibName
+                                                          bundle:[NSBundle bundleForClass:self.class]];
     [[dropDownViewController view] setHidden:YES];
     [super addSubview:dropDownViewController.view];
     NSRect aRect = [self frame];
@@ -1234,9 +1242,7 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
             }
             break;
     }
-    if (statusBarChanged) {
-        [self updateFindDriver];
-    }
+    [self updateFindDriver];
 }
 
 - (void)updateFindDriver {

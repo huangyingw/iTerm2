@@ -10,6 +10,7 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @interface iTermBaseNotification : NSObject
++ (void)subscribe:(NSObject *)owner selector:(SEL)selector;
 - (nullable instancetype)init NS_UNAVAILABLE;
 - (void)post;
 @end
@@ -25,6 +26,21 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)subscribe:(NSObject *)owner
             block:(void (^)(iTermPreferenceDidChangeNotification * _Nonnull notification))block;
 
+@end
+
+NS_ASSUME_NONNULL_END
+
+#import <Cocoa/Cocoa.h>
+
+NS_ASSUME_NONNULL_BEGIN
+
+@interface iTermFlagsChangedNotification : iTermBaseNotification
+
+@property (nonatomic, strong, readonly) NSEvent *event;
+
++ (instancetype)notificationWithEvent:(NSEvent *)event;
++ (void)subscribe:(NSObject *)owner
+            block:(void (^)(iTermFlagsChangedNotification * _Nonnull notification))block;
 @end
 
 NS_ASSUME_NONNULL_END

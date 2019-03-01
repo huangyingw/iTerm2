@@ -40,6 +40,7 @@ extern NSString *const PTYSessionRevivedNotification;
 @class iTermAnnouncementViewController;
 @class iTermEchoProbe;
 @class iTermStatusBarViewController;
+@class iTermSwiftyStringGraph;
 @class iTermVariables;
 @class iTermVariableScope;
 @class PTYTab;
@@ -57,6 +58,7 @@ extern NSString *const PTYSessionRevivedNotification;
 @class iTermNotificationController;
 @class iTermPromptOnCloseReason;
 @class iTermQuickLookController;
+@protocol iTermSessionScope;
 @class SessionView;
 
 typedef NS_ENUM(NSInteger, SplitSelectionMode) {
@@ -226,6 +228,7 @@ typedef enum {
 - (BOOL)sessionShouldSendWindowSizeIOCTL:(PTYSession *)session;
 
 - (void)sessionDidInvalidateStatusBar:(PTYSession *)session;
+- (void)sessionAddSwiftyStringsToGraph:(iTermSwiftyStringGraph *)graph;
 
 @end
 
@@ -432,7 +435,7 @@ typedef enum {
 @property(nonatomic, readonly) NSMutableArray<VT100RemoteHost *> *hosts;  // of VT100RemoteHost
 
 @property (nonatomic, readonly) iTermVariables *variables;
-@property (nonatomic, readonly) iTermVariableScope *variablesScope;
+@property (nonatomic, readonly) iTermVariableScope<iTermSessionScope> *variablesScope;
 @property (nonatomic, readonly) BOOL triggerParametersUseInterpolatedStrings;
 
 @property(atomic, readonly) PTYSessionTmuxMode tmuxMode;
@@ -705,6 +708,7 @@ typedef enum {
 - (void)setTmuxPane:(int)windowPane;
 
 - (void)addNoteAtCursor;
+- (void)addNoteWithText:(NSString *)text inAbsoluteRange:(VT100GridAbsCoordRange)range;
 - (void)previousMarkOrNote;
 - (void)nextMarkOrNote;
 - (void)scrollToMark:(id<iTermMark>)mark;
@@ -787,6 +791,7 @@ typedef enum {
 - (void)profileNameDidChangeTo:(NSString *)name;
 - (void)profileDidChangeToProfileWithName:(NSString *)name;
 - (void)updateStatusBarStyle;
+- (BOOL)checkForCyclesInSwiftyStrings;
 
 #pragma mark - API
 

@@ -14,7 +14,10 @@
 #import "iTermPromptOnCloseReason.h"
 #import "iTermProfilePreferences.h"
 #import "iTermSwiftyString.h"
+#import "iTermSwiftyStringGraph.h"
+#import "iTermVariableReference.h"
 #import "iTermVariableScope.h"
+#import "iTermVariableScope+Tab.h"
 #import "MovePaneController.h"
 #import "NSAppearance+iTerm.h"
 #import "NSArray+iTerm.h"
@@ -204,6 +207,7 @@ static void SetAgainstGrainDim(BOOL isVertical, NSSize *dest, CGFloat value) {
     NSString *_temporarilyUnmaximizedSessionGUID;
 
     NSMutableArray<PTYSession *> *_sessionsWithDeferredFontChanges;
+    iTermVariableScope<iTermTabScope> *_variablesScope;
 }
 
 @synthesize parentWindow = parentWindow_;
@@ -405,6 +409,13 @@ static void SetAgainstGrainDim(BOOL isVertical, NSSize *dest, CGFloat value) {
                                              selector:@selector(screenParametersDidChange:)
                                                  name:NSApplicationDidChangeScreenParametersNotification
                                                object:nil];
+    _tabTitleOverrideSwiftyString = [[iTermSwiftyString alloc] initWithScope:self.variablesScope
+                                                                  sourcePath:iTermVariableKeyTabTitleOverrideFormat
+                                                             destinationPath:iTermVariableKeyTabTitleOverride];
+    __weak __typeof(self) weakSelf = self;
+    _tabTitleOverrideSwiftyString.observer = ^(NSString * _Nonnull newValue) {
+        [weakSelf updateTitleOverrideFromFormatVariable];
+    };
 }
 
 - (void)dealloc {
@@ -452,6 +463,13 @@ static void SetAgainstGrainDim(BOOL isVertical, NSSize *dest, CGFloat value) {
 }
 
 #pragma mark - Everything else
+
+- (void)setDelegate:(id<PTYTabDelegate>)delegate {
+    _delegate = delegate;
+    [self.variablesScope setValue:[delegate tabWindowVariables:self]
+                 forVariableNamed:iTermVariableKeyTabWindow
+                             weak:YES];
+}
 
 - (BOOL)useSeparateStatusbarsPerPane {
     if (![iTermPreferences boolForKey:kPreferenceKeySeparateStatusBarsPerPane]) {
@@ -607,7 +625,10 @@ static void SetAgainstGrainDim(BOOL isVertical, NSSize *dest, CGFloat value) {
 }
 
 - (void)updateTabTitleForCurrentSessionName:(NSString *)newName {
-    NSString *value = (self.evaluatedTitleOverride ?: newName) ?: @" ";
+    NSString *value = self.variablesScope.tabTitleOverride;
+    if (value.length == 0) {
+        value = newName ?: @"";
+    }
     [tabViewItem_ setLabel:value];  // PSM uses bindings to bind the label to its title
     [self.realParentWindow tabTitleDidChange:self];
 }
@@ -2858,7 +2879,7 @@ static void SetAgainstGrainDim(BOOL isVertical, NSSize *dest, CGFloat value) {
     }
 
     return [@{ TAB_ARRANGEMENT_ROOT: rootNode,
-               TAB_ARRANGEMENT_TITLE_OVERRIDE: self.titleOverride ?: [NSNull null] } dictionaryByRemovingNullValues];
+               TAB_ARRANGEMENT_TITLE_OVERRIDE: self.titleOverride.length ? self.titleOverride : [NSNull null] } dictionaryByRemovingNullValues];
 }
 
 - (NSDictionary*)arrangement {
@@ -4021,7 +4042,7 @@ static void SetAgainstGrainDim(BOOL isVertical, NSSize *dest, CGFloat value) {
     }
 
     [session1Tab fitSessionToCurrentViewSize:session1];
-    [session2Tab fitSessionToCurrentViewSize:session1];
+    [session2Tab fitSessionToCurrentViewSize:session2];
 
     DLog(@"After swap, %@ has superview %@ and %@ has superview %@",
          session1.view, session1.view.superview,
@@ -4079,10 +4100,11 @@ static void SetAgainstGrainDim(BOOL isVertical, NSSize *dest, CGFloat value) {
     [self updateTabTitleForCurrentSessionName:sessionName];
 }
 
-- (iTermVariableScope *)variablesScope {
-    iTermVariableScope *scope = [[iTermVariableScope alloc] init];
-    [scope addVariables:_variables toScopeNamed:nil];
-    return scope;
+- (iTermVariableScope<iTermTabScope> *)variablesScope {
+    if (!_variablesScope) {
+        _variablesScope = [iTermVariableScope newTabScopeWithVariables:_variables];
+    }
+    return _variablesScope;
 }
 
 - (id)valueForVariable:(NSString *)name {
@@ -4090,29 +4112,20 @@ static void SetAgainstGrainDim(BOOL isVertical, NSSize *dest, CGFloat value) {
 }
 
 - (void)setTitleOverride:(NSString *)titleOverride {
-    [_tabTitleOverrideSwiftyString invalidate];
-    if (!titleOverride) {
-        _tabTitleOverrideSwiftyString = nil;
-        [self.variablesScope setValue:nil forVariableNamed:iTermVariableKeyTabTitleOverride];
-        return;
+    [self.variablesScope setValue:titleOverride forVariableNamed:iTermVariableKeyTabTitleOverrideFormat];
+}
+
+- (void)updateTitleOverrideFromFormatVariable {
+    [self updateTabTitle];
+    for (PTYSession *session in self.sessions) {
+        if ([session checkForCyclesInSwiftyStrings]) {
+            _tabTitleOverrideSwiftyString.swiftyString = @"[Cycle detected]";
+        }
     }
-    __weak __typeof(self) weakSelf = self;
-    _tabTitleOverrideSwiftyString =
-        [[iTermSwiftyString alloc] initWithString:titleOverride
-                                            scope:self.variablesScope
-                                         observer:
-         ^(NSString * _Nonnull newValue) {
-             [weakSelf.variablesScope setValue:newValue forVariableNamed:iTermVariableKeyTabTitleOverride];
-             [weakSelf updateTabTitle];
-         }];
 }
 
 - (NSString *)titleOverride {
     return _tabTitleOverrideSwiftyString.swiftyString;
-}
-
-- (NSString *)evaluatedTitleOverride {
-    return [self.variablesScope valueForVariableName:iTermVariableKeyTabTitleOverride];
 }
 
 #pragma mark NSSplitView delegate methods
@@ -5309,6 +5322,18 @@ static void SetAgainstGrainDim(BOOL isVertical, NSSize *dest, CGFloat value) {
 }
 
 - (BOOL)sessionShouldSendWindowSizeIOCTL:(PTYSession *)session {
+    if ([[MovePaneController sharedInstance] dropping]) {
+        return YES;
+    }
+    if ([[PSMTabDragAssistant sharedDragAssistant] dropping]) {
+        return YES;
+    }
+    if ([[MovePaneController sharedInstance] isDragInProgress]) {
+        return NO;
+    }
+    if ([[PSMTabDragAssistant sharedDragAssistant] isDragging]) {
+        return NO;
+    }
     return _temporarilyUnmaximizedSessionGUID == nil;
 }
 
@@ -5316,6 +5341,15 @@ static void SetAgainstGrainDim(BOOL isVertical, NSSize *dest, CGFloat value) {
     if (session == self.activeSession) {
         [_delegate tabDidInvalidateStatusBar:self];
     }
+}
+
+- (void)sessionAddSwiftyStringsToGraph:(iTermSwiftyStringGraph *)graph {
+    [graph addSwiftyString:_tabTitleOverrideSwiftyString
+            withFormatPath:iTermVariableKeyTabTitleOverrideFormat
+            evaluationPath:iTermVariableKeyTabTitleOverride
+                     scope:self.variablesScope];
+
+    [self.realParentWindow tabAddSwiftyStringsToGraph:graph];
 }
 
 @end

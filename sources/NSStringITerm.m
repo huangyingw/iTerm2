@@ -2126,6 +2126,24 @@ static TECObjectRef CreateTECConverterForUTF8Variants(TextEncodingVariant varian
     return result;
 }
 
+- (NSString *)stringByDroppingLastCharacters:(NSInteger)count {
+    if (count >= self.length) {
+        return @"";
+    }
+    if (count <= 0) {
+        return self;
+    }
+    return [self substringWithRange:NSMakeRange(0, self.length - count)];
+}
+
+- (NSString *)stringByAppendingVariablePathComponent:(NSString *)component {
+    if (self.length == 0) {
+        return component;
+    } else {
+        return [self stringByAppendingFormat:@".%@", component];
+    }
+}
+
 @end
 
 @implementation NSMutableString (iTerm)

@@ -17,6 +17,7 @@
 #import "iTermController.h"
 #import "iTermDisclosableView.h"
 #import "iTermLSOF.h"
+#import "iTermPreferences.h"
 #import "iTermProfilePreferences.h"
 #import "iTermPythonArgumentParser.h"
 #import "iTermScriptFunctionCall.h"
@@ -25,9 +26,10 @@
 #import "iTermStatusBarComponent.h"
 #import "iTermStatusBarViewController.h"
 #import "iTermVariableReference.h"
-#import "iTermVariableScope.h"
+#import "iTermVariableScope+Global.h"
 #import "iTermWarning.h"
 #import "MovePaneController.h"
+#import "NSApplication+iTerm.h"
 #import "NSArray+iTerm.h"
 #import "NSColor+iTerm.h"
 #import "NSDictionary+iTerm.h"
@@ -292,18 +294,20 @@ static id sAPIHelperInstance;
 - (instancetype)initPrivate {
     self = [super init];
     if (self) {
-        iTermWarning *warning = [[iTermWarning alloc] init];
-        warning.heading = @"Enable Python API?";
-        warning.actionLabels = @[ @"OK", @"Cancel" ];
-        warning.identifier = @"EnableAPIServer";
-        warning.warningType = kiTermWarningTypePermanentlySilenceable;
-        warning.title = @"The Python API allows scripts you run to control iTerm2 and access all its data.";
-        if ([warning runModal] == kiTermWarningSelection1) {
-            return nil;
+        if (![NSApp isRunningUnitTests]) {
+            iTermWarning *warning = [[iTermWarning alloc] init];
+            warning.heading = @"Enable Python API?";
+            warning.actionLabels = @[ @"OK", @"Cancel" ];
+            warning.identifier = @"EnableAPIServer";
+            warning.warningType = kiTermWarningTypePermanentlySilenceable;
+            warning.title = @"The Python API allows scripts you run to control iTerm2 and access all its data.";
+            if ([warning runModal] == kiTermWarningSelection1) {
+                return nil;
+            }
+            _apiServer = [[iTermAPIServer alloc] init];
+            _apiServer.delegate = self;
         }
 
-        _apiServer = [[iTermAPIServer alloc] init];
-        _apiServer.delegate = self;
         _serverOriginatedRPCCompletionBlocks = [NSMutableDictionary dictionary];
         _outstandingRPCs = [NSMutableDictionary dictionary];
         _allSessionsSubscriptions = [NSMutableArray array];
@@ -2917,7 +2921,7 @@ static BOOL iTermCheckSplitTreesIsomorphic(ITMSplitTreeNode *node1, ITMSplitTree
 
 - (ITMPreferencesResponse_Result_GetPreferenceResult *)handleGetPreferenceRequestForKey:(NSString *)key {
     ITMPreferencesResponse_Result_GetPreferenceResult *result = [[ITMPreferencesResponse_Result_GetPreferenceResult alloc] init];
-    id obj = [[NSUserDefaults standardUserDefaults] objectForKey:key];
+    id obj = [iTermPreferences objectForKey:key];
     NSString *json = [NSJSONSerialization it_jsonStringForObject:obj];
     result.jsonValue = json;
     return result;

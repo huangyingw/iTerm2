@@ -29,6 +29,7 @@
 #import "iTermFindDriver.h"
 #import "iTermFontPanel.h"
 #import "iTermFunctionCallTextFieldDelegate.h"
+#import "iTermNotificationCenter.h"
 #import "iTermNotificationController.h"
 #import "iTermHotKeyController.h"
 #import "iTermHotKeyMigrationHelper.h"
@@ -52,11 +53,15 @@
 #import "iTermSessionFactory.h"
 #import "iTermShellHistoryController.h"
 #import "iTermSwiftyString.h"
+#import "iTermSwiftyStringGraph.h"
 #import "iTermSystemVersion.h"
 #import "iTermTabBarControlView.h"
 #import "iTermToolbeltView.h"
 #import "iTermTouchBarButton.h"
+#import "iTermVariableReference.h"
 #import "iTermVariableScope.h"
+#import "iTermVariableScope+Tab.h"
+#import "iTermVariableScope+Window.h"
 #import "iTermWarning.h"
 #import "iTermWindowOcclusionChangeMonitor.h"
 #import "iTermWindowShortcutLabelTitlebarAccessoryViewController.h"
@@ -148,6 +153,7 @@ static NSString *const TERMINAL_ARRANGEMENT_HAS_TOOLBELT = @"Has Toolbelt";
 static NSString *const TERMINAL_ARRANGEMENT_HIDING_TOOLBELT_SHOULD_RESIZE_WINDOW = @"Hiding Toolbelt Should Resize Window";
 static NSString *const TERMINAL_ARRANGEMENT_USE_TRANSPARENCY = @"Use Transparency";
 static NSString *const TERMINAL_ARRANGEMENT_TOOLBELT_PROPORTIONS = @"Toolbelt Proportions";
+static NSString *const TERMINAL_ARRANGEMENT_TITLE_OVERRIDE = @"Title Override";
 
 static NSRect iTermRectCenteredHorizontallyWithinRect(NSRect frameToCenter, NSRect container) {
     CGFloat centerOfContainer = NSMidX(container);
@@ -187,7 +193,6 @@ static NSRect iTermRectCenteredVerticallyWithinRect(NSRect frameToCenter, NSRect
 // reset to nil after the change is made in the window.
 @property(nonatomic, copy) NSString *desiredTitle;
 
-@property(nonatomic, retain) NSString *titleOverride;
 @property(nonatomic, readonly) iTermVariables *variables;
 @property(nonatomic, readonly) iTermSwiftyString *windowTitleOverrideSwiftyString;
 @end
@@ -412,7 +417,38 @@ static NSRect iTermRectCenteredVerticallyWithinRect(NSRect frameToCenter, NSRect
     }
 }
 
++ (BOOL)windowTypeHasFullSizeContentView:(iTermWindowType)windowType {
+    switch (windowType) {
+        case WINDOW_TYPE_TOP:
+        case WINDOW_TYPE_BOTTOM:
+        case WINDOW_TYPE_LEFT:
+        case WINDOW_TYPE_RIGHT:
+        case WINDOW_TYPE_TOP_PARTIAL:
+        case WINDOW_TYPE_BOTTOM_PARTIAL:
+        case WINDOW_TYPE_LEFT_PARTIAL:
+        case WINDOW_TYPE_RIGHT_PARTIAL:
+        case WINDOW_TYPE_NO_TITLE_BAR:
+            if (@available(macOS 10.14, *)) {
+                return YES;
+            } else {
+                return NO;
+            }
+
+        case WINDOW_TYPE_TRADITIONAL_FULL_SCREEN:
+            return NO;
+
+        case WINDOW_TYPE_COMPACT:
+            return YES;
+
+        case WINDOW_TYPE_LION_FULL_SCREEN:
+        case WINDOW_TYPE_ACCESSORY:
+        case WINDOW_TYPE_NORMAL:
+            return NO;
+    }
+}
+
 + (NSInteger)styleMaskForWindowType:(iTermWindowType)windowType
+                    savedWindowType:(iTermWindowType)savedWindowType
                    hotkeyWindowType:(iTermHotkeyWindowType)hotkeyWindowType {
     NSInteger mask = 0;
     if (hotkeyWindowType == iTermHotkeyWindowTypeFloatingPanel) {
@@ -457,6 +493,11 @@ static NSRect iTermRectCenteredVerticallyWithinRect(NSRect frameToCenter, NSRect
         case WINDOW_TYPE_LION_FULL_SCREEN:
         case WINDOW_TYPE_ACCESSORY:
         case WINDOW_TYPE_NORMAL:
+            if (@available(macOS 10.14, *)) {
+                if ([self windowTypeHasFullSizeContentView:savedWindowType]) {
+                    mask |= NSWindowStyleMaskFullSizeContentView;
+                }
+            }
             return (mask |
                     NSWindowStyleMaskTitled |
                     NSWindowStyleMaskClosable |
@@ -692,9 +733,11 @@ static NSRect iTermRectCenteredVerticallyWithinRect(NSRect frameToCenter, NSRect
         // We want to set the style mask to the window's non-fullscreen appearance so we're prepared
         // to exit fullscreen with the right style.
         styleMask = [PseudoTerminal styleMaskForWindowType:savedWindowType
+                                           savedWindowType:savedWindowType
                                           hotkeyWindowType:hotkeyWindowType];
     } else {
         styleMask = [PseudoTerminal styleMaskForWindowType:windowType
+                                           savedWindowType:savedWindowType
                                           hotkeyWindowType:hotkeyWindowType];
     }
     savedWindowType_ = savedWindowType;
@@ -826,10 +869,18 @@ static NSRect iTermRectCenteredVerticallyWithinRect(NSRect frameToCenter, NSRect
     _initialProfile = [[PseudoTerminal expurgatedInitialProfile:profile] retain];
     if ([iTermProfilePreferences boolForKey:KEY_USE_CUSTOM_WINDOW_TITLE inProfile:profile]) {
         NSString *override = [iTermProfilePreferences stringForKey:KEY_CUSTOM_WINDOW_TITLE inProfile:profile];;
-        self.titleOverride = override.length ? override : @" ";
+        [self.scope setValue:override.length ? override : @" " forVariableNamed:iTermVariableKeyWindowTitleOverrideFormat];
     }
 
     [[NSNotificationCenter defaultCenter] postNotificationName:kTerminalWindowControllerWasCreatedNotification object:self];
+
+    _windowTitleOverrideSwiftyString =
+        [[iTermSwiftyString alloc] initWithScope:self.scope
+                                      sourcePath:iTermVariableKeyWindowTitleOverrideFormat
+                                 destinationPath:iTermVariableKeyWindowTitleOverride];
+    _windowTitleOverrideSwiftyString.observer = ^(NSString * _Nonnull newValue) {
+        [weakSelf setWindowTitle];
+    };
     DLog(@"Done initializing PseudoTerminal %@", self);
 }
 
@@ -1352,6 +1403,13 @@ ITERM_WEAKLY_REFERENCEABLE
     [self updateTouchBarIfNeeded:NO];
 }
 
+- (void)tabAddSwiftyStringsToGraph:(iTermSwiftyStringGraph *)graph {
+    [graph addSwiftyString:_windowTitleOverrideSwiftyString
+            withFormatPath:iTermVariableKeyWindowTitleOverrideFormat
+            evaluationPath:iTermVariableKeyWindowTitleOverride
+                     scope:self.scope];
+}
+
 - (BOOL)miniaturizedWindowShouldPreserveFrameUntilDeminiaturized {
     if (self.window.isMiniaturized) {
         switch (windowType_) {
@@ -1447,7 +1505,7 @@ ITERM_WEAKLY_REFERENCEABLE
     if (self.shouldUseMinimalStyle) {
         PSMMinimalTabStyle *style = [PSMMinimalTabStyle castFrom:_contentView.tabBarControl.style];
         DLog(@"> begin Computing decoration color");
-        return [style textColorDefaultSelected:YES backgroundColor:backgroundColor windowIsKey:(self.window.isKeyWindow && NSApp.isActive)];
+        return [style textColorDefaultSelected:YES backgroundColor:backgroundColor windowIsMainAndAppIsActive:(self.window.isMainWindow && NSApp.isActive)];
         DLog(@"< end Computing decoration color");
     } else {
         CGFloat whiteLevel;
@@ -2429,28 +2487,6 @@ ITERM_WEAKLY_REFERENCEABLE
     return [self terminalWithArrangement:arrangement sessions:nil forceOpeningHotKeyWindow:force];
 }
 
-- (void)setTitleOverride:(NSString *)titleOverride {
-    [_windowTitleOverrideSwiftyString invalidate];
-    if (!titleOverride) {
-        _windowTitleOverrideSwiftyString = nil;
-        [self.scope setValue:nil forVariableNamed:iTermVariableKeyWindowTitleOverride];
-        return;
-    }
-    __weak __typeof(self) weakSelf = self;
-    _windowTitleOverrideSwiftyString =
-    [[iTermSwiftyString alloc] initWithString:titleOverride
-                                        scope:self.scope
-                                     observer:
-     ^(NSString * _Nonnull newValue) {
-         [weakSelf.scope setValue:newValue forVariableNamed:iTermVariableKeyWindowTitleOverride];
-         [weakSelf setWindowTitle];
-     }];
-}
-
-- (NSString *)titleOverride {
-    return _windowTitleOverrideSwiftyString.swiftyString;
-}
-
 - (iTermVariables *)variables {
     if (!_variables) {
         _variables = [[iTermVariables alloc] initWithContext:iTermVariablesSuggestionContextWindow
@@ -2459,12 +2495,10 @@ ITERM_WEAKLY_REFERENCEABLE
     return _variables;
 }
 
-- (iTermVariableScope *)scope {
+- (iTermVariableScope<iTermWindowScope> *)scope {
     if (!_scope) {
-        _scope = [[iTermVariableScope alloc] init];
-        [_scope addVariables:self.variables toScopeNamed:nil];
-        [_scope addVariables:[iTermVariables globalInstance] toScopeNamed:iTermVariableKeyGlobalScopeName];
-        [_scope setValue:self.currentTab.variables forVariableNamed:iTermVariableKeyWindowCurrentTab];
+        _scope = [iTermVariableScope newWindowScopeWithVariables:self.variables
+                                                    tabVariables:self.currentTab.variables];
     }
     return _scope;
 }
@@ -2481,7 +2515,7 @@ ITERM_WEAKLY_REFERENCEABLE
     titleTextField.delegate = delegate;
     titleTextField.editable = YES;
     titleTextField.selectable = YES;
-    titleTextField.stringValue = self.titleOverride ?: @"";
+    titleTextField.stringValue = [self.scope valueForVariableName:iTermVariableKeyWindowTitleOverrideFormat] ?: @"";
     alert.accessoryView = titleTextField;
     [alert addButtonWithTitle:@"OK"];
     [alert addButtonWithTitle:@"Cancel"];
@@ -2489,7 +2523,8 @@ ITERM_WEAKLY_REFERENCEABLE
         [titleTextField.window makeFirstResponder:titleTextField];
     });
     if ([alert runModal] == NSAlertFirstButtonReturn) {
-        self.titleOverride = titleTextField.stringValue.length ? titleTextField.stringValue : nil;
+        [self.scope setValue:titleTextField.stringValue.length ? titleTextField.stringValue : nil
+            forVariableNamed:iTermVariableKeyWindowTitleOverrideFormat];
     }
 }
 
@@ -2656,6 +2691,7 @@ ITERM_WEAKLY_REFERENCEABLE
     if (arrangement[TERMINAL_ARRANGEMENT_USE_TRANSPARENCY]) {
         useTransparency_ = [arrangement[TERMINAL_ARRANGEMENT_USE_TRANSPARENCY] boolValue];
     }
+    self.scope.windowTitleOverrideFormat = arrangement[TERMINAL_ARRANGEMENT_TITLE_OVERRIDE];
 
     _contentView.shouldShowToolbelt = [arrangement[TERMINAL_ARRANGEMENT_HAS_TOOLBELT] boolValue];
     [_contentView constrainToolbeltWidth];
@@ -2692,7 +2728,7 @@ ITERM_WEAKLY_REFERENCEABLE
     }
 
     [self fitTabsToWindow];
-    [_contentView updateToolbelt];
+    [_contentView updateToolbeltForWindow:self.window];
     return YES;
 }
 
@@ -2761,6 +2797,9 @@ ITERM_WEAKLY_REFERENCEABLE
     NSDictionary *proportions = _contentView.toolbelt.proportions;
     if (proportions) {
         result[TERMINAL_ARRANGEMENT_TOOLBELT_PROPORTIONS] = proportions;
+    }
+    if (self.scope.windowTitleOverrideFormat) {
+        result[TERMINAL_ARRANGEMENT_TITLE_OVERRIDE] = self.scope.windowTitleOverrideFormat;
     }
     result[TERMINAL_ARRANGEMENT_HIDING_TOOLBELT_SHOULD_RESIZE_WINDOW] =
             @(hidingToolbeltShouldResizeWindow_);
@@ -3204,7 +3243,7 @@ ITERM_WEAKLY_REFERENCEABLE
         }
     }
 
-    [_contentView updateToolbeltFrame];
+    [_contentView updateToolbeltFrameForWindow:self.window];
 }
 
 - (NSRect)canonicalFrameForScreen:(NSScreen *)screen {
@@ -3505,6 +3544,7 @@ ITERM_WEAKLY_REFERENCEABLE
     if (@available(macOS 10.14, *)) {
         _shortcutAccessoryViewController.isMain = YES;
     }
+    [_contentView updateDivisionViewAndWindowNumberLabel];
 }
 
 - (void)windowDidResignMain:(NSNotification *)aNotification {
@@ -3524,6 +3564,7 @@ ITERM_WEAKLY_REFERENCEABLE
     // update the cursor
     [[[self currentSession] textview] refresh];
     [[[self currentSession] textview] setNeedsDisplay:YES];
+    [_contentView updateDivisionViewAndWindowNumberLabel];
 }
 
 - (BOOL)isEdgeWindow
@@ -3585,11 +3626,23 @@ ITERM_WEAKLY_REFERENCEABLE
 }
 
 - (NSEdgeInsets)tabBarInsets {
-    if (windowType_ != WINDOW_TYPE_COMPACT) {
-        return NSEdgeInsetsZero;
-    }
-    if (self.anyFullScreen || togglingLionFullScreen_) {
-        return NSEdgeInsetsZero;
+    if (@available(macOS 10.14, *)) {
+        iTermWindowType effectiveWindowType = windowType_;
+        if (exitingLionFullscreen_) {
+            effectiveWindowType = savedWindowType_;
+        }
+        if (effectiveWindowType != WINDOW_TYPE_COMPACT) {
+            return NSEdgeInsetsZero;
+        }
+        if (!exitingLionFullscreen_) {
+            if (self.anyFullScreen || togglingLionFullScreen_) {
+                return NSEdgeInsetsZero;
+            }
+        }
+    } else {
+        if (self.anyFullScreen || togglingLionFullScreen_) {
+            return NSEdgeInsetsZero;
+        }
     }
     switch ([iTermPreferences intForKey:kPreferenceKeyTabPosition]) {
         case PSMTab_TopTab:
@@ -4116,7 +4169,9 @@ ITERM_WEAKLY_REFERENCEABLE
 }
 
 - (NSUInteger)styleMask {
-    return [PseudoTerminal styleMaskForWindowType:windowType_ hotkeyWindowType:_hotkeyWindowType];
+    return [PseudoTerminal styleMaskForWindowType:windowType_
+                                  savedWindowType:savedWindowType_
+                                 hotkeyWindowType:_hotkeyWindowType];
 }
 
 // This is a hack to fix the problem of exiting a fullscreen window that as never not-fullscreen.
@@ -4188,6 +4243,7 @@ ITERM_WEAKLY_REFERENCEABLE
         }
     }
     NSWindowStyleMask styleMask = [PseudoTerminal styleMaskForWindowType:windowTypeForStyleMask
+                                                         savedWindowType:savedWindowType
                                                         hotkeyWindowType:hotkeyWindowType];
     const BOOL defer = (hotkeyWindowType != iTermHotkeyWindowTypeNone);
     NSWindow<PTYWindow> *myWindow = [[[windowClass alloc] initWithContentRect:initialFrame
@@ -4353,7 +4409,7 @@ ITERM_WEAKLY_REFERENCEABLE
     togglingFullScreen_ = YES;
     _contentView.toolbeltWidth = savedToolbeltWidth;
     [_contentView constrainToolbeltWidth];
-    [_contentView updateToolbelt];
+    [_contentView updateToolbeltForWindow:self.window];
     [self updateUseTransparency];
 
     if (_fullScreen) {
@@ -4664,7 +4720,7 @@ ITERM_WEAKLY_REFERENCEABLE
     lionFullScreen_ = YES;
     [self didChangeAnyFullScreen];
     [_contentView.tabBarControl setFlashing:YES];
-    [_contentView updateToolbelt];
+    [_contentView updateToolbeltForWindow:self.window];
     [self repositionWidgets];
     // Set scrollbars appropriately
     [self updateSessionScrollbars];
@@ -4726,16 +4782,46 @@ ITERM_WEAKLY_REFERENCEABLE
 
     if (@available(macOS 10.14, *)) {
         [self updateTabBarControlIsTitlebarAccessoryAssumingFullScreen:NO];
+    } else {
+        self.window.styleMask = [PseudoTerminal styleMaskForWindowType:savedWindowType_
+                                                       savedWindowType:savedWindowType_
+                                                      hotkeyWindowType:_hotkeyWindowType];
     }
-    self.window.styleMask = [PseudoTerminal styleMaskForWindowType:savedWindowType_ hotkeyWindowType:_hotkeyWindowType];
     [self updateWindowShadow:(NSWindow<PTYWindow> *)self.window];
     [_contentView.tabBarControl updateFlashing];
     [self fitTabsToWindow];
-    [self repositionWidgets];
+    if (@available(macOS 10.14, *)) {} else {
+        [self repositionWidgets];
+    }
     self.window.hasShadow = YES;
     [self updateUseMetalInAllTabs];
     [self updateWindowShadow:self.ptyWindow];
     self.windowType = WINDOW_TYPE_LION_FULL_SCREEN;
+    if (@available(macOS 10.14, *)) {
+        switch (savedWindowType_) {
+            case WINDOW_TYPE_NORMAL:
+            case WINDOW_TYPE_ACCESSORY:
+                break;
+            case WINDOW_TYPE_TOP:
+            case WINDOW_TYPE_LEFT:
+            case WINDOW_TYPE_RIGHT:
+            case WINDOW_TYPE_BOTTOM:
+            case WINDOW_TYPE_COMPACT:
+            case WINDOW_TYPE_TOP_PARTIAL:
+            case WINDOW_TYPE_LEFT_PARTIAL:
+            case WINDOW_TYPE_NO_TITLE_BAR:
+            case WINDOW_TYPE_RIGHT_PARTIAL:
+            case WINDOW_TYPE_BOTTOM_PARTIAL:
+            case WINDOW_TYPE_LION_FULL_SCREEN:
+            case WINDOW_TYPE_TRADITIONAL_FULL_SCREEN:
+                [[self.window standardWindowButton:NSWindowCloseButton] setHidden:YES];
+                [[self.window standardWindowButton:NSWindowMiniaturizeButton] setHidden:YES];
+                [[self.window standardWindowButton:NSWindowZoomButton] setHidden:YES];
+                break;
+        }
+        [_contentView didChangeCompactness];
+        [self repositionWidgets];
+    }
 }
 
 - (void)windowDidExitFullScreen:(NSNotification *)notification
@@ -4746,6 +4832,11 @@ ITERM_WEAKLY_REFERENCEABLE
     lionFullScreen_ = NO;
 
     DLog(@"Window did exit fullscreen. Set window type to %d", savedWindowType_);
+    if (@available(macOS 10.14, *)) {
+        self.window.styleMask = [PseudoTerminal styleMaskForWindowType:savedWindowType_
+                                                       savedWindowType:savedWindowType_
+                                                      hotkeyWindowType:_hotkeyWindowType];
+    }
     self.windowType = savedWindowType_;
     [self didChangeAnyFullScreen];
 
@@ -4755,7 +4846,7 @@ ITERM_WEAKLY_REFERENCEABLE
     [self fitTabsToWindow];
     [self repositionWidgets];
     [self invalidateRestorableState];
-    [_contentView updateToolbelt];
+    [_contentView updateToolbeltForWindow:self.window];
 
     for (PTYTab *aTab in [self tabs]) {
         [aTab notifyWindowChanged];
@@ -4894,7 +4985,8 @@ ITERM_WEAKLY_REFERENCEABLE
     NSString *newGuid = [session divorceAddressBookEntryFromPreferences];
     [[PreferencePanel sessionsInstance] openToProfileWithGuid:newGuid
                                              selectGeneralTab:makeKey
-                                                         tmux:session.isTmuxClient];
+                                                         tmux:session.isTmuxClient
+                                                        scope:session.variablesScope];
     if (makeKey) {
         [[[PreferencePanel sessionsInstance] window] makeKeyAndOrderFront:nil];
     }
@@ -5108,17 +5200,56 @@ ITERM_WEAKLY_REFERENCEABLE
     }
 }
 
-- (void)updateProxyIcon {
+- (BOOL)proxyIconIsAllowed {
     if (![iTermPreferences boolForKey:kPreferenceKeyEnableProxyIcon]) {
+        return NO;
+    }
+
+    switch ((iTermPreferencesTabStyle)[iTermPreferences intForKey:kPreferenceKeyTabStyle]) {
+        case TAB_STYLE_MINIMAL:
+            return NO;
+
+        case TAB_STYLE_AUTOMATIC:
+        case TAB_STYLE_LIGHT:
+        case TAB_STYLE_LIGHT_HIGH_CONTRAST:
+        case TAB_STYLE_DARK:
+        case TAB_STYLE_DARK_HIGH_CONTRAST:
+            break;
+    }
+
+    switch (windowType_) {
+        case WINDOW_TYPE_TOP:
+        case WINDOW_TYPE_LEFT:
+        case WINDOW_TYPE_RIGHT:
+        case WINDOW_TYPE_BOTTOM:
+        case WINDOW_TYPE_TOP_PARTIAL:
+        case WINDOW_TYPE_LEFT_PARTIAL:
+        case WINDOW_TYPE_BOTTOM_PARTIAL:
+        case WINDOW_TYPE_RIGHT_PARTIAL:
+        case WINDOW_TYPE_NO_TITLE_BAR:
+        case WINDOW_TYPE_COMPACT:
+        case WINDOW_TYPE_TRADITIONAL_FULL_SCREEN:
+            return NO;
+
+        case WINDOW_TYPE_LION_FULL_SCREEN:
+        case WINDOW_TYPE_NORMAL:
+        case WINDOW_TYPE_ACCESSORY:
+            break;
+    }
+
+    return YES;
+}
+
+- (void)updateProxyIcon {
+    if (![self proxyIconIsAllowed]) {
         self.window.representedURL = nil;
         return;
     }
-
     if (self.currentSession.preferredProxyIcon) {
         self.window.representedURL = self.currentSession.preferredProxyIcon;
-    } else {
-        self.window.representedURL = self.currentSession.textViewCurrentLocation;
+        return;
     }
+    self.window.representedURL = self.currentSession.textViewCurrentLocation;
 }
 
 - (void)notifyTmuxOfTabChange {
@@ -5756,7 +5887,14 @@ ITERM_WEAKLY_REFERENCEABLE
         return;
     }
     [tabView selectTabViewItem:tabViewItem];
-    PTYTab *tab = tabViewItem.identifier;
+    [self openEditTabTitleWindow];
+}
+
+- (IBAction)editTabTitle:(id)sender {
+    [self openEditTabTitleWindow];
+}
+
+- (void)openEditTabTitleWindow {
     NSAlert *alert = [[[NSAlert alloc] init] autorelease];
     alert.messageText = @"Set Tab Title";
     alert.informativeText = @"If this is empty, the tab takes the active session’s title. Variables and function calls enclosed in \\(…) will replaced with their evaluation.";
@@ -5768,7 +5906,7 @@ ITERM_WEAKLY_REFERENCEABLE
     titleTextField.delegate = delegate;
     titleTextField.editable = YES;
     titleTextField.selectable = YES;
-    titleTextField.stringValue = tab.titleOverride ?: @"";
+    titleTextField.stringValue = self.currentTab.variablesScope.tabTitleOverrideFormat ?: @"";
     alert.accessoryView = titleTextField;
     [alert addButtonWithTitle:@"OK"];
     [alert addButtonWithTitle:@"Cancel"];
@@ -5776,7 +5914,7 @@ ITERM_WEAKLY_REFERENCEABLE
         [titleTextField.window makeFirstResponder:titleTextField];
     });
     if ([alert runModal] == NSAlertFirstButtonReturn) {
-        tab.titleOverride = titleTextField.stringValue.length ? titleTextField.stringValue : nil;
+        self.currentTab.variablesScope.tabTitleOverrideFormat = titleTextField.stringValue.length ? titleTextField.stringValue : nil;
     }
 }
 
@@ -5857,26 +5995,76 @@ ITERM_WEAKLY_REFERENCEABLE
 }
 
 - (BOOL)titleBarShouldAppearTransparent {
+    if (@available(macOS 10.14, *)) { } else {
+        return [PseudoTerminal titleBarShouldAppearTransparentForWindowType:windowType_];
+    }
+
     switch (windowType_) {
-        case WINDOW_TYPE_TOP:
-        case WINDOW_TYPE_LEFT:
-        case WINDOW_TYPE_RIGHT:
-        case WINDOW_TYPE_BOTTOM:
+        case WINDOW_TYPE_LION_FULL_SCREEN:
+            return [PseudoTerminal titleBarShouldAppearTransparentForWindowType:savedWindowType_];
+            break;
+
+        case WINDOW_TYPE_TRADITIONAL_FULL_SCREEN:
         case WINDOW_TYPE_NORMAL:
         case WINDOW_TYPE_ACCESSORY:
         case WINDOW_TYPE_TOP_PARTIAL:
         case WINDOW_TYPE_LEFT_PARTIAL:
         case WINDOW_TYPE_RIGHT_PARTIAL:
         case WINDOW_TYPE_BOTTOM_PARTIAL:
-        case WINDOW_TYPE_LION_FULL_SCREEN:
-        case WINDOW_TYPE_TRADITIONAL_FULL_SCREEN:
-            break;
-
+        case WINDOW_TYPE_TOP:
+        case WINDOW_TYPE_LEFT:
+        case WINDOW_TYPE_RIGHT:
+        case WINDOW_TYPE_BOTTOM:
         case WINDOW_TYPE_NO_TITLE_BAR:
         case WINDOW_TYPE_COMPACT:
-            return YES;
+            return [PseudoTerminal titleBarShouldAppearTransparentForWindowType:windowType_];
     }
-    return NO;
+}
+
++ (BOOL)titleBarShouldAppearTransparentForWindowType:(iTermWindowType)windowType {
+    if (@available(macOS 10.14, *)) {
+        switch (windowType) {
+            case WINDOW_TYPE_NORMAL:
+            case WINDOW_TYPE_ACCESSORY:
+            case WINDOW_TYPE_LION_FULL_SCREEN:
+            case WINDOW_TYPE_TRADITIONAL_FULL_SCREEN:
+                break;
+
+            case WINDOW_TYPE_TOP_PARTIAL:
+            case WINDOW_TYPE_LEFT_PARTIAL:
+            case WINDOW_TYPE_RIGHT_PARTIAL:
+            case WINDOW_TYPE_BOTTOM_PARTIAL:
+            case WINDOW_TYPE_TOP:
+            case WINDOW_TYPE_LEFT:
+            case WINDOW_TYPE_RIGHT:
+            case WINDOW_TYPE_BOTTOM:
+            case WINDOW_TYPE_NO_TITLE_BAR:
+            case WINDOW_TYPE_COMPACT:
+                return YES;
+        }
+        return NO;
+    } else {
+        switch (windowType) {
+            case WINDOW_TYPE_TOP:
+            case WINDOW_TYPE_LEFT:
+            case WINDOW_TYPE_RIGHT:
+            case WINDOW_TYPE_BOTTOM:
+            case WINDOW_TYPE_NORMAL:
+            case WINDOW_TYPE_ACCESSORY:
+            case WINDOW_TYPE_TOP_PARTIAL:
+            case WINDOW_TYPE_LEFT_PARTIAL:
+            case WINDOW_TYPE_RIGHT_PARTIAL:
+            case WINDOW_TYPE_BOTTOM_PARTIAL:
+            case WINDOW_TYPE_LION_FULL_SCREEN:
+            case WINDOW_TYPE_TRADITIONAL_FULL_SCREEN:
+                break;
+
+            case WINDOW_TYPE_NO_TITLE_BAR:
+            case WINDOW_TYPE_COMPACT:
+                return YES;
+        }
+        return NO;
+    }
 }
 
 - (void)setLegacyBackgroundColor:(nullable NSColor *)backgroundColor {
@@ -5907,7 +6095,7 @@ ITERM_WEAKLY_REFERENCEABLE
                 case TAB_STYLE_DARK:
                 case TAB_STYLE_DARK_HIGH_CONTRAST:  // fall through
                     // the key/active status is ignored on 10.12
-                    backgroundColor = [PSMDarkTabStyle tabBarColorWhenKeyAndActive:NO];
+                    backgroundColor = [PSMDarkTabStyle tabBarColorWhenMainAndActive:NO];
                     break;
             }
         }
@@ -5994,7 +6182,7 @@ ITERM_WEAKLY_REFERENCEABLE
         return [self.currentSession textColorForStatusBar];
     }
     if ([_contentView.tabBarControl isHidden] && ![self anyFullScreen]) {
-        return [NSColor blackColor];
+        return [NSColor controlTextColor];
     } else {
         return [_contentView.tabBarControl accessoryTextColor];
     }
@@ -7421,7 +7609,7 @@ ITERM_WEAKLY_REFERENCEABLE
     return 0;
 }
 
-- (void)updateWindowNumberVisibility:(NSNotification*)aNotification {
+- (void)updateWindowNumberVisibility:(NSNotification *)aNotification {
     // This is if displaying of window number was toggled in prefs.
     if (@available(macOS 10.14, *)) {
         if (_shortcutAccessoryViewController) {
@@ -7531,8 +7719,13 @@ ITERM_WEAKLY_REFERENCEABLE
     if (@available(macOS 10.14, *)) { } else {
         return NO;
     }
-    if (self.lionFullScreen || togglingLionFullScreen_) {
-        return NO;
+    iTermWindowType effectiveWindowType = windowType_;
+    if (exitingLionFullscreen_) {
+        effectiveWindowType = savedWindowType_;
+    } else {
+        if (self.lionFullScreen || togglingLionFullScreen_) {
+            return NO;
+        }
     }
     switch ([iTermPreferences intForKey:kPreferenceKeyTabPosition]) {
         case PSMTab_LeftTab:
@@ -7544,7 +7737,7 @@ ITERM_WEAKLY_REFERENCEABLE
     if (![iTermPreferences boolForKey:kPreferenceKeyShowWindowNumber]) {
         return NO;
     }
-    if (windowType_ == WINDOW_TYPE_COMPACT) {
+    if (effectiveWindowType == WINDOW_TYPE_COMPACT) {
         return YES;
     }
 
@@ -7569,11 +7762,11 @@ ITERM_WEAKLY_REFERENCEABLE
     
     // The window number will be displayed over the tabbar color. For non-key windows, use the
     // non-selected tab text color because that more closely matches the titlebar color.
-    const BOOL windowIsKey = (self.window.isKeyWindow && NSApp.isActive);
-    NSColor *color = [_contentView.tabBarControl.style textColorDefaultSelected:windowIsKey
+    const BOOL mainAndActive = (self.window.isMainWindow && NSApp.isActive);
+    NSColor *color = [_contentView.tabBarControl.style textColorDefaultSelected:mainAndActive
                                                                 backgroundColor:nil
-                                                                    windowIsKey:windowIsKey];
-    if (windowIsKey) {
+                                                     windowIsMainAndAppIsActive:mainAndActive];
+    if (mainAndActive) {
         return [color colorWithAlphaComponent:0.65];
     }
     return color;
@@ -7627,7 +7820,23 @@ ITERM_WEAKLY_REFERENCEABLE
 }
 
 - (BOOL)rootTerminalViewShouldDrawStoplightButtons {
-    if (self.anyFullScreen || self.enteringLionFullscreen) {
+    if (self.enteringLionFullscreen) {
+        return NO;
+    }
+    if (self.exitingLionFullscreen) {
+        switch ([iTermPreferences intForKey:kPreferenceKeyTabPosition]) {
+            case PSMTab_TopTab:
+            case PSMTab_LeftTab:
+                return YES;
+            case PSMTab_BottomTab:
+                break;
+        }
+        return NO;
+    }
+    if (exitingLionFullscreen_) {
+        return windowType_ == WINDOW_TYPE_COMPACT || savedWindowType_ == WINDOW_TYPE_COMPACT;
+    }
+    if (self.anyFullScreen) {
         return NO;
     }
     return windowType_ == WINDOW_TYPE_COMPACT;
@@ -8234,9 +8443,9 @@ ITERM_WEAKLY_REFERENCEABLE
 }
 
 - (NSString *)undecoratedWindowTitle {
-    if (self.titleOverride &&
-        self.windowTitleOverrideSwiftyString.evaluatedString.length > 0) {
-        return self.windowTitleOverrideSwiftyString.evaluatedString;
+    if ([self.scope valueForVariableName:iTermVariableKeyWindowTitleOverrideFormat] &&
+        self.scope.windowTitleOverrideFormat.length > 0) {
+        return self.scope.windowTitleOverride;
     }
     return self.currentSession.nameController.presentationWindowTitle ?: @"Untitled";
 }
@@ -8363,6 +8572,8 @@ ITERM_WEAKLY_REFERENCEABLE
         result = ![[self currentTab] isTmuxTab];
     } else if ([item action] == @selector(jumpToSavedScrollPosition:)) {
         result = [self hasSavedScrollPosition];
+    } else if ([item action] == @selector(editTabTitle:)) {
+        return self.numberOfTabs > 0;
     } else if ([item action] == @selector(moveTabLeft:)) {
         result = [_contentView.tabView numberOfTabViewItems] > 1;
     } else if ([item action] == @selector(moveTabRight:)) {
@@ -9304,6 +9515,10 @@ ITERM_WEAKLY_REFERENCEABLE
     [_contentView layoutSubviews];
 }
 
+- (iTermVariables *)tabWindowVariables:(PTYTab *)tab {
+    return self.variables;
+}
+
 #pragma mark - Toolbelt
 
 - (void)toolbeltUpdateMouseCursor {
@@ -9414,7 +9629,7 @@ ITERM_WEAKLY_REFERENCEABLE
     // Update dimming of panes.
     [self refreshTerminal:nil];
     [self setDimmingForSessions];
-    
+
     // Post a notification to reload menus
     [[NSNotificationCenter defaultCenter] postNotificationName:@"iTermWindowBecameKey"
                                                         object:self

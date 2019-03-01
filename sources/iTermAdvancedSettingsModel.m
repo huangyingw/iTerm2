@@ -317,6 +317,8 @@ DEFINE_BOOL(pinEditSession, NO, SECTION_GENERAL @"Pin Edit Session window to the
 DEFINE_BOOL(remapModifiersWithoutEventTap, NO, SECTION_GENERAL @"Disable remapping modifiers for system shortcuts.\nThis prevents asking for accessibility permission. It breaks remapping system shortcuts like cmd-tab.");
 DEFINE_BOOL(alertsIndicateShortcuts, NO, SECTION_GENERAL @"Buttons in modal alerts indicate keyboard shortcuts.\nDo you miss Windows 95? I do.");
 DEFINE_BOOL(showHintsInSplitPaneMenuItems, NO, SECTION_GENERAL @"Show hints in split pane menu items to indicate horizontal vs vertical semantics.\nYou must restart iTerm2 after changing this setting for it to take effect.");
+DEFINE_BOOL(useOldStyleDropDownViews, NO, SECTION_GENERAL @"Use old-style find and paste progress indicator views.\nThis change will only affect new windows.");
+DEFINE_BOOL(loadFromFindPasteboard, YES, SECTION_GENERAL @"Synchronize search queries across windows and applications.\nNormally, when you enter a search query in a Find field all find fields in all applications get updated to hold the same value. This is utter nonsense, and can be disabled by setting this preference to No.");
 
 #pragma mark - Drawing
 
@@ -372,6 +374,8 @@ DEFINE_BOOL(showBlockBoundaries, NO, SECTION_DEBUGGING @"Show line buffer block 
 #define SECTION_SESSION @"Session: "
 
 DEFINE_BOOL(runJobsInServers, YES, SECTION_SESSION @"Enable session restoration.\nSession restoration runs jobs in separate processes. They will survive crashes, force quits, and upgrades.\nYou must restart iTerm2 for this change to take effect.");
+DEFINE_BOOL(bootstrapDaemon, YES, SECTION_SESSION @"Allow sessions to survive logging out and back in.\nThis breaks the “auth sufficient pam_tid.so” hack some people use to allow sudo to authenticate with Touch ID.");
+
 DEFINE_BOOL(killJobsInServersOnQuit, YES, SECTION_SESSION @"User-initiated Quit (⌘Q) of iTerm2 will kill all running jobs.\nApplies only when session restoration is on.");
 DEFINE_SETTABLE_BOOL(suppressRestartAnnouncement, SuppressRestartAnnouncement, NO, SECTION_SESSION @"Suppress the Restart Session offer.\nWhen a session terminates, it will offer to restart itself. Turn this on to suppress the offer permanently.");
 DEFINE_BOOL(showSessionRestoredBanner, YES, SECTION_SESSION @"When restoring a session without restoring a running job, draw a banner saying “Session Contents Restored” below the restored contents.");
@@ -395,7 +399,7 @@ DEFINE_BOOL(serializeOpeningMultipleFullScreenWindows, YES, SECTION_WINDOWS @"Wh
 DEFINE_BOOL(trackingRunloopForLiveResize, YES, SECTION_WINDOWS @"Use a tracking runloop for live resizing.\nThis allows the terminal to redraw during a resizing drag.");
 DEFINE_FLOAT(invalidateShadowTimesPerSecond, 15, SECTION_WINDOWS @"How many times per second to update the shadow of transparent windows to prevent ghosting.\nThis works around a macOS Mojave bug that leaves a ghost of past window contents behind in transparent windows. It hurts performance to do it frequently, especially in large windows. Set to 0 to disable.");
 DEFINE_BOOL(disableWindowShadowWhenTransparencyOnMojave, YES, SECTION_WINDOWS @"Disable the window shadow on Mojave when the window has a transparent session to improve performance.");
-DEFINE_BOOL(disableWindowShadowWhenTransparencyPreMojave, NO, SECTION_WINDOWS @"Disable the window shadow on High Sierra and earlier when the window has a transparent session to prevent text shadows.");
+DEFINE_BOOL(disableWindowShadowWhenTransparencyPreMojave, YES, SECTION_WINDOWS @"Disable the window shadow on High Sierra and earlier when the window has a transparent session to prevent text shadows.");
 
 #pragma mark tmux
 
