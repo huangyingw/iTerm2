@@ -21,7 +21,7 @@ class SessionTerminationMonitor:
     """
     def __init__(self, connection: iterm2.Connection):
         self.__connection = connection
-        self.__queue = asyncio.Queue(loop=asyncio.get_event_loop())
+        self.__queue: asyncio.Queue = asyncio.Queue(loop=asyncio.get_event_loop())
 
     async def __aenter__(self):
         async def callback(_connection, message):
@@ -53,7 +53,7 @@ class LayoutChangeMonitor:
     """
     def __init__(self, connection: iterm2.Connection):
         self.__connection = connection
-        self.__queue = asyncio.Queue(loop=asyncio.get_event_loop())
+        self.__queue: asyncio.Queue = asyncio.Queue(loop=asyncio.get_event_loop())
 
     async def __aenter__(self):
         async def callback(_connection, message):
@@ -112,7 +112,7 @@ class NewSessionMonitor:
       """
     def __init__(self, connection: iterm2.Connection):
         self.__connection = connection
-        self.__queue = asyncio.Queue(loop=asyncio.get_event_loop())
+        self.__queue: asyncio.Queue = asyncio.Queue(loop=asyncio.get_event_loop())
 
     async def __aenter__(self):
         async def callback(_connection, message):
@@ -131,5 +131,5 @@ class NewSessionMonitor:
         return session_id
 
     async def __aexit__(self, exc_type, exc, _tb):
-        await async_unsubscribe(self.__connection, self.__token)
+        await iterm2.notifications.async_unsubscribe(self.__connection, self.__token)
 

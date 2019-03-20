@@ -8,6 +8,7 @@
 #import "iTermScriptsMenuController.h"
 
 #import "DebugLogging.h"
+#import "iTermAPIHelper.h"
 #import "iTermAPIScriptLauncher.h"
 #import "iTermAdvancedSettingsModel.h"
 #import "iTermBuildingScriptWindowController.h"
@@ -309,7 +310,9 @@ NS_ASSUME_NONNULL_BEGIN
                                   }];
 }
 
-- (void)importDidFinishWithErrorMessage:(NSString *)errorMessage location:(NSURL *)location originalURL:(NSURL *)url {
+- (void)importDidFinishWithErrorMessage:(NSString *)errorMessage
+                               location:(NSURL *)location
+                            originalURL:(NSURL *)url {
     if (errorMessage) {
         NSAlert *alert = [[NSAlert alloc] init];
         alert.messageText = @"Could Not Install Script";
@@ -329,7 +332,8 @@ NS_ASSUME_NONNULL_BEGIN
             return;
         }
         if (response == NSAlertSecondButtonReturn) {
-            [self launchScriptWithAbsolutePath:location.path];
+            [self launchScriptWithAbsolutePath:location.path
+                            explicitUserAction:YES];
         }
     }
 }
@@ -379,7 +383,7 @@ NS_ASSUME_NONNULL_BEGIN
     if (entry) {
         [entry kill];
     } else {
-        [self launchScriptWithAbsolutePath:fullPath];
+        [self launchScriptWithAbsolutePath:fullPath explicitUserAction:YES];
     }
 }
 
@@ -390,26 +394,37 @@ NS_ASSUME_NONNULL_BEGIN
     [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[ [NSURL fileURLWithPath:fullPath] ]];
 }
 
-- (void)launchScriptWithRelativePath:(NSString *)path {
+- (void)launchScriptWithRelativePath:(NSString *)path
+                  explicitUserAction:(BOOL)explicitUserAction {
     NSString *fullPath = [[[NSFileManager defaultManager] scriptsPath] stringByAppendingPathComponent:path];
-    [self launchScriptWithAbsolutePath:fullPath];
+    [self launchScriptWithAbsolutePath:fullPath explicitUserAction:explicitUserAction];
 }
 
 // NOTE: This logic needs to be kept in sync with -couldLaunchScriptWithAbsolutePath
-- (void)launchScriptWithAbsolutePath:(NSString *)fullPath {
+- (void)launchScriptWithAbsolutePath:(NSString *)fullPath explicitUserAction:(BOOL)explicitUserAction {
     NSString *venv = [iTermAPIScriptLauncher environmentForScript:fullPath checkForMain:YES];
     if (venv) {
+        if (!explicitUserAction && ![iTermAPIHelper isEnabled]) {
+            DLog(@"Not launching %@ because the API is not enabled", fullPath);
+            return;
+        }
         NSString *name = fullPath.lastPathComponent;
         NSString *mainPyPath = [[[fullPath stringByAppendingPathComponent:name] stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"py"];
         [iTermAPIScriptLauncher launchScript:mainPyPath
                                     fullPath:fullPath
                               withVirtualEnv:venv
-                                 setupPyPath:[fullPath stringByAppendingPathComponent:@"setup.py"]];
+                                setupCfgPath:[fullPath stringByAppendingPathComponent:@"setup.cfg"]
+                          explicitUserAction:explicitUserAction];
         return;
     }
 
     if ([[fullPath pathExtension] isEqualToString:@"py"]) {
-        [iTermAPIScriptLauncher launchScript:fullPath];
+        if (!explicitUserAction && ![iTermAPIHelper isEnabled]) {
+            DLog(@"Not launching %@ because the API is not enabled", fullPath);
+            return;
+        }
+        [iTermAPIScriptLauncher launchScript:fullPath
+                          explicitUserAction:explicitUserAction];
         return;
     }
     if ([[fullPath pathExtension] isEqualToString:@"scpt"]) {
@@ -502,12 +517,24 @@ NS_ASSUME_NONNULL_BEGIN
     if (url) {
         [[iTermPythonRuntimeDownloader sharedInstance] downloadOptionalComponentsIfNeededWithConfirmation:YES
                                                                                             pythonVersion:pythonVersion
+                                                                                minimumEnvironmentVersion:0
                                                                                        requiredToContinue:YES
-                                                                                           withCompletion:^(BOOL ok) {
-            if (!ok) {
-                return;
-            }
-            [self reallyCreateNewPythonScriptAtURL:url picker:picker dependencies:dependencies pythonVersion:pythonVersion];
+                                                                                           withCompletion:
+         ^(iTermPythonRuntimeDownloaderStatus status) {
+             switch (status) {
+                 case iTermPythonRuntimeDownloaderStatusRequestedVersionNotFound:
+                 case iTermPythonRuntimeDownloaderStatusCanceledByUser:
+                 case iTermPythonRuntimeDownloaderStatusUnknown:
+                 case iTermPythonRuntimeDownloaderStatusWorking:
+                 case iTermPythonRuntimeDownloaderStatusError: {
+                     return;
+                 }
+
+                 case iTermPythonRuntimeDownloaderStatusNotNeeded:
+                 case iTermPythonRuntimeDownloaderStatusDownloaded:
+                     break;
+             }
+             [self reallyCreateNewPythonScriptAtURL:url picker:picker dependencies:dependencies pythonVersion:pythonVersion];
         }];
     }
 }
@@ -528,20 +555,27 @@ NS_ASSUME_NONNULL_BEGIN
                                                                      [pleaseWait.window makeKeyAndOrderFront:nil];
                                                                  }];
         _disablePathWatcher++;
-        [[iTermPythonRuntimeDownloader sharedInstance] installPythonEnvironmentTo:folder eventualLocation:folder pythonVersion:pythonVersion dependencies:dependencies createSetupPy:YES completion:^(BOOL ok) {
-            [[NSNotificationCenter defaultCenter] removeObserver:token];
-            [pleaseWait.window close];
-            if (!ok) {
-                NSAlert *alert = [[NSAlert alloc] init];
-                alert.messageText = @"Installation Failed";
-                alert.informativeText = @"Remove ~/Library/Application Support/iTerm2/iterm2env and try again.";
-                [alert runModal];
-                return;
-            }
-            [self finishInstallingNewPythonScriptForPicker:picker url:url];
-            self->_disablePathWatcher--;
-            [self build];
-        }];
+        [[iTermPythonRuntimeDownloader sharedInstance] installPythonEnvironmentTo:folder
+                                                                 eventualLocation:folder
+                                                                    pythonVersion:pythonVersion
+                                                               environmentVersion:[[iTermPythonRuntimeDownloader sharedInstance] installedVersionWithPythonVersion:pythonVersion]
+                                                                     dependencies:dependencies
+                                                                   createSetupCfg:YES
+                                                                       completion:
+         ^(iTermInstallPythonStatus status) {
+             [[NSNotificationCenter defaultCenter] removeObserver:token];
+             [pleaseWait.window close];
+             if (status != iTermInstallPythonStatusOK) {
+                 NSAlert *alert = [[NSAlert alloc] init];
+                 alert.messageText = @"Installation Failed";
+                 alert.informativeText = @"Remove ~/Library/Application Support/iTerm2/iterm2env and try again.";
+                 [alert runModal];
+                 return;
+             }
+             [self finishInstallingNewPythonScriptForPicker:picker url:url];
+             self->_disablePathWatcher--;
+             [self build];
+         }];
     } else {
         [self finishInstallingNewPythonScriptForPicker:picker url:url];
     }
@@ -816,7 +850,7 @@ NS_ASSUME_NONNULL_BEGIN
         NSString *name = url.path.lastPathComponent;
         // For a path like foo/bar this returns foo/bar/bar/bar.py
         // So the hierarchy looks like
-        // ~/Library/ApplicationSupport/iTerm2/Scripts/foo/bar/setup.py
+        // ~/Library/ApplicationSupport/iTerm2/Scripts/foo/bar/setup.cfg
         // ~/Library/ApplicationSupport/iTerm2/Scripts/foo/bar/iterm2env
         // ~/Library/ApplicationSupport/iTerm2/Scripts/foo/bar/bar/
         // ~/Library/ApplicationSupport/iTerm2/Scripts/foo/bar/bar/bar.py
@@ -912,7 +946,7 @@ NS_ASSUME_NONNULL_BEGIN
 }
 
 - (void)runAutoLaunchScript:(NSString *)path {
-    [self launchScriptWithAbsolutePath:path];
+    [self launchScriptWithAbsolutePath:path explicitUserAction:NO];
 }
 
 - (void)runLegacyAutoLaunchScripts {

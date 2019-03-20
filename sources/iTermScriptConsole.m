@@ -56,6 +56,10 @@ typedef NS_ENUM(NSInteger, iTermScriptFilterControlTag) {
     return instance;
 }
 
+- (void)awakeFromNib {
+    _callsView.textColor = [NSColor textColor];
+}
+
 - (void)makeTextViewHorizontallyScrollable:(NSTextView *)textView {
     [textView.enclosingScrollView setHasHorizontalScroller:YES];
     [textView setMaxSize:NSMakeSize(FLT_MAX, FLT_MAX)];
@@ -78,16 +82,6 @@ typedef NS_ENUM(NSInteger, iTermScriptFilterControlTag) {
 - (void)findPrevious:(id)sender {
     NSControl *fakeSender = [[NSControl alloc] init];
     fakeSender.tag = NSTextFinderActionPreviousMatch;
-    if (_tabView.selectedTabViewItem.view == _logsView.enclosingScrollView) {
-        [_logsView performFindPanelAction:fakeSender];
-    } else {
-        [_callsView performFindPanelAction:fakeSender];
-    }
-}
-
-- (void)findWithSelection:(id)sender {
-    NSControl *fakeSender = [[NSControl alloc] init];
-    fakeSender.tag = NSTextFinderActionSetSearchString;
     if (_tabView.selectedTabViewItem.view == _logsView.enclosingScrollView) {
         [_logsView performFindPanelAction:fakeSender];
     } else {

@@ -3133,7 +3133,7 @@ basedAtAbsoluteLineNumber:(long long)absoluteLineNumber
 
 - (void)terminalSetIconTitle:(NSString *)title {
     if ([delegate_ screenAllowTitleSetting]) {
-        [delegate_ screenSetName:title];
+        [delegate_ screenSetIconName:title];
     }
 }
 
@@ -3894,6 +3894,18 @@ basedAtAbsoluteLineNumber:(long long)absoluteLineNumber
 
 - (void)terminalWillEndLinkWithCode:(unsigned short)code {
     [self addURLMarkAtLineAfterCursorWithCode:code];
+}
+
+- (void)terminalAppendSixelData:(NSData *)data {
+    [self appendImageAtCursorWithName:@"Sixel Image"
+                                width:0
+                                units:kVT100TerminalUnitsAuto
+                               height:0
+                                units:kVT100TerminalUnitsAuto
+                  preserveAspectRatio:YES
+                                inset:NSEdgeInsetsZero
+                                image:nil
+                                 data:data];
 }
 
 - (void)terminalDidFinishReceivingFile {

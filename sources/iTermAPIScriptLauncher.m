@@ -15,7 +15,7 @@
 #import "iTermPythonRuntimeDownloader.h"
 #import "iTermScriptConsole.h"
 #import "iTermScriptHistory.h"
-#import "iTermSetupPyParser.h"
+#import "iTermSetupCfgParser.h"
 #import "iTermWebSocketCookieJar.h"
 #import "NSArray+iTerm.h"
 #import "NSFileManager+iTerm.h"
@@ -28,13 +28,14 @@
 
 @implementation iTermAPIScriptLauncher
 
-+ (void)launchScript:(NSString *)filename {
-    [self launchScript:filename fullPath:filename withVirtualEnv:nil setupPyPath:nil];
++ (void)launchScript:(NSString *)filename
+  explicitUserAction:(BOOL)explicitUserAction {
+    [self launchScript:filename fullPath:filename withVirtualEnv:nil setupCfgPath:nil explicitUserAction:explicitUserAction];
 }
 
 + (NSString *)pythonVersionForScript:(NSString *)path {
-    NSString *setupPyPath = [path stringByAppendingPathComponent:@"setup.py"];
-    iTermSetupPyParser *parser = [[iTermSetupPyParser alloc] initWithPath:setupPyPath];
+    NSString *setupCfgPath = [path stringByAppendingPathComponent:@"setup.cfg"];
+    iTermSetupCfgParser *parser = [[iTermSetupCfgParser alloc] initWithPath:setupCfgPath];
     if (parser) {
         return parser.pythonVersion;
     } else {
@@ -45,29 +46,43 @@
 + (void)launchScript:(NSString *)filename
             fullPath:(NSString *)fullPath
       withVirtualEnv:(NSString *)virtualenv
-         setupPyPath:(NSString *)setupPyPath {
+        setupCfgPath:(NSString *)setupCfgPath
+  explicitUserAction:(BOOL)explicitUserAction {
     if (virtualenv != nil) {
-        iTermSetupPyParser *parser = [[iTermSetupPyParser alloc] initWithPath:setupPyPath];
+        iTermSetupCfgParser *parser = [[iTermSetupCfgParser alloc] initWithPath:setupCfgPath];
         NSString *pythonVersion = parser.pythonVersion;
         // Launching a full environment script: do not check for a newer version, as it is frozen and
         // downloading wouldn't affect it anyway.
         [self reallyLaunchScript:filename
                         fullPath:fullPath
                   withVirtualEnv:virtualenv
-                   pythonVersion:pythonVersion];
+                   pythonVersion:pythonVersion
+              explicitUserAction:explicitUserAction];
         return;
     }
 
     NSString *pythonVersion = [self inferredPythonVersionFromScriptAt:filename];
     [[iTermPythonRuntimeDownloader sharedInstance] downloadOptionalComponentsIfNeededWithConfirmation:YES
                                                                                         pythonVersion:pythonVersion
+                                                                            minimumEnvironmentVersion:0
                                                                                    requiredToContinue:YES
-                                                                                       withCompletion:^(BOOL ok) {
-        if (ok) {
-            [self reallyLaunchScript:filename
-                            fullPath:fullPath
-                      withVirtualEnv:virtualenv
-                       pythonVersion:pythonVersion];
+                                                                                       withCompletion:
+     ^(iTermPythonRuntimeDownloaderStatus status) {
+         switch (status) {
+             case iTermPythonRuntimeDownloaderStatusNotNeeded:
+             case iTermPythonRuntimeDownloaderStatusDownloaded:
+                 [self reallyLaunchScript:filename
+                                 fullPath:fullPath
+                           withVirtualEnv:virtualenv
+                            pythonVersion:pythonVersion
+                       explicitUserAction:explicitUserAction];
+                 break;
+             case iTermPythonRuntimeDownloaderStatusError:
+             case iTermPythonRuntimeDownloaderStatusUnknown:
+             case iTermPythonRuntimeDownloaderStatusWorking:
+             case iTermPythonRuntimeDownloaderStatusCanceledByUser:
+             case iTermPythonRuntimeDownloaderStatusRequestedVersionNotFound:
+                 break;
         }
     }];
 }
@@ -116,9 +131,16 @@
 + (void)reallyLaunchScript:(NSString *)filename
                   fullPath:(NSString *)fullPath
             withVirtualEnv:(NSString *)virtualenv
-             pythonVersion:(NSString *)pythonVersion {
-    if (![iTermAPIHelper sharedInstance]) {
-        return;
+             pythonVersion:(NSString *)pythonVersion
+        explicitUserAction:(BOOL)explicitUserAction {
+    if (explicitUserAction) {
+        if (![iTermAPIHelper sharedInstanceFromExplicitUserAction]) {
+            return;
+        }
+    } else {
+        if (![iTermAPIHelper sharedInstance]) {
+            return;
+        }
     }
 
     NSString *key = [[NSUUID UUID] UUIDString];
@@ -136,7 +158,8 @@
                                           [iTermAPIScriptLauncher reallyLaunchScript:filename
                                                                             fullPath:fullPath
                                                                       withVirtualEnv:virtualenv
-                                                                       pythonVersion:pythonVersion];
+                                                                       pythonVersion:pythonVersion
+                                                                  explicitUserAction:explicitUserAction];
                                       }];
     entry.path = filename;
     [[iTermScriptHistory sharedInstance] addHistoryEntry:entry];

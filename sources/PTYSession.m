@@ -26,6 +26,7 @@
 #import "iTermCopyModeState.h"
 #import "iTermDisclosableView.h"
 #import "iTermEchoProbe.h"
+#import "iTermExpressionParser.h"
 #import "iTermFindDriver.h"
 #import "iTermGraphicSource.h"
 #import "iTermNotificationController.h"
@@ -61,6 +62,7 @@
 #import "iTermSessionHotkeyController.h"
 #import "iTermSessionNameController.h"
 #import "iTermSessionTitleBuiltInFunction.h"
+#import "iTermSetFindStringNotification.h"
 #import "iTermShellHistoryController.h"
 #import "iTermShortcut.h"
 #import "iTermShortcutInputView.h"
@@ -71,6 +73,7 @@
 #import "iTermSwiftyStringGraph.h"
 #import "iTermSystemVersion.h"
 #import "iTermTextExtractor.h"
+#import "iTermTheme.h"
 #import "iTermThroughputEstimator.h"
 #import "iTermTmuxStatusBarMonitor.h"
 #import "iTermUpdateCadenceController.h"
@@ -707,6 +710,16 @@ static const NSUInteger kMaxHosts = 100;
                                                  selector:@selector(annotationVisibilityDidChange:)
                                                      name:iTermAnnotationVisibilityDidChange
                                                    object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(apiDidStop:)
+                                                     name:iTermAPIHelperDidStopNotification
+                                                   object:nil];
+
+        [iTermSetFindStringNotification subscribe:self
+                                            block:^(iTermSetFindStringNotification * _Nonnull notification) {
+                                                [weakSelf useStringForFind:notification.string];
+                                            }];
+
         [self.variablesScope setValue:[self.sessionId stringByReplacingOccurrencesOfString:@":" withString:@"."]
                      forVariableNamed:iTermVariableKeySessionTermID];
 
@@ -4528,6 +4541,11 @@ ITERM_WEAKLY_REFERENCEABLE
     if (!_exited && _shell.pid > 0) {
         [self.variablesScope setValue:@(_shell.pid) forVariableNamed:iTermVariableKeySessionChildPid];
     }
+
+    [self tryAutoProfileSwitchWithHostname:self.variablesScope.hostname
+                                  username:self.variablesScope.username
+                                      path:self.variablesScope.path
+                                       job:jobName];
 }
 
 - (void)refresh {
@@ -4655,6 +4673,14 @@ ITERM_WEAKLY_REFERENCEABLE
         NSDictionary *dict = [iTermProfilePreferences objectForKey:KEY_SESSION_HOTKEY inProfile:profile];
         [_tmuxController setHotkeyForWindowPane:self.tmuxPane to:dict];
     }
+}
+
+- (void)apiDidStop:(NSNotification *)notification {
+    [_promptSubscriptions removeAllObjects];
+    [_keystrokeSubscriptions removeAllObjects];
+    [_keyboardFilterSubscriptions removeAllObjects];
+    [_updateSubscriptions removeAllObjects];
+    [_customEscapeSequenceNotifications removeAllObjects];
 }
 
 - (void)apiServerUnsubscribe:(NSNotification *)notification {
@@ -4963,11 +4989,13 @@ ITERM_WEAKLY_REFERENCEABLE
 - (void)findString:(NSString *)aString
   forwardDirection:(BOOL)direction
               mode:(iTermFindMode)mode
-        withOffset:(int)offset {
+        withOffset:(int)offset
+scrollToFirstResult:(BOOL)scrollToFirstResult {
     [_textview findString:aString
          forwardDirection:direction
                      mode:mode
-               withOffset:offset];
+               withOffset:offset
+      scrollToFirstResult:scrollToFirstResult];
 }
 
 - (NSString *)unpaddedSelectedText {
@@ -7446,6 +7474,7 @@ ITERM_WEAKLY_REFERENCEABLE
 - (void)textViewDidBecomeFirstResponder {
     [_delegate setActiveSession:self];
     [_view setNeedsDisplay:YES];
+    [_view.findDriver owningViewDidBecomeFirstResponder];
 }
 
 - (void)textViewDidResignFirstResponder {
@@ -8296,6 +8325,9 @@ ITERM_WEAKLY_REFERENCEABLE
 }
 
 - (void)screenSetWindowTitle:(NSString *)title {
+    // The window name doesn't normally serve as an interpolated string, but just to be extra safe
+    // break up \(.
+    title = [title stringByReplacingOccurrencesOfString:@"\\(" withString:@"\\\u200B("];
     [self.variablesScope setValue:title forVariableNamed:iTermVariableKeySessionWindowName];
 }
 
@@ -8307,7 +8339,9 @@ ITERM_WEAKLY_REFERENCEABLE
     return [self.variablesScope valueForVariableName:iTermVariableKeySessionIconName] ?: [self.variablesScope valueForVariableName:iTermVariableKeySessionName];
 }
 
-- (void)screenSetName:(NSString *)theName {
+- (void)screenSetIconName:(NSString *)theName {
+    // Put a zero-width space in between \ and ( to avoid interpolated strings coming from the server.
+    theName = [theName stringByReplacingOccurrencesOfString:@"\\(" withString:@"\\\u200B("];
     [self.variablesScope setValuesFromDictionary:@{ iTermVariableKeySessionAutoNameFormat: theName ?: [NSNull null],
                                                     iTermVariableKeySessionIconName: theName ?: [NSNull null] }];
 }
@@ -8966,6 +9000,13 @@ ITERM_WEAKLY_REFERENCEABLE
 
 - (void)screenSetBadgeFormat:(NSString *)base64Format {
     NSString *theFormat = [base64Format stringByBase64DecodingStringWithEncoding:self.encoding];
+    iTermParsedExpression *parsedExpression = [iTermExpressionParser parsedExpressionWithInterpolatedString:theFormat scope:self.variablesScope];
+    if ([parsedExpression containsAnyFunctionCall]) {
+        XLog(@"Rejected control-sequence provided badge format containing function calls: %@", theFormat);
+        [self showSimpleWarningAnnouncment:@"The application attempted to set the badge to a value that would invoke a function call. For security reasons, this is not allowed and the badge was not updated."
+                                identifier:@"UnsaveBadgeFormatRejected"];
+        return;
+    }
     if (theFormat) {
         [self setSessionSpecificProfileValues:@{ KEY_BADGE_FORMAT: theFormat }];
         _textview.badgeLabel = [self badgeLabel];
@@ -9097,7 +9138,10 @@ ITERM_WEAKLY_REFERENCEABLE
 
     int line = [_screen numberOfScrollbackLines] + _screen.cursorY;
     NSString *path = [_screen workingDirectoryOnLine:line];
-    [self tryAutoProfileSwitchWithHostname:host.hostname username:host.username path:path];
+    [self tryAutoProfileSwitchWithHostname:host.hostname
+                                  username:host.username
+                                      path:path
+                                       job:self.variablesScope.jobName];
 
     if (hadHost) {
         [self maybeResetTerminalStateOnHostChange];
@@ -9146,6 +9190,16 @@ ITERM_WEAKLY_REFERENCEABLE
 
 - (iTermQuickLookController *)quickLookController {
     return _textview.quickLookController;
+}
+
+- (void)showSimpleWarningAnnouncment:(NSString *)message
+                          identifier:(NSString *)identifier {
+    iTermAnnouncementViewController *announcement =
+    [iTermAnnouncementViewController announcementWithTitle:message
+                                                     style:kiTermAnnouncementViewStyleWarning
+                                               withActions:@[ @"OK" ]
+                                                              completion:^(int selection) {}];
+     [self queueAnnouncement:announcement identifier:identifier];
 }
 
 - (void)offerToTurnOffMouseReportingOnHostChange {
@@ -9254,8 +9308,9 @@ ITERM_WEAKLY_REFERENCEABLE
 
 - (void)tryAutoProfileSwitchWithHostname:(NSString *)hostname
                                 username:(NSString *)username
-                                    path:(NSString *)path {
-    [_automaticProfileSwitcher setHostname:hostname username:username path:path];
+                                    path:(NSString *)path
+                                     job:(NSString *)job {
+    [_automaticProfileSwitcher setHostname:hostname username:username path:path job:job];
 }
 
 - (void)screenCurrentDirectoryDidChangeTo:(NSString *)newPath {
@@ -9265,7 +9320,8 @@ ITERM_WEAKLY_REFERENCEABLE
     VT100RemoteHost *remoteHost = [_screen remoteHostOnLine:line];
     [self tryAutoProfileSwitchWithHostname:remoteHost.hostname
                                   username:remoteHost.username
-                                      path:newPath];
+                                      path:newPath
+                                       job:self.variablesScope.jobName];
     [self.variablesScope setValue:newPath forVariableNamed:iTermVariableKeySessionPath];
 }
 
@@ -10514,7 +10570,7 @@ ITERM_WEAKLY_REFERENCEABLE
     } else {
         range = NSMakeRange(NSNotFound, 0);
     }
-    return VT100GridAbsWindowedRangeMake(VT100GridAbsCoordRangeMake(0, range.location, 0, range.length + 1), 0, 0);
+    return VT100GridAbsWindowedRangeMake(VT100GridAbsCoordRangeMake(0, range.location, 0, NSMaxRange(range)), 0, 0);
 }
 
 - (ITMGetBufferResponse *)handleGetBufferRequest:(ITMGetBufferRequest *)request {
@@ -10841,16 +10897,10 @@ ITERM_WEAKLY_REFERENCEABLE
 #pragma mark - iTermStatusBarViewControllerDelegate
 
 - (NSColor *)textColorForStatusBar {
-    if (self.view.window.ptyWindow.it_terminalWindowUseMinimalStyle) {
-        NSColor *color = [self.view.window.ptyWindow it_terminalWindowDecorationTextColorForBackgroundColor:nil];
-        return [_colorMap colorByDimmingTextColor:[color colorUsingColorSpace:[NSColorSpace sRGBColorSpace]]];
-    } else if (@available(macOS 10.14, *)) {
-        return [NSColor labelColor];
-    } else if ([_view.effectiveAppearance.name isEqualToString:NSAppearanceNameVibrantDark]) {
-        return [NSColor colorWithWhite:0.75 alpha:1];
-    } else {
-        return [NSColor blackColor];
-    }
+    return [[iTermTheme sharedInstance] statusBarTextColorForEffectiveAppearance:_view.effectiveAppearance
+                                                                        colorMap:_colorMap
+                                                                        tabStyle:[self.view.window.ptyWindow it_tabStyle]
+                                                                   mainAndActive:(self.view.window.isMainWindow && NSApp.isActive)];
 }
 
 - (NSColor *)statusBarDefaultTextColor {
@@ -10870,6 +10920,7 @@ ITERM_WEAKLY_REFERENCEABLE
 
 - (void)updateStatusBarStyle {
     [_statusBarViewController updateColors];
+    [self invalidateStatusBar];
 }
 
 - (NSFont *)statusBarTerminalFont {
