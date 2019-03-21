@@ -28,3 +28,6 @@
 [deploy]
 	host = localhost
 	path = ~/myproject/git/mac/gnachman/iTerm2
+[gdif]
+    ignore = ./Scripts/AutoLaunch/move_current_tab.py 
+    ignore = ./build.sh
