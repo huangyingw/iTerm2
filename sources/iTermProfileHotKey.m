@@ -92,6 +92,10 @@ static NSString *const kArrangement = @"Arrangement";
                                                  selector:@selector(updateWindowLevel)
                                                      name:iTermApplicationDidCloseModalWindow
                                                    object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(windowDidBecomeKey:)
+                                                     name:NSWindowDidBecomeKeyNotification
+                                                   object:nil];
     }
     return self;
 }
@@ -137,8 +141,11 @@ static NSString *const kArrangement = @"Arrangement";
                                             hotkeyWindowType:[self hotkeyWindowType]
                                                      makeKey:YES
                                                  canActivate:YES
+                                          respectTabbingMode:NO
                                                      command:nil
-                                                       block:nil];
+                                                       block:nil
+                                                 synchronous:NO
+                                                  completion:nil];
         }
     } else {
         windowController = [self windowControllerFromProfile:[self profile] url:url];
@@ -169,6 +176,18 @@ static NSString *const kArrangement = @"Arrangement";
     }
 }
 
+- (void)windowDidBecomeKey:(NSNotification *)notification {
+    if (!self.floats) {
+        return;
+    }
+    const NSWindowLevel before = _windowController.window.level;
+    [self updateWindowLevel];
+    const NSWindowLevel after = _windowController.window.level;
+    if (before != after && after == NSNormalWindowLevel) {
+        [[NSApp keyWindow] makeKeyAndOrderFront:nil];
+    }
+}
+
 - (void)updateWindowLevel {
     if (self.floats) {
         _windowController.window.level = self.floatingLevel;
@@ -180,10 +199,19 @@ static NSString *const kArrangement = @"Arrangement";
 - (NSWindowLevel)floatingLevel {
     iTermApplication *app = [iTermApplication sharedApplication];
     if (app.it_characterPanelIsOpen || app.it_modalWindowOpen || app.it_imeOpen) {
+        DLog(@"Use floating window level. characterPanelIsOpen=%@, modalWindowOpen=%@ imeOpen=%@",
+             @(app.it_characterPanelIsOpen), @(app.it_modalWindowOpen),
+             @(app.it_imeOpen));
         return NSFloatingWindowLevel;
-    } else {
-        return NSStatusWindowLevel;
     }
+    NSWindow *const keyWindow = [NSApp keyWindow];
+    if (keyWindow != nil && keyWindow != _windowController.window) {
+        DLog(@"Use normal window level. Key window is %@, my window is %@",
+             keyWindow, _windowController.window);
+        return NSNormalWindowLevel;
+    }
+    DLog(@"Use status window level (I am key, no detected panels are open)");
+    return NSStatusWindowLevel;
 }
 
 - (NSPoint)destinationPointForInitialPoint:(NSPoint)point
@@ -367,7 +395,7 @@ static NSString *const kArrangement = @"Arrangement";
 }
 
 - (iTermAnimationDirection)animateInDirectionForWindowType:(iTermWindowType)windowType {
-    switch (windowType) {
+    switch (iTermThemedWindowType(windowType)) {
         case WINDOW_TYPE_TOP:
         case WINDOW_TYPE_TOP_PARTIAL:
             return kAnimationDirectionDown;
@@ -723,8 +751,11 @@ static NSString *const kArrangement = @"Arrangement";
                                                           hotkeyWindowType:[self hotkeyWindowType]
                                                                    makeKey:YES
                                                                canActivate:YES
+                                                        respectTabbingMode:NO
                                                                    command:nil
-                                                                     block:nil];
+                                                                     block:nil
+                                                               synchronous:NO
+                                                                completion:nil];
     self.birthingWindow = NO;
 
     [self.delegate hotKeyDidCreateWindow:self];
@@ -894,10 +925,12 @@ static NSString *const kArrangement = @"Arrangement";
 }
 
 - (void)inputMethodEditorDidOpen:(NSNotification *)notification {
+    DLog(@"inputMethodEditorDidOpen");
     [self updateWindowLevel];
 }
 
 - (void)inputMethodEditorDidClose:(NSNotification *)notification {
+    DLog(@"inputMethodEditorDidClose");
     [self updateWindowLevel];
 }
 

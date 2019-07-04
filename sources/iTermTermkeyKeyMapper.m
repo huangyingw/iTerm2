@@ -9,6 +9,7 @@
 
 #import "DebugLogging.h"
 #import "iTermKeyboardHandler.h"
+#import "NSEvent+iTerm.h"
 #import "VT100Output.h"
 
 @implementation iTermTermkeyKeyMapper {
@@ -18,7 +19,7 @@
 #pragma mark - Pre-Cocoa
 
 - (NSString *)preCocoaString {
-    const unsigned int modifiers = [_event modifierFlags];
+    const unsigned int modifiers = [_event it_modifierFlags];
 
     NSString *charactersIgnoringModifiers = _event.charactersIgnoringModifiers;
     const unichar characterIgnoringModifiers = [charactersIgnoringModifiers length] > 0 ? [charactersIgnoringModifiers characterAtIndex:0] : 0;
@@ -28,6 +29,16 @@
         NSString *string = [NSString stringWithFormat:@"%c[Z", 27];
         DLog(@"Backtab");
         return string;
+    }
+
+    const NSEventModifierFlags allEventModifierFlags = (NSEventModifierFlagControl |
+                                                        NSEventModifierFlagOption |
+                                                        NSEventModifierFlagShift |
+                                                        NSEventModifierFlagCommand);
+    if (_event.keyCode == kVK_Space &&
+        (_event.modifierFlags & allEventModifierFlags) == NSEventModifierFlagShift) {
+        // Shift+Space is special. No other unicode character + shift reports a CSI u.
+        return [self termkeySequenceForEvent];
     }
 
     const BOOL onlyControlPressed = (modifiers & (NSEventModifierFlagControl | NSEventModifierFlagCommand | NSEventModifierFlagOption)) == NSEventModifierFlagControl;
@@ -72,23 +83,15 @@
     }
 }
 
-// masks off shift
 // CSI code ~
-// CSI modifiers ; code ~
+// CSI code ; modifier ~
 - (NSString *)sequenceForNonUnicodeKeypress:(NSString *)code
                              eventModifiers:(NSEventModifierFlags)eventModifiers {
-    return [self optionallyShiftedSequenceForNonUnicodeKeypress:code
-                                                 eventModifiers:(eventModifiers & ~NSEventModifierFlagShift)];
-}
-
-// allows shift to remain if present
-- (NSString *)optionallyShiftedSequenceForNonUnicodeKeypress:(NSString *)code
-                                              eventModifiers:(NSEventModifierFlags)eventModifiers {
     const int csiModifiers = [self csiModifiersForEventModifiers:eventModifiers];
     if (csiModifiers == 1) {
         return [NSString stringWithFormat:@"%c[%@~", 27, code];
     } else {
-        return [NSString stringWithFormat:@"%c[%d;%@~", 27, csiModifiers, code];
+        return [NSString stringWithFormat:@"%c[%@;%d~", 27, code, csiModifiers];
     }
 }
 
@@ -239,7 +242,7 @@
         return applicationModeResult;
     }
 
-    if (!(_event.modifierFlags & NSEventModifierFlagFunction)) {
+    if (!(_event.it_modifierFlags & NSEventModifierFlagFunction)) {
         return nil;
     }
 
@@ -364,7 +367,7 @@
 }
 
 - (iTermOptionKeyBehavior)optionKeyBehavior {
-    const NSEventModifierFlags modflag = _event.modifierFlags;
+    const NSEventModifierFlags modflag = _event.it_modifierFlags;
     const BOOL rightAltPressed = (modflag & NSRightAlternateKeyMask) == NSRightAlternateKeyMask;
     const BOOL leftAltPressed = (modflag & NSEventModifierFlagOption) == NSEventModifierFlagOption && !rightAltPressed;
     assert(leftAltPressed || rightAltPressed);
@@ -475,6 +478,10 @@
     return [NSString stringWithCharacters:&controlCode length:1];
 }
 
+static BOOL CodePointInPrivateUseArea(unichar c) {
+    return c >= 0xE000 && c <= 0xF8FF;
+}
+
 - (NSString *)termkeySequenceForCodePoint:(unichar)codePoint
                                 modifiers:(NSEventModifierFlags)eventModifiers
                                   keyCode:(int)keyCode {
@@ -485,10 +492,11 @@
         return sequence;
     }
 
+    const NSEventModifierFlags maybeFunction = CodePointInPrivateUseArea(codePoint) ? NSEventModifierFlagFunction : 0;
     const NSEventModifierFlags allEventModifierFlags = (NSEventModifierFlagControl |
                                                         NSEventModifierFlagOption |
                                                         NSEventModifierFlagShift |
-                                                        NSEventModifierFlagFunction);
+                                                        maybeFunction);
 
     // Special and very special keys
     // Function keys, arrows, and keypad in application keypad mode.
@@ -508,7 +516,7 @@
     // Modified unicode - control
     const NSEventModifierFlags allEventModifierFlagsExShift = (NSEventModifierFlagControl |
                                                                NSEventModifierFlagOption |
-                                                               NSEventModifierFlagFunction);
+                                                               maybeFunction);
     if ((eventModifiers & allEventModifierFlagsExShift) == NSEventModifierFlagControl) {
         NSString *string = [self modifiedUnicodeStringForControlCharacter:codePoint shiftPressed:!!(eventModifiers & NSEventModifierFlagShift)];
         if (string) {
@@ -574,7 +582,7 @@ static NSRange iTermMakeRange(NSInteger smallestValueInRange,
     }
     const unichar codePoint = [_event.charactersIgnoringModifiers characterAtIndex:0];
     return [self termkeySequenceForCodePoint:codePoint
-                                   modifiers:_event.modifierFlags
+                                   modifiers:_event.it_modifierFlags
                                      keyCode:_event.keyCode];
 }
 
@@ -597,7 +605,7 @@ static NSRange iTermMakeRange(NSInteger smallestValueInRange,
 }
 
 - (BOOL)keyMapperShouldBypassPreCocoaForEvent:(NSEvent *)event {
-    const NSEventModifierFlags modifiers = event.modifierFlags;
+    const NSEventModifierFlags modifiers = event.it_modifierFlags;
     const BOOL isSpecialKey = !!(modifiers & (NSEventModifierFlagNumericPad | NSEventModifierFlagFunction));
     if (isSpecialKey) {
         // Arrow key, function key, etc.
@@ -620,7 +628,7 @@ static NSRange iTermMakeRange(NSInteger smallestValueInRange,
         const unichar codePoint = [event.charactersIgnoringModifiers characterAtIndex:0];
         if ([self sequenceForApplicationModeCodePoint:codePoint
                                               keyCode:event.keyCode
-                                       eventModifiers:event.modifierFlags]) {
+                                       eventModifiers:event.it_modifierFlags]) {
             // Application cursor keys in effect. Don't let cocoa call insertText:.
             return YES;
         }

@@ -835,6 +835,7 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
                                                                               effectiveAppearance:self.effectiveAppearance
                                                                            sessionBackgroundColor:[_delegate sessionViewBackgroundColor]
                                                                                  isFirstResponder:[_delegate sessionViewTerminalIsFirstResponder]
+                                                                                      dimOnlyText:[_delegate sessionViewShouldDimOnlyText]
                                                                             adjustedDimmingAmount:[self adjustedDimmingAmount]];
 }
 
@@ -897,20 +898,35 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
     }
 }
 
-- (NSRect)contentRect {
+- (NSRect)insetRect:(NSRect)rect flipped:(BOOL)flipped includeBottomStatusBar:(BOOL)includeBottomStatusBar {
     CGFloat topInset = 0;
     CGFloat bottomInset = 0;
-    
-    NSRect frame = self.frame;
+
     if (_showTitle) {
         topInset = kTitleHeight;
     }
-    if (_showBottomStatusBar) {
+    // Most callers don't inset for per-pane status bars because not all panes
+    // might have status bars and this function is used to compute the window's
+    // inset.
+    if (_showBottomStatusBar && includeBottomStatusBar) {
         bottomInset = iTermStatusBarHeight;
     }
+    if (flipped) {
+        CGFloat temp;
+        temp = topInset;
+        topInset = bottomInset;
+        bottomInset = temp;
+    }
+    NSRect frame = rect;
     frame.origin.y += bottomInset;
     frame.size.height -= (topInset + bottomInset);
     return frame;
+}
+
+- (NSRect)contentRect {
+    return [self insetRect:self.frame
+                   flipped:NO
+    includeBottomStatusBar:![iTermPreferences boolForKey:kPreferenceKeySeparateStatusBarsPerPane]];
 }
 
 - (void)createSplitSelectionView {
@@ -1328,6 +1344,7 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
 }
 
 - (void)addAnnouncement:(iTermAnnouncementViewController *)announcement {
+    DLog(@"Add announcement %@ to %@", announcement.title, self.delegate);
     [_announcements addObject:announcement];
     announcement.delegate = self;
     if (!_currentAnnouncement) {

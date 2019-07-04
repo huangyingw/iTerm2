@@ -26,6 +26,8 @@
 
 @import Sparkle;
 
+static NSString *const iTermAPIScriptLauncherScriptDidFailUserNotificationCallbackNotification = @"iTermAPIScriptLauncherScriptDidFailUserNotificationCallbackNotification";
+
 @implementation iTermAPIScriptLauncher
 
 + (void)launchScript:(NSString *)filename
@@ -181,12 +183,10 @@
          withVirtualEnv:(NSString *)virtualenv
           pythonVersion:(NSString *)pythonVersion {
     NSTask *task = [[NSTask alloc] init];
-    NSString *shell = [PTYTask userShell];
-
-    task.launchPath = shell;
+    task.launchPath = @"/bin/bash";
     task.arguments = [self argumentsToRunScript:filename withVirtualEnv:virtualenv pythonVersion:pythonVersion];
     NSString *cookie = [[iTermWebSocketCookieJar sharedInstance] randomStringForCooke];
-    task.environment = [self environmentFromEnvironment:task.environment shell:shell cookie:cookie key:key];
+    task.environment = [self environmentFromEnvironment:task.environment shell:[PTYTask userShell] cookie:cookie key:key];
 
     NSPipe *pipe = [[NSPipe alloc] init];
     [task setStandardOutput:pipe];
@@ -207,7 +207,9 @@
     environment[@"ITERM2_COOKIE"] = cookie;
     environment[@"ITERM2_KEY"] = key;
     environment[@"HOME"] = NSHomeDirectory();
-    environment[@"SHELL"] = shell;
+    if (shell) {
+        environment[@"SHELL"] = shell;
+    }
     environment[@"PYTHONIOENCODING"] = @"utf-8";
     return environment;
 }
@@ -252,14 +254,32 @@
                     [entry addOutput:[NSString stringWithFormat:@"\n** Script exited with status %@ **", @(task.terminationStatus)]];
                 }
                 if (!entry.terminatedByUser) {
-                    NSString *message = [NSString stringWithFormat:@"Script “%@” failed.", entry.name];
-                    [[iTermNotificationController sharedInstance] notify:message];
+                    NSString *message = [NSString stringWithFormat:@"“%@” ended unexpectedly.", entry.name];
+                    [[iTermNotificationController sharedInstance] postNotificationWithTitle:@"Script Failed"
+                                                                                     detail:message
+                                                                   callbackNotificationName:iTermAPIScriptLauncherScriptDidFailUserNotificationCallbackNotification
+                                                               callbackNotificationUserInfo:@{ @"entry": entry.identifier ?: @"" }];
+                    static dispatch_once_t onceToken;
+                    dispatch_once(&onceToken, ^{
+                        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                                 selector:@selector(revealFailedScriptInConsole:)
+                                                                     name:iTermAPIScriptLauncherScriptDidFailUserNotificationCallbackNotification
+                                                                   object:nil];
+                    });
                 }
             }
             [entry stopRunning];
         });
         [queues removeObject:q];
     });
+}
+
++ (void)revealFailedScriptInConsole:(NSNotification *)notification {
+    NSString *identifier = notification.userInfo[@"entry"];
+    iTermScriptHistoryEntry *entry = [[iTermScriptHistory sharedInstance] entryWithIdentifier:identifier];
+    if (entry) {
+        [[iTermScriptConsole sharedInstance] revealTailOfHistoryEntry:entry];
+    }
 }
 
 + (void)didFailToLaunchScript:(NSString *)filename withException:(NSException *)e {

@@ -41,6 +41,11 @@
     IBOutlet NSControl *_boundHostShellIntegrationWarning;
     IBOutlet NSControl *_boundHostHelp;
 
+    IBOutlet NSButton *_triggersButton;
+    IBOutlet NSButton *_smartSelectionButton;
+    IBOutlet NSView *_automaticProfileSwitchingView;
+    IBOutlet NSView *_semanticHistoryAction;
+
     IBOutlet NSTextField *_disabledTip;
 
     BOOL _addingBoundHost;  // Don't remove empty-named hosts while this is set
@@ -60,6 +65,23 @@
                                              selector:@selector(updateSemanticHistoryDisabledLabel:)
                                                  name:kPointerPrefsSemanticHistoryEnabledChangedNotification
                                                object:nil];
+
+    [self addViewToSearchIndex:_triggersButton
+                   displayName:@"Triggers"
+                       phrases:@[ @"regular expression", @"regex" ]
+                           key:nil];
+    [self addViewToSearchIndex:_smartSelectionButton
+                   displayName:@"Smart selection"
+                       phrases:@[ @"regular expression", @"regex" ]
+                           key:nil];
+    [self addViewToSearchIndex:_automaticProfileSwitchingView
+                   displayName:@"Automatic profile switching rules"
+                       phrases:@[]
+                           key:nil];
+    [self addViewToSearchIndex:_semanticHistoryAction
+                   displayName:@"Semantic history"
+                       phrases:@[ @"cmd click", @"open file", @"open url" ]
+                           key:nil];
 }
 
 - (NSArray *)keysForBulkCopy {
@@ -239,7 +261,7 @@
 - (id)tableView:(NSTableView *)aTableView
     objectValueForTableColumn:(NSTableColumn *)aTableColumn
             row:(NSInteger)rowIndex {
-    if (rowIndex < 0 || rowIndex > self.boundHosts.count) {
+    if (rowIndex < 0 || rowIndex >= self.boundHosts.count) {
         return nil;
     }
     return [[self boundHosts] objectAtIndex:rowIndex];

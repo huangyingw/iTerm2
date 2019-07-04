@@ -25,11 +25,13 @@
 - (BOOL)haveBottomBorder;
 - (BOOL)haveLeftBorder;
 - (BOOL)haveRightBorder;
+- (BOOL)haveRightBorderRegardlessOfScrollBar;
 - (BOOL)anyFullScreen;
 - (BOOL)tabBarAlwaysVisible;
 - (NSEdgeInsets)tabBarInsets;
 - (BOOL)exitingLionFullscreen;
 - (BOOL)enteringLionFullscreen;
+- (BOOL)lionFullScreen;
 - (BOOL)divisionViewShouldBeVisible;
 - (NSWindow *)window;
 - (BOOL)enableStoplightHotbox;
@@ -46,6 +48,7 @@
 - (iTermStatusBarViewController *)rootTerminalViewSharedStatusBarViewController;
 - (BOOL)rootTerminalViewWindowHasFullSizeContentView;
 - (BOOL)rootTerminalViewShouldLeaveEmptyAreaAtTop;
+- (BOOL)rootTerminalViewShouldHideTabBarBackingWhenTabBarIsHidden;
 @end
 
 extern const NSInteger iTermRootTerminalViewWindowNumberLabelMargin;
@@ -126,5 +129,6 @@ extern const NSInteger iTermRootTerminalViewWindowNumberLabelWidth;
 - (CGFloat)maximumToolbeltWidthForViewWidth:(CGFloat)viewWidth;
 - (void)updateToolbeltProportionsIfNeeded;
 - (void)setToolbeltProportions:(NSDictionary *)proportions;
+- (void)invalidateAutomaticTabBarBackingHiding;
 
 @end

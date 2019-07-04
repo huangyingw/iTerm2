@@ -42,6 +42,7 @@
     iTermPreferencesTabStyle tabStyle = preferredStyle;
     switch (preferredStyle) {
         case TAB_STYLE_AUTOMATIC:
+        case TAB_STYLE_COMPACT:
         case TAB_STYLE_MINIMAL:
             // 10.14 path
             tabStyle = [effectiveAppearance it_tabStyle:preferredStyle];
@@ -59,6 +60,7 @@
     }
     switch (tabStyle) {
         case TAB_STYLE_AUTOMATIC:
+        case TAB_STYLE_COMPACT:
         case TAB_STYLE_MINIMAL:
             assert(NO);
         case TAB_STYLE_LIGHT:
@@ -83,12 +85,14 @@
                                                    effectiveAppearance:(NSAppearance *)effectiveAppearance
                                                 sessionBackgroundColor:(NSColor *)sessionBackgroundColor
                                                       isFirstResponder:(BOOL)isFirstResponder
+                                                           dimOnlyText:(BOOL)dimOnlyText
                                                  adjustedDimmingAmount:(CGFloat)adjustedDimmingAmount {
     iTermPreferencesTabStyle preferredStyle = [iTermPreferences intForKey:kPreferenceKeyTabStyle];
     if (!tabColor) {
         return [self dimmedBackgroundColorWithAppearance:effectiveAppearance
                                   sessionBackgroundColor:sessionBackgroundColor
                                         isFirstResponder:isFirstResponder
+                                             dimOnlyText:dimOnlyText
                                    adjustedDimmingAmount:adjustedDimmingAmount];
     }
     NSColor *undimmedColor;
@@ -121,12 +125,14 @@
                                                           tabStyle:(id<PSMTabStyle>)tabStyle
                                             sessionBackgroundColor:(NSColor *)sessionBackgroundColor
                                                   isFirstResponder:(BOOL)isFirstResponder
+                                                       dimOnlyText:(BOOL)dimOnlyText
                                              adjustedDimmingAmount:(CGFloat)adjustedDimmingAmount {
     if ([iTermPreferences boolForKey:kPreferenceKeySeparateStatusBarsPerPane]) {
         return [self backgroundColorForDecorativeSubviewsInSessionWithTabColor:tabColor
                                                            effectiveAppearance:effectiveAppearance
                                                         sessionBackgroundColor:sessionBackgroundColor
                                                               isFirstResponder:isFirstResponder
+                                                                   dimOnlyText:dimOnlyText
                                                          adjustedDimmingAmount:adjustedDimmingAmount];
     } else {
         return [self tabBarBackgroundColorForTabColor:tabColor
@@ -174,6 +180,7 @@
         CGFloat whiteLevel;
         switch ([effectiveAppearance it_tabStyle:preferredStyle]) {
             case TAB_STYLE_AUTOMATIC:
+            case TAB_STYLE_COMPACT:
             case TAB_STYLE_MINIMAL:
                 assert(NO);
 
@@ -213,6 +220,7 @@
     CGFloat brightness = tabColor.brightnessComponent;
     switch (tabStyle) {
         case TAB_STYLE_AUTOMATIC:
+        case TAB_STYLE_COMPACT:
         case TAB_STYLE_MINIMAL:
             break;
 
@@ -244,6 +252,7 @@
 - (NSColor *)dimmedBackgroundColorWithAppearance:(NSAppearance *)appearance
                           sessionBackgroundColor:(NSColor *)sessionBackgroundColor
                                 isFirstResponder:(BOOL)isFirstResponder
+                                     dimOnlyText:(BOOL)dimOnlyText
                            adjustedDimmingAmount:(CGFloat)adjustedDimmingAmount {
     const BOOL inactive = !isFirstResponder;
     iTermPreferencesTabStyle preferredStyle = [iTermPreferences intForKey:kPreferenceKeyTabStyle];
@@ -252,7 +261,7 @@
         if ([iTermPreferences boolForKey:kPreferenceKeyDimOnlyText]) {
             return color;
         }
-        if (inactive) {
+        if (inactive && !dimOnlyText) {
             return [color colorDimmedBy:adjustedDimmingAmount
                        towardsGrayLevel:0.5];
         } else {
@@ -262,6 +271,7 @@
     CGFloat whiteLevel = 0;
     switch ([appearance it_tabStyle:preferredStyle]) {
         case TAB_STYLE_AUTOMATIC:
+        case TAB_STYLE_COMPACT:
         case TAB_STYLE_MINIMAL:
             assert(NO);
         case TAB_STYLE_LIGHT:

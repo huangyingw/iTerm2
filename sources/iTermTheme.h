@@ -39,6 +39,7 @@ NS_ASSUME_NONNULL_BEGIN
                                                    effectiveAppearance:(NSAppearance *)effectiveAppearance
                                                 sessionBackgroundColor:(NSColor *)sessionBackgroundColor
                                                       isFirstResponder:(BOOL)isFirstResponder
+                                                           dimOnlyText:(BOOL)dimOnlyText
                                                  adjustedDimmingAmount:(CGFloat)adjustedDimmingAmount;
 
 // Background color for fake title bar in minimal, shared status bar.
@@ -51,14 +52,15 @@ NS_ASSUME_NONNULL_BEGIN
                                                           tabStyle:(id<PSMTabStyle>)tabStyle
                                             sessionBackgroundColor:(NSColor *)sessionBackgroundColor
                                                   isFirstResponder:(BOOL)isFirstResponder
+                                                       dimOnlyText:(BOOL)dimOnlyText
                                              adjustedDimmingAmount:(CGFloat)adjustedDimmingAmount;
 
 
 // Default text color for status bar.
-- (NSColor *)statusBarTextColorForEffectiveAppearance:(NSAppearance *)effectiveAppearance
-                                             colorMap:(iTermColorMap *)colorMap
-                                             tabStyle:(id<PSMTabStyle>)tabStyle
-                                        mainAndActive:(BOOL)mainAndActive;
+- (nullable NSColor *)statusBarTextColorForEffectiveAppearance:(NSAppearance *)effectiveAppearance
+                                                      colorMap:(iTermColorMap *)colorMap
+                                                      tabStyle:(id<PSMTabStyle>)tabStyle
+                                                 mainAndActive:(BOOL)mainAndActive;
 
 @end
 

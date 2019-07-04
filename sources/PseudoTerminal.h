@@ -37,6 +37,9 @@ extern NSString *const iTermDidDecodeWindowRestorableStateNotification;
 extern NSString *const iTermTabDidChangePositionInWindowNotification;
 
 extern NSString *const iTermSelectedTabDidChange;
+extern NSString *const iTermWindowDidCloseNotification;
+extern NSString *const iTermTabDidCloseNotification;
+extern NSString *const iTermDidCreateTerminalWindowNotification;
 
 // This class is 1:1 with windows. It controls the tabs, the window's fullscreen
 // status, and coordinates resizing of sessions (either session-initiated
@@ -290,7 +293,8 @@ extern NSString *const iTermSelectedTabDidChange;
 - (PTYSession *)splitVertically:(BOOL)isVertical
                          before:(BOOL)before
                         profile:(Profile *)theBookmark
-                  targetSession:(PTYSession *)targetSession;
+                  targetSession:(PTYSession *)targetSession
+                    synchronous:(BOOL)synchronous;
 
 // Change visibility of menu bar (but only if it should be changed--may do
 // nothing if the menu bar is on a different screen, for example).
@@ -307,7 +311,9 @@ extern NSString *const iTermSelectedTabDidChange;
 // The optional command overrides the profile's settings.
 - (PTYSession *)createTabWithProfile:(Profile *)profile
                          withCommand:(NSString *)command
-                         environment:(NSDictionary *)environment;
+                         environment:(NSDictionary *)environment
+                         synchronous:(BOOL)synchronous
+                          completion:(void (^)(BOOL ok))completion;
 
 - (IBAction)newTmuxWindow:(id)sender;
 - (IBAction)newTmuxTab:(id)sender;
