@@ -127,8 +127,8 @@ typedef struct iTermTextColorContext {
 } iTermTextColorContext;
 
 @implementation iTermTextDrawingHelper {
-    // Current font. Only valid for the duration of a single drawing context.
-    NSFont *_selectedFont;
+    NSFont *_cachedFont;
+    CGFontRef _cgFont;
 
     // Last position of blinking cursor
     VT100GridCoord _oldCursorPosition;
@@ -199,7 +199,10 @@ typedef struct iTermTextColorContext {
     [_markedText release];
     [_colorMap release];
 
-    [_selectedFont release];
+    [_cachedFont release];
+    if (_cgFont) {
+        CFRelease(_cgFont);
+    }
 
     [_missingImages release];
     [_backgroundStripesImage release];
@@ -208,6 +211,16 @@ typedef struct iTermTextColorContext {
     [_timestampDrawHelper release];
 
     [super dealloc];
+}
+
+#pragma mark - Accessors
+
+- (void)setUnderlinedRange:(VT100GridAbsWindowedRange)underlinedRange {
+    if (VT100GridAbsWindowedRangeEquals(underlinedRange, _underlinedRange)) {
+        return;
+    }
+    DLog(@"Update underlined range of %@ to %@", self.delegate, VT100GridAbsWindowedRangeDescription(underlinedRange));
+    _underlinedRange = underlinedRange;
 }
 
 #pragma mark - Drawing: General
@@ -290,9 +303,6 @@ typedef struct iTermTextColorContext {
         [c set];
         NSFrameRect(rect);
     }
-
-    [_selectedFont release];
-    _selectedFont = nil;
 
     // Release cached CTLineRefs from the last set of drawings and update them with the new ones.
     // This keeps us from having too many lines cached at once.
@@ -1167,20 +1177,16 @@ typedef struct iTermTextColorContext {
 }
 
 - (void)selectFont:(NSFont *)font inContext:(CGContextRef)ctx {
-    if (font != _selectedFont) {
-        // This method is really slow so avoid doing it when it's not
-        // necessary. It is also deprecated but CoreText is extremely slow so
-        // we'll keep using until Apple fixes that.
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        CGContextSelectFont(ctx,
-                            [[font fontName] UTF8String],
-                            [font pointSize],
-                            kCGEncodingMacRoman);
-#pragma clang diagnostic pop
-        [_selectedFont release];
-        _selectedFont = [font retain];
+    if (font != _cachedFont) {
+        [_cachedFont release];
+        _cachedFont = [font retain];
+        if (_cgFont) {
+            CFRelease(_cgFont);
+        }
+        _cgFont = CTFontCopyGraphicsFont((__bridge CTFontRef)font, NULL);
     }
+    CGContextSetFont(ctx, _cgFont);
+    CGContextSetFontSize(ctx, font.pointSize);
 }
 
 - (int)setSmoothingWithContext:(CGContextRef)ctx
@@ -1274,11 +1280,6 @@ typedef struct iTermTextColorContext {
                                                    smear:(BOOL)smear {
     if (cheapString.length == 0) {
         return 0;
-    }
-    if (smear) {
-        // Force the font to be updated because it's a temporary context.
-        [_selectedFont release];
-        _selectedFont = nil;
     }
     NSDictionary *attributes = cheapString.attributes;
     if (attributes[iTermImageCodeAttribute]) {
@@ -2473,6 +2474,9 @@ static BOOL iTermTextDrawingHelperShouldAntiAlias(screen_char_t *c,
         }
 
         case NSUnderlinePatternDash: {
+            if (![iTermAdvancedSettingsModel underlineHyperlinks]) {
+                break;
+            }
             [path moveToPoint:origin];
             [path lineToPoint:NSMakePoint(origin.x + rect.size.width, origin.y)];
             [path setLineWidth:lineWidth];
@@ -2537,11 +2541,14 @@ static BOOL iTermTextDrawingHelperShouldAntiAlias(screen_char_t *c,
         [_delegate drawingHelperDidFindRunOfAnimatedCellsStartingAt:origin ofLength:length];
         _animated = YES;
     }
-    [image drawInRect:NSMakeRect(0, 0, _cellSize.width * length, _cellSize.height)
-             fromRect:NSMakeRect(chunkSize.width * originInImage.x,
-                                 image.size.height - _cellSize.height - chunkSize.height * originInImage.y,
-                                 chunkSize.width * length,
-                                 chunkSize.height)
+    const NSRect destRect = NSMakeRect(0, 0, _cellSize.width * length, _cellSize.height);
+    const NSRect sourceRect = NSMakeRect(chunkSize.width * originInImage.x,
+                                         image.size.height - _cellSize.height - chunkSize.height * originInImage.y,
+                                         chunkSize.width * length,
+                                         chunkSize.height);
+    DLog(@"Draw %@ -> %@ with source image of size %@", NSStringFromRect(sourceRect), NSStringFromRect(destRect), NSStringFromSize(image.size));
+    [image drawInRect:destRect
+             fromRect:sourceRect
             operation:NSCompositingOperationSourceOver
              fraction:1];
     [NSGraphicsContext restoreGraphicsState];

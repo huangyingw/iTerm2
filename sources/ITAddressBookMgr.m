@@ -29,7 +29,6 @@
 
 #import "DebugLogging.h"
 #import "iTermDynamicProfileManager.h"
-#import "iTermExpressionEvaluator.h"
 #import "iTermHotKeyController.h"
 #import "iTermKeyBindingMgr.h"
 #import "iTermHotKeyMigrationHelper.h"
@@ -73,6 +72,27 @@ iTermWindowType iTermThemedWindowType(iTermWindowType windowType) {
                 case TAB_STYLE_LIGHT_HIGH_CONTRAST:
                 case TAB_STYLE_DARK_HIGH_CONTRAST:
                     return WINDOW_TYPE_NORMAL;
+            }
+            assert(false);
+            return windowType;
+
+        case WINDOW_TYPE_COMPACT_MAXIMIZED:
+        case WINDOW_TYPE_MAXIMIZED:
+            if (@available(macOS 10.14, *)) {} else {
+                // 10.13 and earlier do not support compact
+                return WINDOW_TYPE_MAXIMIZED;
+            }
+            switch ((iTermPreferencesTabStyle)[iTermPreferences intForKey:kPreferenceKeyTabStyle]) {
+                case TAB_STYLE_COMPACT:
+                case TAB_STYLE_MINIMAL:
+                    return WINDOW_TYPE_COMPACT_MAXIMIZED;
+
+                case TAB_STYLE_AUTOMATIC:
+                case TAB_STYLE_LIGHT:
+                case TAB_STYLE_DARK:
+                case TAB_STYLE_LIGHT_HIGH_CONTRAST:
+                case TAB_STYLE_DARK_HIGH_CONTRAST:
+                    return WINDOW_TYPE_MAXIMIZED;
             }
             assert(false);
             return windowType;
@@ -519,8 +539,8 @@ iTermWindowType iTermThemedWindowType(iTermWindowType windowType) {
 + (NSString *)shellLauncherCommand {
     return [NSString stringWithFormat:@"/usr/bin/login -f%@pl %@ %@ --launch_shell",
             [self hushlogin] ? @"q" : @"",
-            [NSUserName() stringWithEscapedShellCharactersIncludingNewlines:YES],
-            [[[NSBundle mainBundle] executablePath] stringWithEscapedShellCharactersIncludingNewlines:YES]];
+            [NSUserName() stringWithBackslashEscapedShellCharactersIncludingNewlines:YES],
+            [[[NSBundle mainBundle] executablePath] stringWithBackslashEscapedShellCharactersIncludingNewlines:YES]];
 }
 
 + (NSString*)loginShellCommandForBookmark:(Profile*)profile
@@ -565,7 +585,7 @@ iTermWindowType iTermThemedWindowType(iTermWindowType windowType) {
 
 + (NSString *)standardLoginCommand {
     return [NSString stringWithFormat:@"login -f%@p \"%@\"", [self hushlogin] ? @"q" : @"",
-            [NSUserName() stringWithEscapedShellCharactersIncludingNewlines:YES]];
+            [NSUserName() stringWithBackslashEscapedShellCharactersIncludingNewlines:YES]];
 }
 
 + (NSString*)bookmarkCommand:(Profile*)bookmark

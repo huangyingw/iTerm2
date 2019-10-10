@@ -97,12 +97,6 @@
     }
 }
 
-- (BOOL)viewShouldTrackTouches
-{
-    return [iTermPreferences boolForKey:kPreferenceKeyThreeFingerEmulatesMiddle] ||
-           [PointerPrefsController haveThreeFingerTapEvents];
-}
-
 // Caller is responsible to check that it's a single click
 - (BOOL)eventEmulatesRightClick:(NSEvent *)event
 {
@@ -163,6 +157,22 @@
     mouseDownButton_ = 0;
 }
 
+- (BOOL)threeFingerTap:(NSEvent *)event {
+    if ([iTermPreferences boolForKey:kPreferenceKeyThreeFingerEmulatesMiddle]) {
+        return NO;
+    }
+    if ([self actionForEvent:event clicks:1 withTouches:3]) {
+        return NO;
+    }
+    if ([[NSUserDefaults standardUserDefaults] integerForKey:@"com.apple.trackpad.forceClick"] == 0) {
+        // This hack stolen from Firefox: https://searchfox.org/mozilla-central/source/widget/cocoa/nsChildView.mm
+        // I have no idea why -quicklookWithEvent: doesn't get called, but at least I'm in good company.
+        [self performAction:kQuickLookAction forEvent:event withArgument:nil];
+        return YES;
+    }
+    return NO;
+}
+
 - (BOOL)mouseDown:(NSEvent *)event withTouches:(int)numTouches ignoreOption:(BOOL)ignoreOption {
     // A double left click plus an immediate right click reports a triple right
     // click! So we keep our own click count and use the lower of the OS's
@@ -210,7 +220,9 @@
             if (action) {
                 [self performAction:action forEvent:event withArgument:argument];
                 return YES;
-            } else {
+            } else if ([[NSUserDefaults standardUserDefaults] integerForKey:@"com.apple.trackpad.forceClick"] == 1) {
+                // This hack stolen from Firefox: https://searchfox.org/mozilla-central/source/widget/cocoa/nsChildView.mm
+                // I have no idea why -quicklookWithEvent: doesn't get called, but at least I'm in good company.
                 [self performAction:kQuickLookAction forEvent:event withArgument:nil];
             }
         }

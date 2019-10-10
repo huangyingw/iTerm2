@@ -8,7 +8,6 @@
 
 #import <Foundation/Foundation.h>
 #import "PreferenceInfo.h"
-#import "PSMTabBarControl.h"
 
 extern NSString *const iTermMetalSettingsDidChangeNotification;
 
@@ -61,6 +60,7 @@ extern NSString *const kPreferenceKeyOpenNoWindowsAtStartup;
 extern NSString *const kPreferenceKeyQuitWhenAllWindowsClosed;
 extern NSString *const kPreferenceKeyConfirmClosingMultipleTabs;
 extern NSString *const kPreferenceKeyPromptOnQuit;
+extern NSString *const kPreferenceKeyPromptOnQuitEvenIfThereAreNoWindows;
 extern NSString *const kPreferenceKeyInstantReplayMemoryMegabytes;
 extern NSString *const kPreferenceKeySavePasteAndCommandHistory;
 extern NSString *const kPreferenceKeyAddBonjourHostsToProfiles;
@@ -82,6 +82,7 @@ extern NSString *const kPreferenceKeyOpenTmuxWindowsIn;
 extern NSString *const kPreferenceKeyTmuxDashboardLimit;
 extern NSString *const kPreferenceKeyAutoHideTmuxClientSession;
 extern NSString *const kPreferenceKeyUseTmuxProfile;
+extern NSString *const kPreferenceKeyUseTmuxStatusBar;
 extern NSString *const kPreferenceKeyUseMetal;
 extern NSString *const kPreferenceKeyDisableMetalWhenUnplugged;
 extern NSString *const kPreferenceKeyPreferIntegratedGPU;

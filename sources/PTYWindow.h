@@ -56,7 +56,14 @@ extern const NSTimeInterval iTermWindowTitleChangeMinimumInterval;
 - (id<PSMTabStyle>)terminalWindowTabStyle;
 - (NSColor *)terminalWindowDecorationControlColor;
 - (BOOL)terminalWindowUseMinimalStyle;
-- (BOOL)ptyWindowFullScreen;
+
+typedef NS_ENUM(NSUInteger, PTYWindowTitleBarFlavor) {
+    PTYWindowTitleBarFlavorDefault,
+    PTYWindowTitleBarFlavorOnePoint,  // One-point tall. Prevents overlapping the menu bar. Otherwise basically invisible.
+    PTYWindowTitleBarFlavorZeroPoints  // Completely invisible and overlaps the menu bar.
+};
+
+- (PTYWindowTitleBarFlavor)ptyWindowTitleBarFlavor;
 @end
 
 // Common methods implemented by terminal windows of both kinds.
@@ -69,6 +76,7 @@ extern const NSTimeInterval iTermWindowTitleChangeMinimumInterval;
 @property(nonatomic, readonly) BOOL titleChangedRecently;
 @property(nonatomic, readonly) BOOL isCompact;
 @property(nonatomic) NSInteger it_openingSheet;
+@property (nonatomic) BOOL it_becomingKey;
 
 - (NSColor *)it_terminalWindowDecorationBackgroundColor;
 - (NSColor *)it_terminalWindowDecorationTextColorForBackgroundColor:(NSColor *)backgroundColor;
@@ -94,7 +102,6 @@ typedef NSWindow<iTermWeaklyReferenceable, PTYWindow> iTermTerminalWindow;
 
 // A normal terminal window.
 @interface iTermWindow : NSWindow<iTermWeaklyReferenceable, PTYWindow>
-
 @end
 
 @interface iTermCompactWindow : NSWindow<iTermWeaklyReferenceable, PTYWindow>
@@ -102,7 +109,6 @@ typedef NSWindow<iTermWeaklyReferenceable, PTYWindow> iTermTerminalWindow;
 
 // A floating hotkey window. This can overlap a lion fullscreen window.
 @interface iTermPanel : NSPanel<iTermWeaklyReferenceable, PTYWindow>
-
 @end
 
 @interface iTermCompactPanel : NSPanel<iTermWeaklyReferenceable, PTYWindow>

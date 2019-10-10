@@ -19,6 +19,7 @@
 #import "iTermDragHandleView.h"
 #import "iTermGenericStatusBarContainer.h"
 #import "iTermPreferences.h"
+#import "iTermWindowSizeView.h"
 #import "iTermStandardWindowButtonsView.h"
 #import "iTermStatusBarViewController.h"
 #import "iTermStoplightHotbox.h"
@@ -96,6 +97,7 @@ typedef struct {
     iTermTabBarBacking *_tabBarBacking NS_AVAILABLE_MAC(10_14);
     iTermGenericStatusBarContainer *_statusBarContainer;
     NSDictionary *_desiredToolbeltProportions;
+    iTermWindowSizeView *_windowSizeView NS_AVAILABLE_MAC(10_14);
 }
 
 - (instancetype)initWithFrame:(NSRect)frameRect
@@ -225,7 +227,7 @@ typedef struct {
 
 - (NSView *)hitTest:(NSPoint)point {
     NSView *view = [super hitTest:point];
-    if (!_tabBarControlOnLoan && !_windowNumberLabel.hidden && view == _windowNumberLabel) {
+    if (!_tabBarControlOnLoan && !_windowNumberLabel.hidden && view == _windowNumberLabel && !_tabBarControl.isHidden) {
         return _tabBarControl;
     } else if (!_windowTitleLabel.hidden && view == _windowTitleLabel) {
         return self;
@@ -254,6 +256,13 @@ typedef struct {
     [super mouseUp:event];
 }
 
+- (NSMenu *)menuForEvent:(NSEvent *)event {
+    if (_windowTitleLabel.hidden) {
+        return nil;
+    }
+    return [_tabBarControl menuForEvent:event];
+}
+
 - (BOOL)mouseDownCanMoveWindow {
     return YES;
 }
@@ -269,8 +278,29 @@ typedef struct {
 - (NSEdgeInsets)insetsForStoplightHotbox {
     if (![self.delegate enableStoplightHotbox]) {
         NSEdgeInsets insets = NSEdgeInsetsZero;
-        insets.left = insets.right = 6;
+        const iTermPreferencesTabStyle preferredStyle = [iTermPreferences intForKey:kPreferenceKeyTabStyle];
         insets.bottom = -[self.delegate rootTerminalViewStoplightButtonsOffset:self];
+        switch (preferredStyle) {
+            case TAB_STYLE_MINIMAL:
+                insets.left = insets.right = MAX(0, -insets.bottom);
+                break;
+            case TAB_STYLE_COMPACT:
+                insets.left = insets.right = 0;
+                break;
+            case TAB_STYLE_DARK:
+            case TAB_STYLE_LIGHT:
+            case TAB_STYLE_AUTOMATIC:
+            case TAB_STYLE_DARK_HIGH_CONTRAST:
+            case TAB_STYLE_LIGHT_HIGH_CONTRAST:
+                insets.left = insets.right = 0;
+                break;
+        }
+
+        insets.left = [self retinaRound:insets.left];
+        insets.top = [self retinaRound:insets.top];
+        insets.bottom = [self retinaRound:insets.bottom];
+        insets.right = [self retinaRound:insets.right];
+
         return insets;
     }
 
@@ -315,6 +345,10 @@ typedef struct {
 }
 
 - (NSRect)frameForWindowTitleLabel {
+    return [self frameForWindowTitleLabelGetLeftAligned:nil];
+}
+
+- (NSRect)frameForWindowTitleLabelGetLeftAligned:(BOOL *)leftAlignedPtr {
     if (_tabBarControlOnLoan) {
         return NSZeroRect;
     }
@@ -323,10 +357,27 @@ typedef struct {
     const CGFloat capHeight = _windowTitleLabel.font.capHeight;
     const CGFloat myHeight = self.frame.size.height;
     const NSEdgeInsets insets = [self.delegate tabBarInsets];
-    const CGFloat sideInset = MAX(MAX(insets.left, insets.right), iTermRootTerminalViewWindowNumberLabelMargin);
-    NSRect rect = NSMakeRect([self retinaRound:sideInset],
+
+    // Prefer to center it, using the same inset on both sides. There's no need
+    // to have an inset on the right otherwise so if the title doesn't fit then
+    // left-align it and make it as wide as the available space.
+    // This mirros what NSWindow's title does.
+    const CGFloat mostGenerousInset = MAX(MAX(insets.left, insets.right), iTermRootTerminalViewWindowNumberLabelMargin);
+    const CGFloat containerWidth = NSWidth(self.frame) - ([self shouldShowToolbelt] ? NSWidth(_toolbelt.frame) : 0);
+    const CGFloat desiredWidth = [_windowTitleLabel fittingSize].width;
+    CGFloat leftInset = mostGenerousInset;
+    CGFloat rightInset = mostGenerousInset;
+    CGFloat proposedWidth = containerWidth - leftInset - rightInset;
+    const CGFloat overage = desiredWidth - proposedWidth;
+    if (overage > 0) {
+        rightInset = MAX(4, rightInset - overage);
+        if (leftAlignedPtr) {
+            *leftAlignedPtr = YES;
+        }
+    }
+    NSRect rect = NSMakeRect([self retinaRound:leftInset],
                              [self retinaRound:myHeight - tabBarHeight + (tabBarHeight - capHeight) / 2.0 - baselineOffset],
-                             ceil(MAX(0, self.frame.size.width - sideInset * 2)),
+                             ceil(MAX(0, containerWidth - leftInset - rightInset)),
                              ceil(_windowTitleLabel.frame.size.height));
     return [self retinaRoundRect:rect];
 }
@@ -366,8 +417,10 @@ typedef struct {
     if (!needCustomButtons) {
         [_standardWindowButtonsView removeFromSuperview];
         _standardWindowButtonsView = nil;
-        for (int i = 0; i < self.numberOfWindowButtons; i++) {
-            [[self.window standardWindowButton:self.windowButtonTypes[i]] setHidden:NO];
+        if ([self.delegate rootTerminalViewShouldRevealStandardWindowButtons]) {
+            for (int i = 0; i < self.numberOfWindowButtons; i++) {
+                [[self.window standardWindowButton:self.windowButtonTypes[i]] setHidden:NO];
+            }
         }
         return;
     }
@@ -416,7 +469,7 @@ typedef struct {
     if (@available(macOS 10.14, *)) {
         if ([_delegate rootTerminalViewShouldDrawWindowTitleInPlaceOfTabBar]) {
             // Draw background color for fake title bar.
-            NSColor *const backgroundColor = [_delegate rootTerminalViewTabBarBackgroundColor];
+            NSColor *const backgroundColor = [_delegate rootTerminalViewTabBarBackgroundColorIgnoringTabColor:NO];
             const CGFloat height = [_delegate rootTerminalViewHeightOfTabBar:self];
             [backgroundColor set];
             NSRectFill(NSMakeRect(0,
@@ -487,18 +540,24 @@ typedef struct {
     _windowTitle = [title copy];
 
     [self setWindowTitleLabelToString:_windowTitle icon:[self.delegate rootTerminalViewCurrentTabIcon]];
+    if (!_windowTitleLabel.hidden) {
+        [self layoutWindowPaneDecorations];
+    }
 }
 
 - (void)setWindowTitleLabelToString:(NSString *)title icon:(NSImage *)icon {
-    NSMutableParagraphStyle *paragraphStyle = [[NSMutableParagraphStyle alloc] init];
-    paragraphStyle.alignment = NSTextAlignmentCenter;
-    paragraphStyle.lineBreakMode = NSLineBreakByTruncatingTail;
-    NSDictionary *attributes = @{ NSFontAttributeName: _windowTitleLabel.font,
-                                  NSForegroundColorAttributeName: _windowTitleLabel.textColor,
-                                  NSParagraphStyleAttributeName: paragraphStyle };
-    NSAttributedString *attributedString = [[NSAttributedString alloc] initWithString:title ?: @""
-                                                                           attributes:attributes];
+    BOOL leftAligned = NO;
+    [self frameForWindowTitleLabelGetLeftAligned:&leftAligned];
+    const NSTextAlignment textAlignment = leftAligned ? NSTextAlignmentLeft : NSTextAlignmentCenter;
     if (icon) {
+        NSMutableParagraphStyle *paragraphStyle = [[NSMutableParagraphStyle alloc] init];
+        paragraphStyle.alignment = textAlignment;
+        paragraphStyle.lineBreakMode = NSLineBreakByTruncatingTail;
+        NSDictionary *attributes = @{ NSFontAttributeName: _windowTitleLabel.font,
+                                      NSForegroundColorAttributeName: _windowTitleLabel.textColor,
+                                      NSParagraphStyleAttributeName: paragraphStyle };
+        NSAttributedString *attributedString = [[NSAttributedString alloc] initWithString:title ?: @""
+                                                                               attributes:attributes];
         NSTextAttachment *textAttachment = [[NSTextAttachment alloc] init];
         textAttachment.image = icon;
         NSFont *font = _windowTitleLabel.font;
@@ -514,9 +573,14 @@ typedef struct {
         _windowTitleLabel.attributedStringValue = iconAttributedString;
     } else {
         _windowTitleLabel.stringValue = title ?: @"";
+        _windowTitleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
     }
     _windowTitleLabel.windowTitle = title;
     _windowTitleLabel.windowIcon = icon;
+    _windowTitleLabel.maximumNumberOfLines = 1;
+    _windowTitleLabel.usesSingleLineMode = YES;
+    _windowTitleLabel.alignment = textAlignment;
+    _windowTitleLabel.allowsDefaultTighteningForTruncation = YES;
 }
 
 - (void)setWindowTitleIcon:(NSImage *)icon {
@@ -580,6 +644,32 @@ typedef struct {
     if (_desiredToolbeltProportions) {
         [self.toolbelt setProportions:_desiredToolbeltProportions];
         _desiredToolbeltProportions = nil;
+    }
+}
+
+- (void)setShowsWindowSize:(BOOL)showsWindowSize {
+    if (!showsWindowSize) {
+        // Hide
+        [_windowSizeView removeFromSuperview];
+        _windowSizeView = nil;
+        return;
+    }
+
+    // Show
+    if (_windowSizeView) {
+        return;
+    }
+    _windowSizeView = [[iTermWindowSizeView alloc] init];
+    [self addSubview:_windowSizeView];
+    NSRect myBounds = self.bounds;
+    _windowSizeView.frame = NSMakeRect(NSMidX(myBounds), NSMidY(myBounds), 0, 0);
+    _windowSizeView.autoresizingMask = (NSViewMinXMargin | NSViewMaxXMargin | NSViewMinYMargin | NSViewMaxYMargin);
+    [_windowSizeView setWindowSize:[self.delegate rootTerminalViewCurrentSessionSize]];
+}
+
+- (void)windowDidResize {
+    if (@available(macOS 10.14, *)) {
+        [_windowSizeView setWindowSize:[self.delegate rootTerminalViewCurrentSessionSize]];
     }
 }
 
@@ -979,6 +1069,10 @@ typedef struct {
     }
     switch ([iTermPreferences intForKey:kPreferenceKeyTabPosition]) {
         case PSMTab_TopTab:
+            if (self.tabBarControl.flashing) {
+                // Overlaps content
+                return frame;
+            }
             break;
         case PSMTab_LeftTab:
         case PSMTab_BottomTab:
@@ -1155,8 +1249,24 @@ typedef struct {
     DLog(@"repositionWidgets - return.");
 }
 
+- (CGFloat)minimumTabBarWidth {
+    const iTermPreferencesTabStyle preferredStyle = [iTermPreferences intForKey:kPreferenceKeyTabStyle];
+    switch (preferredStyle) {
+        case TAB_STYLE_DARK:
+        case TAB_STYLE_LIGHT:
+        case TAB_STYLE_AUTOMATIC:
+        case TAB_STYLE_DARK_HIGH_CONTRAST:
+        case TAB_STYLE_LIGHT_HIGH_CONTRAST:
+            return 50;
+        case TAB_STYLE_MINIMAL:
+        case TAB_STYLE_COMPACT:
+            return 114;
+    }
+    assert(NO);
+}
+
 - (CGFloat)leftTabBarWidthForPreferredWidth:(CGFloat)preferredWidth contentWidth:(CGFloat)contentWidth {
-    const CGFloat minimumWidth = 50;
+    const CGFloat minimumWidth = [self minimumTabBarWidth];
     const CGFloat maximumWidth = round(contentWidth / 3);
     return MAX(MIN(maximumWidth, preferredWidth), minimumWidth);
 }
@@ -1303,16 +1413,22 @@ typedef struct {
     if (preferredStyle != TAB_STYLE_MINIMAL) {
         return YES;
     }
+    BOOL isTop = NO;
     switch ([iTermPreferences intForKey:kPreferenceKeyTabPosition]) {
         case PSMTab_BottomTab:
         case PSMTab_LeftTab:
             return YES;
 
         case PSMTab_TopTab:
+            isTop = YES;
             break;
     }
     if ([_delegate lionFullScreen] || [_delegate enteringLionFullscreen]) {
-        return NO;
+        if (isTop) {
+            return [iTermPreferences boolForKey:kPreferenceKeyFlashTabBarInFullscreen];
+        } else {
+            return NO;
+        }
     }
 
     return YES;
@@ -1381,7 +1497,7 @@ typedef struct {
 #pragma mark - iTermGenericStatusBarContainer
 
 - (NSColor *)genericStatusBarContainerBackgroundColor {
-    return [self.delegate rootTerminalViewTabBarBackgroundColor];
+    return [self.delegate rootTerminalViewTabBarBackgroundColorIgnoringTabColor:YES];
 }
 
 @end

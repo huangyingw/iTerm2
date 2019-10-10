@@ -77,11 +77,11 @@ static NSString *const iTermComposerComboBoxDidBecomeFirstResponder = @"iTermCom
     if ([self.delegate statusBarComposerShouldForceDarkAppearance:self]) {
         if (@available(macOS 10.14, *)) {
             _popoverVC.view.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
-        } else {
-            _popoverVC.view.appearance = [NSAppearance appearanceNamed:NSAppearanceNameVibrantDark];
         }
     } else {
-        _popoverVC.view.appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
+        if (@available(macOS 10.14, *)) {
+            _popoverVC.view.appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
+        }
     }
     _popoverVC.textView.string = _comboBox.stringValue;
     _popoverVC.textView.font = [self.delegate statusBarComposerFont:self];
@@ -95,6 +95,11 @@ static NSString *const iTermComposerComboBoxDidBecomeFirstResponder = @"iTermCom
     _wantsReload = NO;
     [_comboBox removeAllItems];
     [_comboBox addItemsWithObjectValues:[self.delegate statusBarComposerSuggestions:self] ?: @[]];
+}
+
+- (void)sendCommand {
+    [self.delegate statusBarComposer:self sendCommand:_comboBox.stringValue];
+    _comboBox.stringValue = @"";
 }
 
 #pragma mark - NSComboBoxDelegate
@@ -125,7 +130,9 @@ doCommandBySelector:(SEL)commandSelector {
     }
 
     if (commandSelector == @selector(insertNewline:)) {
-        [self.delegate statusBarComposer:self sendCommand:_comboBox.stringValue];
+        if (!_open) {
+            [self sendCommand];
+        }
         return YES;
     } else {
         return NO;

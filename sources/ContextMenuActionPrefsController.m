@@ -9,6 +9,7 @@
 #import "ContextMenuActionPrefsController.h"
 #import "FutureMethods.h"
 #import "NSStringITerm.h"
+#import "NSURL+iTerm.h"
 #import "VT100RemoteHost.h"
 
 static NSString* kTitleKey = @"title";
@@ -59,17 +60,17 @@ static NSString* kParameterKey = @"parameter";
 }
 
 + (NSString *)parameterValue:(NSString *)parameter
-            encodedForAction:(ContextMenuActions)action
-{
+            encodedForAction:(ContextMenuActions)action {
     switch (action) {
         case kRunCommandContextMenuAction:
         case kRunCommandInWindowContextMenuAction:
         case kRunCoprocessContextMenuAction:
-            return [parameter stringWithEscapedShellCharactersIncludingNewlines:NO];
+            return [parameter stringWithBackslashEscapedShellCharactersIncludingNewlines:NO];
         case kOpenFileContextMenuAction:
             return parameter;
-        case kOpenUrlContextMenuAction:
-            return [parameter stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLHostAllowedCharacterSet]];
+        case kOpenUrlContextMenuAction: {
+            return [NSURL URLWithUserSuppliedString:parameter].absoluteString;
+        }
         case kSendTextContextMenuAction:
             return parameter;
     }
@@ -90,7 +91,7 @@ static NSString* kParameterKey = @"parameter";
             repl = [self parameterValue:[components objectAtIndex:i]
                        encodedForAction:action];
         }
-        parameter = [parameter stringByReplacingBackreference:i withString:repl];
+        parameter = [parameter stringByReplacingBackreference:i withString:repl ?: @""];
     }
 
     parameter = [parameter stringByReplacingEscapedChar:'d' withString:workingDirectory ?: @"."];

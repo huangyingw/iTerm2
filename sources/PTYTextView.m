@@ -41,6 +41,7 @@
 #import "iTermWarning.h"
 #import "MovePaneController.h"
 #import "MovingAverage.h"
+#import "NSAppearance+iTerm.h"
 #import "NSArray+iTerm.h"
 #import "NSCharacterSet+iTerm.h"
 #import "NSColor+iTerm.h"
@@ -252,10 +253,6 @@ static const int kDragThreshold = 3;
                                                      name:kRefreshTerminalNotification
                                                    object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self
-                                                 selector:@selector(_pointerSettingsChanged:)
-                                                     name:kPointerPrefsChangedNotification
-                                                   object:nil];
-        [[NSNotificationCenter defaultCenter] addObserver:self
                                                  selector:@selector(imageDidLoad:)
                                                      name:iTermImageDidLoad
                                                    object:nil];
@@ -276,16 +273,13 @@ static const int kDragThreshold = 3;
         _primaryFont = [[PTYFontInfo alloc] init];
         _secondaryFont = [[PTYFontInfo alloc] init];
 
-        if ([pointer_ viewShouldTrackTouches]) {
-            DLog(@"Begin tracking touches in view %@", self);
-            [self setAcceptsTouchEvents:YES];
-            [self setWantsRestingTouches:YES];
-            if ([self useThreeFingerTapGestureRecognizer]) {
-                threeFingerTapGestureRecognizer_ =
-                    [[ThreeFingerTapGestureRecognizer alloc] initWithTarget:self
-                                                                   selector:@selector(threeFingerTap:)];
-            }
-        }
+        DLog(@"Begin tracking touches in view %@", self);
+        [self setAcceptsTouchEvents:YES];
+        [self setWantsRestingTouches:YES];
+        threeFingerTapGestureRecognizer_ =
+            [[ThreeFingerTapGestureRecognizer alloc] initWithTarget:self
+                                                           selector:@selector(threeFingerTap:)];
+
         [self viewDidChangeBackingProperties];
         _indicatorsHelper = [[iTermIndicatorsHelper alloc] init];
         _indicatorsHelper.delegate = self;
@@ -385,6 +379,7 @@ static const int kDragThreshold = 3;
     [_keyboardHandler release];
     _urlActionHelper.delegate = nil;
     [_urlActionHelper release];
+    [_imageBeingClickedOn release];
     [super dealloc];
 }
 
@@ -396,12 +391,6 @@ static const int kDragThreshold = 3;
             _dataSource,
             _delegate,
             self.window];
-}
-
-- (BOOL)useThreeFingerTapGestureRecognizer {
-    // This used to be guarded by [[NSUserDefaults standardUserDefaults] boolForKey:@"ThreeFingerTapEmulatesThreeFingerClick"];
-    // but I'm going to turn it on by default and see if anyone complains. 12/16/13
-    return YES;
 }
 
 - (void)viewDidChangeBackingProperties {
@@ -453,8 +442,10 @@ static const int kDragThreshold = 3;
 }
 
 - (void)threeFingerTap:(NSEvent *)ev {
-    [self sendFakeThreeFingerClickDown:YES basedOnEvent:ev];
-    [self sendFakeThreeFingerClickDown:NO basedOnEvent:ev];
+    if (![pointer_ threeFingerTap:ev]) {
+        [self sendFakeThreeFingerClickDown:YES basedOnEvent:ev];
+        [self sendFakeThreeFingerClickDown:NO basedOnEvent:ev];
+    }
 }
 
 - (void)touchesBeganWithEvent:(NSEvent *)ev {
@@ -617,12 +608,37 @@ static const int kDragThreshold = 3;
     _markedTextAttributes = [attr retain];
 }
 
-- (void)updateScrollerForBackgroundColor
-{
+- (void)updateScrollerForBackgroundColor {
     PTYScroller *scroller = [_delegate textViewVerticalScroller];
     NSColor *backgroundColor = [_colorMap colorForKey:kColorMapBackground];
-    scroller.knobStyle =
-        [backgroundColor isDark] ? NSScrollerKnobStyleLight : NSScrollerKnobStyleDefault;
+    const BOOL isDark = [backgroundColor isDark];
+
+    if (isDark) {
+        // Dark background, any theme, any OS version
+        scroller.knobStyle = NSScrollerKnobStyleLight;
+    } else if (@available(macOS 10.14, *)) {
+        if (self.effectiveAppearance.it_isDark) {
+            // Light background, dark theme — issue 8322
+            scroller.knobStyle = NSScrollerKnobStyleDark;
+        } else {
+            // Light background, light theme
+            scroller.knobStyle = NSScrollerKnobStyleDefault;
+        }
+    } else {
+        // Pre-10.4, light background
+        scroller.knobStyle = NSScrollerKnobStyleDefault;
+    }
+
+    // The knob style is used only for overlay scrollers. In the minimal theme, the window decorations'
+    // colors are based on the terminal background color. That means the appearance must be changed to get
+    // legacy scrollbars to change color.
+    if (@available(macOS 10.14, *)) {
+        if ([self.delegate textViewTerminalBackgroundColorDeterminesWindowDecorationColor]) {
+            scroller.appearance = isDark ? [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua] : [NSAppearance appearanceNamed:NSAppearanceNameAqua];
+        } else {
+            scroller.appearance = nil;
+        }
+    }
 }
 
 - (NSFont *)font {
@@ -1457,6 +1473,7 @@ static const int kDragThreshold = 3;
                     [_delegate writeTask:stringToSend];
                 }
             }
+            [self deselect];
         }
     } else if (![self reportMouseEvent:event]) {
         [super scrollWheel:event];
@@ -1468,13 +1485,14 @@ static const int kDragThreshold = 3;
 }
 
 // Reset underlined chars indicating cmd-clickable url.
-- (void)removeUnderline {
+- (BOOL)removeUnderline {
     if (![self hasUnderline]) {
-        return;
+        return NO;
     }
     _drawingHelper.underlinedRange =
         VT100GridAbsWindowedRangeMake(VT100GridAbsCoordRangeMake(-1, -1, -1, -1), 0, 0);
     [self setNeedsDisplay:YES];  // It would be better to just display the underlined/formerly underlined area.
+    return YES;
 }
 
 - (void)flagsChanged:(NSEvent *)theEvent {
@@ -1557,6 +1575,7 @@ static const int kDragThreshold = 3;
         DLog(@"Trying to steal key focus");
         if ([self stealKeyFocus]) {
             if (_keyFocusStolenCount == 0) {
+                [[self window] makeFirstResponder:self];
                 [[iTermSecureKeyboardEntryController sharedInstance] didStealFocus];
             }
             ++_keyFocusStolenCount;
@@ -1687,18 +1706,30 @@ static const int kDragThreshold = 3;
         return NO;
     }
     if (_numTouches == 3) {
+        // NOTE! If you turn on the following setting:
+        //   System Preferences > Accessibility > Mouse & Trackpad > Trackpad Options... > Enable dragging > three finger drag
+        // Then a three-finger drag gets translated into mouseDown:…mouseDragged:…mouseUp:.
+        // Prior to commit 96323ddf8 we didn't track touch-up/touch-down unless necessary, so that
+        // feature worked unless you had a mouse gesture that caused touch tracking to be enabled.
+        // In issue 8321 it was revealed that touch tracking breaks three-finger drag. The solution
+        // is to not return early if we detect a three-finger down but don't have a pointer action
+        // for it. Then it proceeds to behave like before commit 96323ddf8. Otherwise, it'll just
+        // watch for the actions that three-finger touches can cause.
+        BOOL shouldReturnEarly = YES;
         if ([iTermPreferences boolForKey:kPreferenceKeyThreeFingerEmulatesMiddle]) {
             [self emulateThirdButtonPressDown:YES withEvent:event];
         } else {
             // Perform user-defined gesture action, if any
-            [pointer_ mouseDown:event
-                    withTouches:_numTouches
-                   ignoreOption:[self terminalWantsMouseReports]];
+            shouldReturnEarly = [pointer_ mouseDown:event
+                                        withTouches:_numTouches
+                                       ignoreOption:[self terminalWantsMouseReports]];
             DLog(@"Set mouseDown=YES because of 3 finger mouseDown (not emulating middle)");
             _mouseDown = YES;
         }
         DLog(@"Returning because of 3-finger click.");
-        return NO;
+        if (shouldReturnEarly) {
+            return NO;
+        }
     }
     if ([pointer_ eventEmulatesRightClick:event]) {
         [pointer_ mouseDown:event
@@ -1755,10 +1786,17 @@ static const int kDragThreshold = 3;
         return NO;
     }
 
+    iTermImageInfo *const imageBeingClickedOn = [self imageInfoAtCoord:VT100GridCoordMake(x, y)];
+    const BOOL mouseDownOnSelection = [_selection containsCoord:VT100GridCoordMake(x, y)];
+
     if (!_mouseDownWasFirstMouse) {
         // Lock auto scrolling while the user is selecting text, but not for a first-mouse event
         // because drags are ignored for those.
         [(PTYScroller*)([[self enclosingScrollView] verticalScroller]) setUserScroll:YES];
+
+        if (event.clickCount == 1 && !cmdPressed && !shiftPressed && !imageBeingClickedOn && !mouseDownOnSelection) {
+            [_selection clearSelection];
+        }
     }
 
     [_mouseDownEvent autorelease];
@@ -1783,10 +1821,12 @@ static const int kDragThreshold = 3;
             mode = kiTermSelectionModeCharacter;
         }
 
-        if ((_imageBeingClickedOn = [self imageInfoAtCoord:VT100GridCoordMake(x, y)])) {
+        if (imageBeingClickedOn) {
+            [_imageBeingClickedOn autorelease];
+            _imageBeingClickedOn = [imageBeingClickedOn retain];
             _mouseDownOnImage = YES;
             _selection.appending = NO;
-        } else if ([_selection containsCoord:VT100GridCoordMake(x, y)]) {
+        } else if (mouseDownOnSelection) {
             // not holding down shift key but there is an existing selection.
             // Possibly a drag coming up (if a cmd-drag follows)
             DLog(@"mouse down on selection, returning");
@@ -1945,6 +1985,7 @@ static double EuclideanDistance(NSPoint p1, NSPoint p2) {
         [[self window] makeFirstResponder:self];
     }
 
+    const BOOL wasSelecting = _selection.live;
     [_selection endLiveSelection];
     if (isUnshiftedSingleClick) {
         // Just a click in the window.
@@ -1979,9 +2020,6 @@ static double EuclideanDistance(NSPoint p1, NSPoint p2) {
             }
         }
 
-        if (!_selection.appending) {
-            [_selection clearSelection];
-        }
         if (willFollowLink) {
             [_urlActionHelper openTargetWithEvent:event inBackground:altPressed];
         } else {
@@ -2013,8 +2051,13 @@ static double EuclideanDistance(NSPoint p1, NSPoint p2) {
         [_findOnPageHelper resetFindCursor];
     }
 
-    DLog(@"Has selection=%@, delegate=%@", @([_selection hasSelection]), _delegate);
-    if ([_selection hasSelection] && _delegate) {
+    DLog(@"Has selection=%@, delegate=%@ wasSelecting=%@", @([_selection hasSelection]), _delegate, @(wasSelecting));
+    if ([_selection hasSelection] && event.clickCount == 1 && !wasSelecting) {
+        // Click on selection. When the mouse-down was on the selection we delay clearing it until
+        // mouse-up so you have the chance to drag it.
+        [_selection clearSelection];
+    }
+    if ([_selection hasSelection] && _delegate && wasSelecting) {
         // if we want to copy our selection, do so
         DLog(@"selection copies text=%@", @([iTermPreferences boolForKey:kPreferenceKeySelectionCopiesText]));
         if ([iTermPreferences boolForKey:kPreferenceKeySelectionCopiesText]) {
@@ -2852,13 +2895,15 @@ static double EuclideanDistance(NSPoint p1, NSPoint p2) {
     [self refresh];
 
     DLog(@"-[PTYTextView copy:] called");
+    DLog(@"%@", [NSThread callStackSymbols]);
+
     NSString *copyString = [self selectedText];
 
     if ([iTermAdvancedSettingsModel disallowCopyEmptyString] && copyString.length == 0) {
         DLog(@"Disallow copying empty string");
         return;
     }
-    DLog(@"Have selected text of length %d. selection=%@", (int)[copyString length], _selection);
+    DLog(@"Have selected text: “%@”. selection=%@", copyString, _selection);
     if (copyString) {
         NSPasteboard *pboard = [NSPasteboard generalPasteboard];
         [pboard declareTypes:[NSArray arrayWithObject:NSStringPboardType] owner:self];
@@ -4072,6 +4117,13 @@ static double EuclideanDistance(NSPoint p1, NSPoint p2) {
                 keyEquivalent:@""];
     [[theMenu itemAtIndex:[theMenu numberOfItems] - 1] setTarget:self];
 
+    if ([_delegate textViewHasCoprocess]) {
+        [theMenu addItemWithTitle:@"Stop Coprocess"
+                           action:@selector(textViewStopCoprocess)
+                    keyEquivalent:@""];
+        [[theMenu itemAtIndex:[theMenu numberOfItems] - 1] setTarget:self.delegate];
+    }
+
     // Separator
     [theMenu addItem:[NSMenuItem separatorItem]];
 
@@ -4140,6 +4192,7 @@ static double EuclideanDistance(NSPoint p1, NSPoint p2) {
     int numValid = -1;
     if ([NSEvent modifierFlags] & NSEventModifierFlagOption) {  // Option-drag to copy
         _drawingHelper.showDropTargets = YES;
+        [self.delegate textViewDidUpdateDropTargetVisibility];
     }
     NSDragOperation operation = [self dragOperationForSender:sender numberOfValidItems:&numValid];
     if (numValid != sender.numberOfValidItemsForDrop) {
@@ -4151,6 +4204,7 @@ static double EuclideanDistance(NSPoint p1, NSPoint p2) {
 
 - (void)draggingExited:(nullable id <NSDraggingInfo>)sender {
     _drawingHelper.showDropTargets = NO;
+    [self.delegate textViewDidUpdateDropTargetVisibility];
     [self setNeedsDisplay:YES];
 }
 
@@ -4294,6 +4348,7 @@ static double EuclideanDistance(NSPoint p1, NSPoint p2) {
 //
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
     _drawingHelper.showDropTargets = NO;
+    [self.delegate textViewDidUpdateDropTargetVisibility];
     NSPasteboard *draggingPasteboard = [sender draggingPasteboard];
     NSDragOperation dragOperation = [sender draggingSourceOperationMask];
     DLog(@"Perform drag operation");
@@ -5575,22 +5630,6 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
     return [_oldSelection hasSelection];
 }
 
-- (void)_pointerSettingsChanged:(NSNotification *)notification {
-    BOOL track = [pointer_ viewShouldTrackTouches];
-    [self setAcceptsTouchEvents:track];
-    [self setWantsRestingTouches:track];
-    [threeFingerTapGestureRecognizer_ release];
-    threeFingerTapGestureRecognizer_ = nil;
-    if (track) {
-        if ([self useThreeFingerTapGestureRecognizer]) {
-            threeFingerTapGestureRecognizer_ = [[ThreeFingerTapGestureRecognizer alloc] initWithTarget:self
-                                                                                              selector:@selector(threeFingerTap:)];
-        }
-    } else {
-        _numTouches = 0;
-    }
-}
-
 - (void)_settingsChanged:(NSNotification *)notification
 {
     [self setNeedsDisplay:YES];
@@ -5837,7 +5876,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
         lines = [_dataSource linesInRange:NSMakeRange(lineStart, lineEnd - lineStart)];
     }
     const NSInteger numLines = lines.count;
-
+    DLog(@"Visible lines are [%d,%d)", lineStart, lineEnd);
     for (int y = lineStart, i = 0; y < lineEnd; y++, i++) {
         if (_blinkAllowed && i < numLines) {
             // First, mark blinking chars as dirty.
@@ -5853,7 +5892,9 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
                     if (gDebugLogging) {
                         DLog(@"Found blinking char on line %d", y);
                     }
-                    [self setNeedsDisplayInRect:[self rectWithHalo:dirtyRect]];
+                    const NSRect rect = [self rectWithHalo:dirtyRect];
+                    DLog(@"Redraw rect for line y=%d i=%d blink: %@", y, i, NSStringFromRect(rect));
+                    [self setNeedsDisplayInRect:rect];
                     break;
                 }
             }

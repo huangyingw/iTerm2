@@ -75,7 +75,10 @@ int decode_utf8_char(const unsigned char * restrict datap,
 
 // Returns the number of lines in a string.
 - (NSUInteger)numberOfLines;
+// May use single quotes by user preference. Only safe to use with user's default shell.
 - (NSString *)stringWithEscapedShellCharactersIncludingNewlines:(BOOL)includingNewlines;
+// Always uses backslash.
+- (NSString *)stringWithBackslashEscapedShellCharactersIncludingNewlines:(BOOL)includingNewlines;
 - (NSString *)stringWithEscapedShellCharactersExceptTabAndNewline;
 
 // Replaces tab with ^V + tab.
@@ -181,6 +184,9 @@ int decode_utf8_char(const unsigned char * restrict datap,
 - (CGFloat)heightWithAttributes:(NSDictionary *)attributes constrainedToWidth:(CGFloat)maxWidth;
 
 - (iTermTuple *)keyValuePair;
+- (iTermTuple<NSString *, NSString *> *)it_stringBySplittingOnFirstSubstring:(NSString *)substring;
+
+- (NSIndexSet *)indicesOfCharactersInSet:(NSCharacterSet *)characterSet;
 
 - (NSString *)stringByPerformingSubstitutions:(NSDictionary *)substitutions;
 
@@ -200,7 +206,7 @@ int decode_utf8_char(const unsigned char * restrict datap,
 + (NSString *)uuid;
 
 // Characters in [0, 31] and 127 get replaced with ?
-- (NSString *)stringByReplacingControlCharsWithQuestionMark;
+- (NSString *)stringByReplacingControlCharactersWithCaretLetter;
 
 // Returns the set of $$VARIABLES$$ in the string.
 - (NSSet *)doubleDollarVariables;
@@ -311,6 +317,7 @@ int decode_utf8_char(const unsigned char * restrict datap,
 
 // Puts backslashes before characters in shellEscapableCharacters.
 - (void)escapeShellCharactersIncludingNewlines:(BOOL)includingNewlines;
+- (void)escapeShellCharactersWithBackslashIncludingNewlines:(BOOL)includingNewlines;
 - (void)escapeShellCharactersExceptTabAndNewline;
 
 // Convenience method to append a single character.

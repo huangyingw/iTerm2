@@ -1,14 +1,14 @@
 #!/usr/bin/env sh
 
 GIT_BINARY=$(command -v git)
-NICE=/usr/bin/nice -n 20
+NICE="/usr/bin/nice -n 20"
 PRIORITY=20
 
 xcode() {
     # Check if git is broken because it can't find Xcode. A special charm of macOS for you.
     local output=$($NICE "${GIT_BINARY}" --version 2>&1)
     # if there's no error, then return nothing
-    if ! grep -q "xcrun: error" <<< "${output}"; then
+    if ! egrep -q "xcrun: error|xcodebuild -license" <<< "${output}"; then
         echo ""
         return
     fi
