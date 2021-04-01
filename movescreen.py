@@ -56,9 +56,9 @@ async def main(connection):
 
     async def move_current_tab_by_n_screens(delta):
         tab_to_move = app.current_terminal_window.current_tab
-        current_window = app.current_terminal_window
-        current_window.async_set_fullscreen(False)
+        window = app.current_terminal_window
         window_with_tab_to_move = app.get_window_for_tab(tab_to_move.tab_id)
+        window_with_tab_to_move.async_set_fullscreen(False)
         i = app.terminal_windows.index(window_with_tab_to_move)
         print("Window has index {}".format(i))
         n = len(app.terminal_windows)
@@ -68,6 +68,12 @@ async def main(connection):
         currentScreenIndex = indexOfScreenWithFrame(await window_with_tab_to_move.async_get_frame())
         numberOfScreens = len(NSScreen.screens())
         desiredScreenIndex = (currentScreenIndex + delta) % numberOfScreens
+
+        nsframe = NSScreen.screens()[currentScreenIndex].frame()
+        frame = iterm2.Frame(
+            iterm2.Point(nsframe.origin.x, nsframe.origin.y),
+            iterm2.Size(nsframe.size.width, nsframe.size.height))
+        await window.async_set_frame(frame)
 
         print("Want to move from screen {} to screen {}".format(currentScreenIndex, desiredScreenIndex))
 
