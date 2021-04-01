@@ -1,3 +1,7 @@
+ssl module in Python is not available in iterm2env for macOS Catalina
+
+
+
 mbp:~ huangyingw$ ~/Library/ApplicationSupport/iTerm2/Scripts/movescreen/iterm2env/versions/3.7.2/bin/pip3.7 install pyobjc
 pip is configured with locations that require TLS/SSL, however the ssl module in Python is not available.
 Collecting pyobjc
@@ -11,3 +15,5 @@ Collecting pyobjc
 No matching distribution found for pyobjc
 pip is configured with locations that require TLS/SSL, however the ssl module in Python is not available.
 Could not fetch URL https://pypi.org/simple/pip/: There was a problem confirming the ssl certificate: HTTPSConnectionPool(host='pypi.org', port=443): Max retries exceeded with url: /simple/pip/ (Caused by SSLError("Can't connect to HTTPS URL because the SSL module is not available.")) - skipping
+
+However, the same command works in macOS Mojave
