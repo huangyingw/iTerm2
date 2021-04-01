@@ -31,4 +31,7 @@
 [gdif]
     ignore = Scripts/AutoLaunch/move_current_tab.py 
     ignore = build.sh
+    ignore = deploy.sh
     ignore = error
+    ignore = movescreen.py
+    ignore = readme
