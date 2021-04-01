@@ -1,4 +1,8 @@
 #import "VT100Output.h"
+
+#import "DebugLogging.h"
+#import "iTermAdvancedSettingsModel.h"
+
 #include <term.h>
 
 // Indexes into _keyStrings.
@@ -88,14 +92,6 @@ typedef enum {
 
 // Secondary Device Attribute: VT100
 
-// TODO: When xterm compatibility is reached, change 95 to 314 or later. Even 277 would be an
-// improvement as it would let vim use ttym=sgr rather than xterm2, which passes through luit.
-// However, it must return three arguments (at the very least) to keep vim happy. For more, see
-// check_termcode() in vim's term.c.
-#define REPORT_SDA           "\033[>0;95;0c"
-
-#define REPORT_VT52          "\033/Z"
-
 #define STATIC_STRLEN(n)   ((sizeof(n)) - 1)
 
 @implementation VT100Output {
@@ -123,6 +119,7 @@ typedef enum {
 }
 
 - (void)setTermTypeIsValid:(BOOL)termTypeIsValid {
+    DLog(@"setTermTypeIsValid:%@ cur_term=%p", @(termTypeIsValid), cur_term);
     if (termTypeIsValid && cur_term) {
         char *key_names[] = {
             key_left, key_right, key_up, key_down,
@@ -146,6 +143,7 @@ typedef enum {
                 free(_keyStrings[i]);
             }
             _keyStrings[i] = key_names[i] ? strdup(key_names[i]) : NULL;
+            DLog(@"Set key string %d (%s) to %s", i, key_names[i], _keyStrings[i]);
         }
     } else {
         for (int i = 0; i < TERMINFO_KEYS; i ++) {
@@ -157,40 +155,40 @@ typedef enum {
     }
 }
 
-- (NSData *)keyArrowUp:(unsigned int)modflag
-{
+- (NSData *)keyArrowUp:(unsigned int)modflag {
     return [self specialKey:TERMINFO_KEY_UP
                   cursorMod:CURSOR_MOD_UP
                   cursorSet:CURSOR_SET_UP
                 cursorReset:CURSOR_RESET_UP
-                    modflag:modflag];
+                    modflag:modflag
+                   isCursor:YES];
 }
 
-- (NSData *)keyArrowDown:(unsigned int)modflag
-{
+- (NSData *)keyArrowDown:(unsigned int)modflag {
     return [self specialKey:TERMINFO_KEY_DOWN
                   cursorMod:CURSOR_MOD_DOWN
                   cursorSet:CURSOR_SET_DOWN
                 cursorReset:CURSOR_RESET_DOWN
-                    modflag:modflag];
+                    modflag:modflag
+                   isCursor:YES];
 }
 
-- (NSData *)keyArrowLeft:(unsigned int)modflag
-{
+- (NSData *)keyArrowLeft:(unsigned int)modflag {
     return [self specialKey:TERMINFO_KEY_LEFT
                   cursorMod:CURSOR_MOD_LEFT
                   cursorSet:CURSOR_SET_LEFT
                 cursorReset:CURSOR_RESET_LEFT
-                    modflag:modflag];
+                    modflag:modflag
+                   isCursor:YES];
 }
 
-- (NSData *)keyArrowRight:(unsigned int)modflag
-{
+- (NSData *)keyArrowRight:(unsigned int)modflag {
     return [self specialKey:TERMINFO_KEY_RIGHT
                   cursorMod:CURSOR_MOD_RIGHT
                   cursorSet:CURSOR_SET_RIGHT
                 cursorReset:CURSOR_RESET_RIGHT
-                    modflag:modflag];
+                    modflag:modflag
+                   isCursor:YES];
 }
 
 - (NSData *)keyHome:(unsigned int)modflag screenlikeTerminal:(BOOL)screenlike {
@@ -202,11 +200,11 @@ typedef enum {
                   cursorMod:CURSOR_MOD_HOME
                   cursorSet:CURSOR_SET_HOME
                 cursorReset:CURSOR_RESET_HOME
-                    modflag:modflag];
+                    modflag:modflag
+                   isCursor:NO];
 }
 
-- (NSData *)keyEnd:(unsigned int)modflag screenlikeTerminal:(BOOL)screenlike
-{
+- (NSData *)keyEnd:(unsigned int)modflag screenlikeTerminal:(BOOL)screenlike {
     if (screenlike) {
         const char *bytes = "\033[4~";
         return [NSData dataWithBytes:bytes length:strlen(bytes)];
@@ -215,11 +213,11 @@ typedef enum {
                   cursorMod:CURSOR_MOD_END
                   cursorSet:CURSOR_SET_END
                 cursorReset:CURSOR_RESET_END
-                    modflag:modflag];
+                    modflag:modflag
+                   isCursor:NO];
 }
 
-- (NSData *)keyInsert
-{
+- (NSData *)keyInsert {
     if (_keyStrings[TERMINFO_KEY_INS]) {
         return [NSData dataWithBytes:_keyStrings[TERMINFO_KEY_INS]
                               length:strlen(_keyStrings[TERMINFO_KEY_INS])];
@@ -229,8 +227,7 @@ typedef enum {
 }
 
 
-- (NSData *)keyDelete
-{
+- (NSData *)keyDelete {
     if (_keyStrings[TERMINFO_KEY_DEL]) {
         return [NSData dataWithBytes:_keyStrings[TERMINFO_KEY_DEL]
                               length:strlen(_keyStrings[TERMINFO_KEY_DEL])];
@@ -239,8 +236,7 @@ typedef enum {
     }
 }
 
-- (NSData *)keyBackspace
-{
+- (NSData *)keyBackspace {
     if (_keyStrings[TERMINFO_KEY_BACKSPACE]) {
         return [NSData dataWithBytes:_keyStrings[TERMINFO_KEY_BACKSPACE]
                               length:strlen(_keyStrings[TERMINFO_KEY_BACKSPACE])];
@@ -289,8 +285,8 @@ typedef enum {
 
 // Reference: http://www.utexas.edu/cc/faqs/unix/VT200-function-keys.html
 // http://www.cs.utk.edu/~shuford/terminal/misc_old_terminals_news.txt
-- (NSData *)keyFunction:(int)no
-{
+- (NSData *)keyFunction:(int)no {
+    DLog(@"keyFunction:%@", @(no));
     char str[256];
     int len;
 
@@ -447,7 +443,7 @@ typedef enum {
             break;
         case MOUSE_FORMAT_XTERM:
         default:
-            snprintf(buf, sizeof(buf), "\033[M%c%c%c", 32 + button, 32 + x, 32 + y);
+            snprintf(buf, sizeof(buf), "\033[M%c%c%c", 32 + button, MIN(255, 32 + x), MIN(255, 32 + y));
             break;
     }
     return buf;
@@ -538,6 +534,10 @@ typedef enum {
     return [version dataUsingEncoding:NSUTF8StringEncoding];
 }
 
+- (NSData *)reportKeyReportingMode:(int)mode {
+    return [[NSString stringWithFormat:@"%c[?%du", ESC, mode] dataUsingEncoding:NSUTF8StringEncoding];
+}
+
 - (NSData *)reportActivePositionWithX:(int)x Y:(int)y withQuestion:(BOOL)q
 {
     char buf[64];
@@ -568,21 +568,39 @@ typedef enum {
     }
 }
 
-- (NSData *)reportSecondaryDeviceAttribute
-{
-    return [NSData dataWithBytes:REPORT_SDA
-                          length:STATIC_STRLEN(REPORT_SDA)];
+- (NSData *)reportSecondaryDeviceAttribute {
+    const int xtermVersion = [iTermAdvancedSettingsModel xtermVersion];
+    NSString *report = [NSString stringWithFormat:@"\033[>0;%d;0c", xtermVersion];
+    return [report dataUsingEncoding:NSISOLatin1StringEncoding];
+}
+
+- (NSData *)reportExtendedDeviceAttribute {
+    NSString *versionString = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleShortVersionString"];
+    NSString *reportString = [NSString stringWithFormat:@"%cP>|iTerm2 %@%c\\", ESC, versionString, ESC];
+    return [reportString dataUsingEncoding:NSUTF8StringEncoding];
 }
 
 - (NSData *)reportColor:(NSColor *)color atIndex:(int)index prefix:(NSString *)prefix {
-    NSString *string = [NSString stringWithFormat:@"%c]%@%d;rgb:%02x/%02x/%02x%c",
-                        ESC,
-                        prefix,
-                        index,
-                        (int) ([color redComponent] * 255.0),
-                        (int) ([color greenComponent] * 255.0),
-                        (int) ([color blueComponent] * 255.0),
-                        7];
+    NSString *string = nil;
+    if ([iTermAdvancedSettingsModel oscColorReport16Bits]) {
+        string = [NSString stringWithFormat:@"%c]%@%d;rgb:%04x/%04x/%04x%c",
+                  ESC,
+                  prefix,
+                  index,
+                  (int) ([color redComponent] * 65535.0),
+                  (int) ([color greenComponent] * 65535.0),
+                  (int) ([color blueComponent] * 65535.0),
+                  7];
+    } else {
+        string = [NSString stringWithFormat:@"%c]%@%d;rgb:%02x/%02x/%02x%c",
+                  ESC,
+                  prefix,
+                  index,
+                  (int) ([color redComponent] * 255.0),
+                  (int) ([color greenComponent] * 255.0),
+                  (int) ([color blueComponent] * 255.0),
+                  7];
+    }
     return [string dataUsingEncoding:NSUTF8StringEncoding];
 }
 
@@ -600,57 +618,60 @@ typedef enum {
 
 #pragma mark - Private
 
+- (int)cursorModifierParamForEventModifierFlags:(NSEventModifierFlags)modflag {
+    // Normal mode
+    static int metaModifierValues[] = {
+        0,  // Nothing
+        2,  // Shift
+        5,  // Control
+        6,  // Control Shift
+        9,  // Meta
+        10, // Meta Shift
+        13, // Meta Control
+        14  // Meta Control Shift
+    };
+    static int altModifierValues[] = {
+        0,  // Nothing
+        2,  // Shift
+        5,  // Control
+        6,  // Control Shift
+        3,  // Alt
+        4,  // Alt Shift
+        7,  // Alt Control
+        8   // Alt Control Shift
+    };
+
+
+    int theIndex = 0;
+    if (modflag & NSEventModifierFlagOption) {
+        theIndex |= 4;
+    }
+    if (modflag & NSEventModifierFlagControl) {
+        theIndex |= 2;
+    }
+    if (modflag & NSEventModifierFlagShift) {
+        theIndex |= 1;
+    }
+    int *modValues = _optionIsMetaForSpecialKeys ? metaModifierValues : altModifierValues;
+    return modValues[theIndex];
+}
+
 - (NSData *)specialKey:(int)terminfo
-             cursorMod:(char*)cursorMod
-             cursorSet:(char*)cursorSet
-           cursorReset:(char*)cursorReset
-               modflag:(unsigned int)modflag {
+             cursorMod:(char *)cursorMod
+             cursorSet:(char *)cursorSet
+           cursorReset:(char *)cursorReset
+               modflag:(unsigned int)modflag
+              isCursor:(BOOL)isCursor {
     NSData* prefix = nil;
     NSData* theSuffix;
-    if (_keyStrings[terminfo] && self.keypadMode) {
-        // Application keypad mode
+    const int mod = [self cursorModifierParamForEventModifierFlags:modflag];
+    if (_keyStrings[terminfo] && mod == 0 && !isCursor && self.keypadMode) {
+        // Application keypad mode.
         theSuffix = [NSData dataWithBytes:_keyStrings[terminfo]
                                    length:strlen(_keyStrings[terminfo])];
     } else {
-        // Normal mode
-        int mod = 0;
-        static char buf[20];
-        static int metaModifierValues[] = {
-            0,  // Nothing
-            2,  // Shift
-            5,  // Control
-            6,  // Control Shift
-            9,  // Meta
-            10, // Meta Shift
-            13, // Meta Control
-            14  // Meta Control Shift
-        };
-        static int altModifierValues[] = {
-            0,  // Nothing
-            2,  // Shift
-            5,  // Control
-            6,  // Control Shift
-            3,  // Alt
-            4,  // Alt Shift
-            7,  // Alt Control
-            8   // Alt Control Shift
-        };
-
-
-        int theIndex = 0;
-        if (modflag & NSEventModifierFlagOption) {
-            theIndex |= 4;
-        }
-        if (modflag & NSEventModifierFlagControl) {
-            theIndex |= 2;
-        }
-        if (modflag & NSEventModifierFlagShift) {
-            theIndex |= 1;
-        }
-        int *modValues = _optionIsMetaForSpecialKeys ? metaModifierValues : altModifierValues;
-        mod = modValues[theIndex];
-
         if (mod) {
+            char buf[20];
             sprintf(buf, cursorMod, mod);
             theSuffix = [NSData dataWithBytes:buf length:strlen(buf)];
         } else {

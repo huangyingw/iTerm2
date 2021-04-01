@@ -18,12 +18,25 @@
 }
 
 - (void)updateConfigurationWithEvent:(NSEvent *)event {
+    DLog(@"Load configuration for event %@", event);
     _event = event;
     [self.delegate standardKeyMapperWillMapKey:self];
 }
 
 - (NSData *)keyMapperDataForKeyUp:(NSEvent *)event {
     return nil;
+}
+
+- (BOOL)keyMapperWantsKeyEquivalent:(NSEvent *)event {
+    const NSEventModifierFlags mask = (NSEventModifierFlagCommand |
+                                       NSEventModifierFlagControl |
+                                       NSEventModifierFlagShift |
+                                       NSEventModifierFlagFunction);
+    if ((event.modifierFlags & mask) == (NSEventModifierFlagControl | NSEventModifierFlagShift | NSEventModifierFlagFunction)) {
+        // control+shift+arrow takes this path. See issue 8382. Possibly other things should, too.
+        return YES;
+    }
+    return NO;
 }
 
 #pragma mark - Pre-Cocoa
@@ -69,6 +82,14 @@
     const unichar character = characters.length > 0 ? [characters characterAtIndex:0] : 0;
     const BOOL shiftPressed = !!(event.it_modifierFlags & NSEventModifierFlagShift);
 
+    return [iTermStandardKeyMapper codeForSpecialControlCharacter:character
+                                       characterIgnoringModifiers:characterIgnoringModifiers
+                                                     shiftPressed:shiftPressed];
+}
+
++ (unichar)codeForSpecialControlCharacter:(unichar)character
+               characterIgnoringModifiers:(unichar)characterIgnoringModifiers
+                             shiftPressed:(BOOL)shiftPressed {
     if (character == '|') {
         // This is necessary to handle Japanese keyboards correctly. Pressing Control+backslash
         // generates characters=@"|" and charactersIgnoringModifiers=@"¥". This code path existed
@@ -250,7 +271,7 @@
     NSString *const characters = _event.characters;
     const NSEventModifierFlags modifiers = _event.it_modifierFlags;
     const unichar unicode = [characters length] > 0 ? [characters characterAtIndex:0] : 0;
-    DLog(@"PTYSession keyDown is a function key");
+    DLog(@"PTYSession keyDown is a function key. unicode=%@", @(unicode));
 
     // Handle all "special" keys (arrows, etc.)
     switch (unicode) {
@@ -383,6 +404,10 @@
 
 #pragma mark - iTermKeyMapper
 
+- (void)keyMapperSetEvent:(NSEvent *)event {
+    [self updateConfigurationWithEvent:event];
+}
+
 - (NSString *)keyMapperStringForPreCocoaEvent:(NSEvent *)event {
     if (event.type != NSEventTypeKeyDown) {
         return nil;
@@ -404,6 +429,7 @@
     const BOOL isSpecialKey = !!(modifiers & (NSEventModifierFlagNumericPad | NSEventModifierFlagFunction));
     if (isSpecialKey) {
         // Arrow key, function key, etc.
+        DLog(@"isSpecialKey: %@ -> bypass pre-cocoa", event);
         return YES;
     }
 
@@ -416,9 +442,17 @@
     const BOOL willSendOptionModifiedKey = (isNonEmpty && optionModifiesKey);
     if (willSendOptionModifiedKey) {
         // Meta+key or Esc+ key
+        DLog(@"isNonEmpty=%@ rightAltPressed=%@ leftAltPressed=%@ leftOptionModifiesKey=%@ rightOptionModifiesKey=%@ willSendOptionModifiedKey=%@ -> bypass pre-cocoa",
+             @(isNonEmpty),
+             @(rightAltPressed),
+             @(leftAltPressed),
+             @(leftOptionModifiesKey),
+             @(rightOptionModifiesKey),
+             @(willSendOptionModifiedKey));
         return YES;
     }
 
+    DLog(@"Not bypassing pre-cocoa");
     return NO;
 }
 

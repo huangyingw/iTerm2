@@ -37,9 +37,26 @@
 - (NSString *)stringWithEncoding:(NSStringEncoding)encoding;
 
 + (NSData *)it_dataWithArchivedObject:(id<NSCoding>)object;
-- (id)it_unarchivedObject;
+- (id)it_unarchivedObjectOfClasses:(NSArray<Class> *)allowedClasses;
+
++ (NSData *)it_dataWithSecurelyArchivedObject:(id<NSCoding>)object error:(NSError **)error;
+- (id)it_unarchivedObjectOfBasicClassesWithError:(NSError **)error;
+
 - (BOOL)isEqualToByte:(unsigned char)byte;
 - (NSData *)it_sha256;
 - (NSString *)it_hexEncoded;
+- (NSData *)it_compressedData;
+
+- (NSData *)aesCBCEncryptedDataWithPCKS7PaddingAndKey:(NSData *)key
+                                                   iv:(NSData *)iv;
+
+- (NSData *)decryptedAESCBCDataWithPCKS7PaddingAndKey:(NSData *)key
+                                                   iv:(NSData *)iv;
+
++ (NSData *)randomAESKey;
+
+- (void)writeReadOnlyToURL:(NSURL *)url;
+- (NSData *)subdataFromOffset:(NSInteger)offset;
+- (NSData *)dataByAppending:(NSData *)other;
 
 @end

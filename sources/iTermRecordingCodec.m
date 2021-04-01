@@ -8,6 +8,7 @@
 #import "iTermRecordingCodec.h"
 #import "iTermController.h"
 #import "iTermSavePanel.h"
+#import "iTermSessionLauncher.h"
 #import "iTermWarning.h"
 #import "NSData+iTerm.h"
 #import "NSData+GZIP.h"
@@ -47,8 +48,10 @@
                                     window:nil];
         return;
     }
-
-    NSDictionary *dict = [data it_unarchivedObject];
+    // I don't know why, but if you only give it a dictionary it fails to
+    // decode. I find it hard to believe that keyed unarchiver would still have
+    // a bug like this, but I can't come up with a better explanation :(
+    NSDictionary *dict = [data it_unarchivedObjectOfClasses:@[ [NSDictionary class], [NSArray class] ]];
     if (![dict isKindOfClass:[NSDictionary class]]) {
         [iTermWarning showWarningWithTitle:@"Could not read the file: unarchiving decompressed data failed."
                                    actions:@[ @"OK" ]
@@ -78,28 +81,31 @@
         return;
     }
 
+    if (![iTermSessionLauncher profileIsWellFormed:dictProfile]) {
+        return;
+    }
 
-    [[iTermController sharedInstance] launchBookmark:dictProfile
-                                          inTerminal:nil
-                                             withURL:nil
-                                    hotkeyWindowType:iTermHotkeyWindowTypeNone
-                                             makeKey:YES
-                                         canActivate:YES
-                                  respectTabbingMode:NO
-                                             command:nil
-                                               block:^PTYSession *(NSDictionary *profile, PseudoTerminal *windowController) {
-                                                   PTYSession *newSession = [[PTYSession alloc] initSynthetic:YES];
-                                                   newSession.profile = profile;
-                                                   [newSession.screen.dvr loadDictionary:dvrDict];
-                                                   [windowController setupSession:newSession withSize:nil];
-                                                   dispatch_async(dispatch_get_main_queue(), ^{
-                                                       [windowController replaySession:newSession];
-                                                   });
-                                                   [windowController insertSession:newSession atIndex:0];
-                                                   return newSession;
-                                               }
-                                         synchronous:NO
-                                          completion:nil];
+    [iTermSessionLauncher launchBookmark:dictProfile
+                              inTerminal:nil
+                                 withURL:nil
+                        hotkeyWindowType:iTermHotkeyWindowTypeNone
+                                 makeKey:YES
+                             canActivate:YES
+                      respectTabbingMode:NO
+                                 command:nil
+                             makeSession:^(NSDictionary *profile, PseudoTerminal *windowController, void (^makeSessionCompletion)(PTYSession *)) {
+        PTYSession *newSession = [[PTYSession alloc] initSynthetic:YES];
+        newSession.profile = profile;
+        [newSession.screen.dvr loadDictionary:dvrDict];
+        [windowController setupSession:newSession withSize:nil];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [windowController replaySession:newSession];
+        });
+        [windowController insertSession:newSession atIndex:0];
+        makeSessionCompletion(newSession);
+    }
+                          didMakeSession:nil
+                              completion:nil];
 }
 
 + (void)exportRecording:(PTYSession *)session {
@@ -123,7 +129,8 @@
                 // Remove any private info that isn't visible.
                 [profile removeObjectForKey:KEY_NAME];
                 [profile removeObjectForKey:KEY_COMMAND_LINE];
-                [profile removeObjectsForKeys:@[ KEY_NAME, KEY_COMMAND_LINE, KEY_WORKING_DIRECTORY, KEY_AUTOLOG, KEY_DESCRIPTION,
+                [profile removeObjectsForKeys:@[ KEY_NAME, KEY_COMMAND_LINE, KEY_WORKING_DIRECTORY, KEY_AUTOLOG,
+                                                 KEY_PLAIN_TEXT_LOGGING, KEY_DESCRIPTION,
                                                  KEY_INITIAL_TEXT, KEY_TAGS, KEY_TITLE_COMPONENTS,
                                                  KEY_ORIGINAL_GUID,
                                                  KEY_AWDS_WIN_DIRECTORY, KEY_AWDS_TAB_DIRECTORY,

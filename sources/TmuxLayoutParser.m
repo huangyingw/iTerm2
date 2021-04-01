@@ -14,6 +14,8 @@
 // layout_array ::= layout,layout_array |
 
 #import "TmuxLayoutParser.h"
+
+#import "DebugLogging.h"
 #import "RegexKitLite.h"
 
 NSString *kLayoutDictChildrenKey = @"children";
@@ -24,12 +26,15 @@ NSString *kLayoutDictYOffsetKey = @"y";
 NSString *kLayoutDictNodeType = @"type";
 NSString *kLayoutDictPixelWidthKey = @"px-width";
 NSString *kLayoutDictPixelHeightKey = @"px-height";
+NSString *kLayoutDictMaximumPixelWidthKey = @"max-px-width";
+NSString *kLayoutDictMaximumPixelHeightKey = @"max-px-height";
 NSString *kLayoutDictWindowPaneKey = @"window-pane";
 NSString *kLayoutDictHistoryKey = @"history";
 NSString *kLayoutDictAltHistoryKey = @"alt-history";
 NSString *kLayoutDictStateKey = @"state";
 NSString *kLayoutDictHotkeyKey = @"hotkey";
 NSString *kLayoutDictTabOpenedManually = @"manual-open";
+NSString *kLayoutDictTabIndex = @"tab-index";
 NSString *kLayoutDictTabColorKey = @"x-tab-color";
 
 @implementation TmuxLayoutParser
@@ -93,6 +98,9 @@ NSString *kLayoutDictTabColorKey = @"x-tab-color";
         if (components.count == 3) {
             tree[kLayoutDictWidthKey] = @([components[1] intValue]);
             tree[kLayoutDictHeightKey] = @([components[2] intValue]);
+            DLog(@"%%layout-change reported window size of %@ x %@",
+                 tree[kLayoutDictWidthKey],
+                 tree[kLayoutDictHeightKey]);
         }
         return [self coalescedTree:tree];
     } else {

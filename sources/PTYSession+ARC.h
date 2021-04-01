@@ -9,11 +9,18 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-@interface PTYSession (ARC)
+@interface PTYSession (ARC)<iTermPopupWindowPresenter>
 
-- (void)fetchAutoLogFilenameSynchronously:(BOOL)synchronous
-                               completion:(void (^)(NSString *filename))completion;
++ (void)openPartialAttachmentsForArrangement:(NSDictionary *)arrangement
+                                  completion:(void (^)(NSDictionary *))completion;
+
+- (void)fetchAutoLogFilenameWithCompletion:(void (^)(NSString *filename))completion;
 - (void)setTermIDIfPossible;
+- (void)watchForPasteBracketingOopsieWithPrefix:(NSString *)prefix;
+
+#pragma mark - Private
+
+- (BOOL)tryToFinishAttachingToMultiserverWithPartialAttachment:(id<iTermPartialAttachment>)partialAttachment;
 
 @end
 

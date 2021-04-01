@@ -13,6 +13,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 extern const CGFloat iTermStatusBarViewControllerIconWidth;
 
+const CGFloat iTermGetStatusBarHeight(void);
+
 @class iTermStatusBarContainerView;
 
 @protocol iTermStatusBarContainerViewDelegate<NSObject>
@@ -20,6 +22,7 @@ extern const CGFloat iTermStatusBarViewControllerIconWidth;
 - (void)statusBarContainerView:(iTermStatusBarContainerView *)sender hideComponent:(id<iTermStatusBarComponent>)component;
 - (void)statusBarContainerViewConfigureStatusBar:(iTermStatusBarContainerView *)sender;
 - (void)statusBarContainerViewDisableStatusBar:(iTermStatusBarContainerView *)sender;
+- (BOOL)statusBarContainerViewCanDragWindow:(iTermStatusBarContainerView *)sender;
 @end
 
 @interface iTermStatusBarContainerView : NSView
@@ -30,7 +33,6 @@ extern const CGFloat iTermStatusBarViewControllerIconWidth;
 @property (nonatomic) CGFloat desiredOrigin;
 @property (nonatomic) CGFloat leftMargin;
 @property (nonatomic) CGFloat rightMargin;
-@property (nonatomic) BOOL componentHidden;
 @property (nonatomic, readonly) CGFloat minimumWidthIncludingIcon;
 
 @property (nonatomic, readonly) NSColor *backgroundColor;

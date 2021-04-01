@@ -7,6 +7,7 @@
 
 #import "iTermVariableScope.h"
 
+#import "DebugLogging.h"
 #import "iTermObject.h"
 #import "iTermTuple.h"
 #import "iTermVariableReference.h"
@@ -79,6 +80,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)addVariables:(iTermVariables *)variables toScopeNamed:(nullable NSString *)scopeName {
     [_frames insertObject:[iTermTuple tupleWithObject:scopeName andObject:variables] atIndex:0];
     [self resolveDanglingReferences];
+}
+
+- (void)removeFrameWithName:(NSString *)name {
+    [_frames removeObjectsPassingTest:^BOOL(iTermTuple<NSString *,iTermVariables *> *obj) {
+        return [obj.firstObject isEqual:name];
+    }];
 }
 
 - (NSArray<iTermVariables *> *)variablesInScopeNamed:(nullable NSString *)scopeName {
@@ -185,6 +192,9 @@ NS_ASSUME_NONNULL_BEGIN
         if (value == nil) {
             return nil;
         }
+        ITAssertWithMessage([value isKindOfClass:[iTermVariables class]],
+                            @"Value is not iTermVariables. It is %@. The path is %@. The remaining parts are %@",
+                            value, path, parts);
         assert([value isKindOfClass:[iTermVariables class]]);
         owner = value;
         parts = [parts subarrayFromIndex:1];

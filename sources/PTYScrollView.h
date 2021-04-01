@@ -29,19 +29,30 @@
 
 #import <Cocoa/Cocoa.h>
 
+typedef NS_ENUM(NSUInteger, PTYScrollerState) {
+    PTYScrollerStateOverlayHidden,
+    PTYScrollerStateOverlayVisibleNarrow,
+    PTYScrollerStateOverlayVisibleWide,
+    PTYScrollerStateLegacy
+};
+
 @protocol PTYScrollerDelegate<NSObject>
 - (void)userScrollDidChange:(BOOL)userScroll;
 - (NSScrollView *)ptyScrollerScrollView NS_AVAILABLE_MAC(10_14);
+- (void)ptyScrollerDidTransitionToState:(PTYScrollerState)state;
 @end
 
 @interface PTYScroller : NSScroller
 
 @property(nonatomic, assign) id<PTYScrollerDelegate> ptyScrollerDelegate;
 @property(nonatomic, assign) BOOL userScroll;
+@property(nonatomic, readonly) PTYScrollerState ptyScrollerState;
 
 @end
 
 @interface PTYScrollView : NSScrollView
+
++ (BOOL)shouldDismember NS_AVAILABLE_MAC(10_14);
 
 // More specific type for the base class's method.
 - (PTYScroller *)ptyVerticalScroller;

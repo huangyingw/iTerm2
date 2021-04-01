@@ -12,7 +12,6 @@ if [ $# -ne 1 ]; then
    exit 1
 fi
 
-test -f "$PRIVKEY" || die "Set PRIVKEY environment variable to point at a valid private key (not set or nonexistent)"
 echo Enter the EdDSA private key
 read -s EDPRIVKEY
 
@@ -22,19 +21,11 @@ read -s NOTPASS
 # Usage: SparkleSign final.xml final_template.xml
 function SparkleSign {
     LENGTH=$(ls -l iTerm2-${NAME}.zip | awk '{print $5}')
-    ruby "../../ThirdParty/SparkleSigningTools/sign_update.rb" iTerm2-${NAME}.zip $PRIVKEY > /tmp/sig.txt || die SparkleSign
-    echo "Signature is "
-    cat /tmp/sig.txt
-    actualsize=$(wc -c < /tmp/sig.txt)
-    if (( $actualsize < 60)); then
-        die "signature file too small"
-    fi
 
     ../../tools/sign_update iTerm2-${NAME}.zip "$EDPRIVKEY" > /tmp/newsig.txt || die SparkleSignNew
     echo "New signature is"
     cat /tmp/newsig.txt
 
-    SIG=$(cat /tmp/sig.txt)
     NEWSIG=$(cat /tmp/newsig.txt)
     DATE=$(date +"%a, %d %b %Y %H:%M:%S %z")
     XML=$1
@@ -46,7 +37,6 @@ function SparkleSign {
     sed -e "s/%DATE%/${DATE}/" | \
     sed -e "s/%NAME%/${NAME}/" | \
     sed -e "s/%LENGTH%/$LENGTH/" | \
-    sed -e "s,%SIG%,${SIG}," | \
     sed -e "s,%NEWSIG%,${NEWSIG}," > $SVNDIR/source/appcasts/$1
 
     echo "Updated appcasts file $SVNDIR/source/appcasts/$1"
@@ -80,7 +70,7 @@ function Build {
   # Zip it, notarize it, staple it, and re-zip it.
   PRENOTARIZED_ZIP=iTerm2-${NAME}-prenotarized.zip
   zip -ry $PRENOTARIZED_ZIP iTerm.app
-  xcrun altool --notarize-app --primary-bundle-id "com.googlecode.iterm2" --username "apple@georgester.com" --password "$NOTPASS" --file $PRENOTARIZED_ZIP > /tmp/upload.out 2>&1
+  xcrun altool --notarize-app --primary-bundle-id "com.googlecode.iterm2" --username "apple@georgester.com" --password "$NOTPASS" --file $PRENOTARIZED_ZIP > /tmp/upload.out 2>&1 || die "Notarization failed"
   UUID=$(grep RequestUUID /tmp/upload.out | sed -e 's/RequestUUID = //')
   echo "uuid is $UUID"
   xcrun altool --notarization-info $UUID -u "apple@georgester.com" -p "$NOTPASS"
@@ -105,20 +95,20 @@ function Build {
   vi $SVNDIR/downloads/stable/iTerm2-${NAME}.description
   echo 'SHA-256 of the zip file is' > $SVNDIR/downloads/stable/iTerm2-${NAME}.changelog
   shasum -a256 iTerm2-${NAME}.zip | awk '{print $1}' >> $SVNDIR/downloads/stable/iTerm2-${NAME}.changelog
+  gpg --clearsign /tmp/sum
+  echo "You can use the following to verify the zip file on https://keybase.io/verify:" >> $SVNDIR/downloads/beta/iTerm2-${NAME}.changelog
+  echo "" >> $SVNDIR/downloads/beta/iTerm2-${NAME}.changelog
+  cat /tmp/sum.asc >> $SVNDIR/downloads/beta/iTerm2-${NAME}.changelog
   vi $SVNDIR/downloads/stable/iTerm2-${NAME}.changelog
   pushd $SVNDIR
 
   echo 'Options +FollowSymlinks' > ~/iterm2-website/downloads/stable/.htaccess
   echo 'Redirect 302 /downloads/stable/latest https://iterm2.com/downloads/stable/iTerm2-'${NAME}'.zip' >> ~/iterm2-website/downloads/stable/.htaccess
 
-  git add downloads/stable/iTerm2-${NAME}.summary downloads/stable/iTerm2-${NAME}.description downloads/stable/iTerm2-${NAME}.changelog downloads/stable/iTerm2-${NAME}.zip source/appcasts/final.xml source/appcasts/final_new.xml source/appcasts/final_modern.xml source/appcasts/full_changes.txt downloads/stable/.htaccess
+  git add downloads/stable/iTerm2-${NAME}.summary downloads/stable/iTerm2-${NAME}.description downloads/stable/iTerm2-${NAME}.changelog downloads/stable/iTerm2-${NAME}.zip source/appcasts/final_modern.xml source/appcasts/full_changes.txt downloads/stable/.htaccess
   popd
 
-  # Legacy
-  SparkleSign ${SPARKLE_PREFIX}final.xml ${SPARKLE_PREFIX}final_template.xml
-  # Transitional
   SparkleSign ${SPARKLE_PREFIX}final_new.xml ${SPARKLE_PREFIX}final_template_new.xml
-  # Modern
   SparkleSign ${SPARKLE_PREFIX}final_modern.xml ${SPARKLE_PREFIX}final_template_modern.xml
 
   popd
@@ -140,16 +130,16 @@ make release
 
 BUILDTYPE=Deployment
 
-Build $BUILDTYPE "" "OS 10.12+" "This is the recommended build for most users." "" "--deep"
+Build $BUILDTYPE "" "OS 10.14+" "This is the recommended build for most users." "" "--deep"
 
 git checkout -- version.txt
 #set -x
 
 git tag v${VERSION}
 git commit -am ${VERSION}
-#git push origin HEAD
-#git push --tags
+git push origin HEAD
+git push --tags
 cd $SVNDIR
 git commit -am v${VERSION}
-#git push origin HEAD
+git push origin HEAD
 

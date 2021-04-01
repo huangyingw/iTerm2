@@ -14,13 +14,16 @@ extern NSString *kSemanticHistoryTextKey;
 
 extern NSString *kSublimeText2Identifier;
 extern NSString *kSublimeText3Identifier;
+extern NSString *kSublimeText4Identifier;
 extern NSString *kMacVimIdentifier;
 extern NSString *kAtomIdentifier;
 extern NSString *kVSCodeIdentifier;
+extern NSString *kVSCodiumIdentifier;
 extern NSString *kTextmateIdentifier;
 extern NSString *kTextmate2Identifier;
 extern NSString *kBBEditIdentifier;
 extern NSString *kEmacsAppIdentifier;
+extern NSString *kIntelliJIDEAIdentifier;
 
 extern NSString *kSemanticHistoryBestEditorAction;
 extern NSString *kSemanticHistoryUrlAction;

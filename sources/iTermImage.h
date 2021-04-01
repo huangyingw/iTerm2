@@ -8,7 +8,17 @@
 
 #import <Cocoa/Cocoa.h>
 
-@interface iTermImage : NSObject
+#define DECODE_IMAGES_IN_PROCESS 0
+
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#undef DECODE_IMAGES_IN_PROCESS
+#warning Decoding images in process because address sanitizer is enabled.
+#define DECODE_IMAGES_IN_PROCESS 1
+#endif
+#endif
+
+@interface iTermImage : NSObject<NSSecureCoding>
 
 // For animated gifs, delays is 1:1 with images. For non-animated images, delays is empty.
 @property(nonatomic, readonly) NSMutableArray<NSNumber *> *delays;
@@ -20,5 +30,9 @@
 
 // Decompresses in a sandboxed process. Returns nil if anything goes wrong.
 + (instancetype)imageWithCompressedData:(NSData *)data;
+
+// Assumes it begins with DCS parameters followed by newline.
+// Decompresses in a sandboxed processes. Returns nil if anything goes wrong.
++ (instancetype)imageWithSixelData:(NSData *)sixelData;
 
 @end

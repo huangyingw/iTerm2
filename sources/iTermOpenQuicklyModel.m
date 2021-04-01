@@ -1,19 +1,24 @@
 #import "iTermOpenQuicklyModel.h"
 
+#import "iTermActionsModel.h"
 #import "iTermApplication.h"
 #import "iTermApplicationDelegate.h"
 #import "iTermColorPresets.h"
 #import "iTermController.h"
+#import "iTermGitPollWorker.h"
 #import "iTermLogoGenerator.h"
 #import "iTermMinimumSubsequenceMatcher.h"
 #import "iTermOpenQuicklyCommands.h"
 #import "iTermOpenQuicklyItem.h"
 #import "iTermScriptsMenuController.h"
+#import "iTermSnippetsModel.h"
 #import "iTermVariableScope.h"
 #import "iTermVariableScope+Session.h"
 #import "iTermVariableScope+Tab.h"
+#import "NSArray+iTerm.h"
 #import "NSDictionary+iTerm.h"
 #import "NSObject+iTerm.h"
+#import "NSStringITerm.h"
 #import "PseudoTerminal.h"
 #import "PTYSession+Scripting.h"
 #import "VT100RemoteHost.h"
@@ -21,23 +26,30 @@
 
 // It's nice for each of these to be unique so in degenerate cases (e.g., empty query) the detail
 // uses the same feature for all items.
-static const double kSessionNameMultiplier = 2;
 static const double kSessionBadgeMultiplier = 3;
-static const double kCommandMultiplier = 0.8;
-static const double kDirectoryMultiplier = 0.9;
+static const double kSessionNameMultiplier = 2;
+static const double kGitBranchMultiplier = 1.5;
 static const double kHostnameMultiplier = 1.2;
-static const double kUsernameMultiplier = 0.5;
-static const double kProfileNameMultiplier = 1;
+static const double kProfileNameMultiplier = 1.01;
 static const double kUserDefinedVariableMultiplier = 1;
+static const double kDirectoryMultiplier = 0.9;
+static const double kCommandMultiplier = 0.8;
+static const double kUsernameMultiplier = 0.5;
 
-// Multiplier for color preset name. Rank between scripts and profiles.
-static const double kProfileNameMultiplierForColorPresetItem = 0.095;
+// Action items (as defined in Prefs > Shortcuts > Snippets)
+static const double kActionMultiplier = 0.4;
+
+// Snippet items (as defined in Prefs > Shortcuts > Snippets)
+static const double kSnippetMultiplier = 0.3;
+
+// Multipliers for arrangement items. Arrangements rank just above profiles
+static const double kProfileNameMultiplierForArrangementItem = 0.11;
 
 // Multipliers for profile items
 static const double kProfileNameMultiplierForProfileItem = 0.1;
 
-// Multipliers for arrangement items. Arrangements rank just above profiles
-static const double kProfileNameMultiplierForArrangementItem = 0.11;
+// Multiplier for color preset name. Rank between scripts and profiles.
+static const double kProfileNameMultiplierForColorPresetItem = 0.095;
 
 // Multipliers for script items. Ranks below profiles.
 static const double kProfileNameMultiplierForScriptItem = 0.09;
@@ -55,7 +67,8 @@ static const double kProfileNameMultiplierForScriptItem = 0.09;
                       [iTermOpenQuicklySwitchProfileCommand class],
                       [iTermOpenQuicklyCreateTabCommand class],
                       [iTermOpenQuicklyColorPresetCommand class],
-                      [iTermOpenQuicklyScriptCommand class] ];
+                      [iTermOpenQuicklyScriptCommand class],
+                      [iTermOpenQuicklyActionCommand class]];
     });
     return commands;
 }
@@ -70,17 +83,14 @@ static const double kProfileNameMultiplierForScriptItem = 0.09;
 }
 
 - (id<iTermOpenQuicklyCommand>)commandForQuery:(NSString *)queryString {
-    if ([queryString hasPrefix:@"/"]) {
-        NSRange rangeOfSpace = [queryString rangeOfString:@" "];
-        if (rangeOfSpace.location != NSNotFound) {
-            NSString *command = [[queryString substringToIndex:rangeOfSpace.location] substringFromIndex:1];
-            NSString *text = [queryString substringFromIndex:rangeOfSpace.location + 1];
-            Class commandClass = [self commandTypeWithAbbreviation:command];
-            if (commandClass) {
-                id<iTermOpenQuicklyCommand> theCommand= [[commandClass alloc] init];
-                theCommand.text = text;
-                return theCommand;
-            }
+    if ([queryString hasPrefix:@"/"] && queryString.length > 1) {
+        NSString *command = [queryString substringWithRange:NSMakeRange(1, 1)];
+        NSString *text = [[queryString substringFromIndex:2] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        Class commandClass = [self commandTypeWithAbbreviation:command];
+        if (commandClass) {
+            id<iTermOpenQuicklyCommand> theCommand= [[commandClass alloc] init];
+            theCommand.text = text;
+            return theCommand;
         }
     }
     id<iTermOpenQuicklyCommand> theCommand = [[iTermOpenQuicklyNoCommand alloc] init];
@@ -119,7 +129,7 @@ static const double kProfileNameMultiplierForScriptItem = 0.09;
 }
 
 - (NSString *)documentForSession:(PTYSession *)session {
-    NSString *sessionName = session.name;
+    NSString *sessionName = session.name.removingHTMLFromTabTitleIfNeeded;
     NSString *tabTitle = session.variablesScope.tab.tabTitleOverride;
     NSString *tmuxWindowName = session.variablesScope.tab.tmuxWindowName;
     if (tabTitle.length == 0) {
@@ -135,8 +145,64 @@ static const double kProfileNameMultiplierForScriptItem = 0.09;
     }
 }
 
+- (NSString *(^)(PTYSession *))detailFunctionForSessions:(NSArray<PTYSession *> *)sessions {
+    NSString *(^pwd)(PTYSession *) = ^NSString *(PTYSession *session) {
+        return session.variablesScope.path;
+    };
+    NSString *(^command)(PTYSession *) = ^NSString *(PTYSession *session) {
+        return session.commands.lastObject;
+    };
+    NSString *(^hostname)(PTYSession *) = ^NSString *(PTYSession *session) {
+        return session.currentHost.usernameAndHostname;
+    };
+    NSString *(^badge)(PTYSession *) = ^NSString *(PTYSession *session) {
+        return session.badgeLabel;
+    };
+    NSArray<NSString *(^)(PTYSession *)> *functions = @[ pwd, command, hostname, badge ];
+    NSMutableArray<NSMutableArray *> *functionValues = [NSMutableArray array];
+    [functions enumerateObjectsUsingBlock:^(NSString *(^ _Nonnull obj)(PTYSession *), NSUInteger idx, BOOL * _Nonnull stop) {
+        [functionValues addObject:[NSMutableArray array]];
+    }];
+    [sessions enumerateObjectsUsingBlock:^(PTYSession * _Nonnull session, NSUInteger sessionIndex, BOOL * _Nonnull stop) {
+        [functions enumerateObjectsUsingBlock:^(NSString *(^ _Nonnull f)(PTYSession *), NSUInteger functionIndex, BOOL * _Nonnull stop) {
+            NSString *value = f(session);
+            if (value) {
+                [functionValues[functionIndex] addObject:value];
+            }
+        }];
+    }];
+    NSMutableIndexSet *indexes = [NSMutableIndexSet indexSet];
+    [functionValues enumerateObjectsUsingBlock:^(NSMutableArray * _Nonnull values, NSUInteger idx, BOOL * _Nonnull stop) {
+        if (values.count == sessions.count) {
+            [indexes addIndex:idx];
+        }
+    }];
+
+    NSMutableArray<NSString *(^)(PTYSession *)> *filteredFunctions = [NSMutableArray array];
+    NSMutableArray<NSMutableArray *> *filteredFunctionValues = [NSMutableArray array];
+    [indexes enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL * _Nonnull stop) {
+        [filteredFunctions addObject:functions[idx]];
+        [filteredFunctionValues addObject:functionValues[idx]];
+    }];
+    double (^variance)(NSArray<NSString *> *) = ^double(NSArray<NSString *> *strings) {
+        NSSet<NSString *> *set = [NSSet setWithArray:strings];
+        return set.count;
+    };
+    const NSUInteger best = [filteredFunctionValues indexOfMaxWithBlock:
+                             ^NSComparisonResult(NSMutableArray<NSString *> *obj1,
+                                                 NSMutableArray<NSString *> *obj2) {
+        return [@(variance(obj1)) compare:@(variance(obj2))];
+    }];
+    if (best == NSNotFound) {
+        return nil;
+    }
+    return filteredFunctions[best];
+}
+
 - (void)addSessionLocationToItems:(NSMutableArray<iTermOpenQuicklyItem *> *)items
                     withMatcher:(iTermMinimumSubsequenceMatcher *)matcher {
+    NSString *(^detailFunction)(PTYSession *) = [self detailFunctionForSessions:self.sessions];
+
     for (PTYSession *session in self.sessions) {
         NSMutableArray *features = [NSMutableArray array];
         iTermOpenQuicklySessionItem *item = [[iTermOpenQuicklySessionItem alloc] init];
@@ -161,6 +227,9 @@ static const double kProfileNameMultiplierForScriptItem = 0.09;
             }
 
             item.identifier = session.guid;
+            if (detailFunction) {
+                item.detail = [self.delegate openQuicklyModelAttributedStringForDetail:detailFunction(session)];
+            }
             [items addObject:item];
         }
     }
@@ -234,6 +303,63 @@ static const double kProfileNameMultiplierForScriptItem = 0.09;
         }
     }
 }
+
+- (void)addActionsToItems:(NSMutableArray<iTermOpenQuicklyItem *> *)items
+              withMatcher:(iTermMinimumSubsequenceMatcher *)matcher {
+    [[[iTermActionsModel sharedInstance] actions] enumerateObjectsUsingBlock:^(iTermAction * _Nonnull action, NSUInteger idx, BOOL * _Nonnull stop) {
+        iTermOpenQuicklyActionItem *actionItem = [self actionItemForAction:action
+                                                                   matcher:matcher];
+        if (actionItem) {
+            [items addObject:actionItem];
+        }
+    }];
+}
+
+- (iTermOpenQuicklyActionItem *)actionItemForAction:(iTermAction *)action
+                                            matcher:(iTermMinimumSubsequenceMatcher *)matcher {
+    iTermOpenQuicklyActionItem *actionItem = [[iTermOpenQuicklyActionItem alloc] init];
+    actionItem.action = action;
+    NSMutableAttributedString *attributedName = [[NSMutableAttributedString alloc] init];
+    actionItem.score = [self scoreForAction:action matcher:matcher attributedName:attributedName];
+    if (actionItem.score <= 0) {
+        return nil;
+    }
+    actionItem.detail = [_delegate openQuicklyModelDisplayStringForFeatureNamed:nil
+                                                                          value:action.displayString
+                                                             highlightedIndexes:nil];
+    actionItem.title = attributedName;
+    actionItem.identifier = [@(action.identifier) stringValue];
+    return actionItem;
+}
+
+- (void)addSnippetsToItems:(NSMutableArray<iTermOpenQuicklyItem *> *)items
+               withMatcher:(iTermMinimumSubsequenceMatcher *)matcher {
+    [[[iTermSnippetsModel sharedInstance] snippets] enumerateObjectsUsingBlock:^(iTermSnippet * _Nonnull snippet, NSUInteger idx, BOOL * _Nonnull stop) {
+        iTermOpenQuicklySnippetItem *snippetItem = [self snippetItemForSnippet:snippet
+                                                                       matcher:matcher];
+        if (snippetItem) {
+            [items addObject:snippetItem];
+        }
+    }];
+}
+
+- (iTermOpenQuicklySnippetItem *)snippetItemForSnippet:(iTermSnippet *)snippet
+                                               matcher:(iTermMinimumSubsequenceMatcher *)matcher {
+    iTermOpenQuicklySnippetItem *snippetItem = [[iTermOpenQuicklySnippetItem alloc] init];
+    snippetItem.snippet = snippet;
+    NSMutableAttributedString *attributedName = [[NSMutableAttributedString alloc] init];
+    snippetItem.score = [self scoreForSnippet:snippet matcher:matcher attributedName:attributedName];
+    if (snippetItem.score <= 0) {
+        return nil;
+    }
+    snippetItem.detail = [_delegate openQuicklyModelDisplayStringForFeatureNamed:nil
+                                                                           value:[NSString stringWithFormat:@"Send snippet “%@”", snippet.displayTitle]
+                                                              highlightedIndexes:nil];
+    snippetItem.title = attributedName;
+    snippetItem.identifier = snippet.guid;
+    return snippetItem;
+}
+
 
 - (iTermOpenQuicklyArrangementItem *)arrangementItemWithName:(NSString *)arrangementName
                                                      matcher:(iTermMinimumSubsequenceMatcher *)matcher
@@ -342,6 +468,12 @@ static const double kProfileNameMultiplierForScriptItem = 0.09;
     if ([command supportsColorPreset] && haveCurrentWindow) {
         [self addChangeColorPresetToItems:items withMatcher:matcher];
     }
+    if ([command supportsAction] && haveCurrentWindow) {
+        [self addActionsToItems:items withMatcher:matcher];
+    }
+    if ([command supportsSnippet] && haveCurrentWindow) {
+        [self addSnippetsToItems:items withMatcher:matcher];
+    }
 
     // Sort from highest to lowest score.
     [items sortUsingComparator:^NSComparisonResult(iTermOpenQuicklyItem *obj1,
@@ -378,6 +510,10 @@ static const double kProfileNameMultiplierForScriptItem = 0.09;
     } else if ([item isKindOfClass:[iTermOpenQuicklyScriptItem class]]) {
         return item;
     } else if ([item isKindOfClass:[iTermOpenQuicklyColorPresetItem class]]) {
+        return item;
+    } else if ([item isKindOfClass:[iTermOpenQuicklyActionItem class]]) {
+        return item;
+    } else if ([item isKindOfClass:[iTermOpenQuicklySnippetItem class]]) {
         return item;
     }
     return nil;
@@ -416,6 +552,39 @@ static const double kProfileNameMultiplierForScriptItem = 0.09;
                                       name:nil
                                   features:nameFeature
                                      limit:2 * kProfileNameMultiplierForScriptItem];
+    if (nameFeature.count) {
+        [attributedName appendAttributedString:nameFeature[0][0]];
+    }
+    return score;
+}
+
+- (double)scoreForAction:(iTermAction *)action
+                 matcher:(iTermMinimumSubsequenceMatcher *)matcher
+          attributedName:(NSMutableAttributedString *)attributedName {
+    NSMutableArray *nameFeature = [NSMutableArray array];
+    double score = [self scoreUsingMatcher:matcher
+                                 documents:@[ action.title ?: @"" ]
+                                multiplier:kActionMultiplier
+                                      name:nil
+                                  features:nameFeature
+                                     limit:2 * kActionMultiplier];
+    if (nameFeature.count) {
+        [attributedName appendAttributedString:nameFeature[0][0]];
+    }
+    return score;
+}
+
+- (double)scoreForSnippet:(iTermSnippet *)snippet
+                  matcher:(iTermMinimumSubsequenceMatcher *)matcher
+           attributedName:(NSMutableAttributedString *)attributedName {
+    NSMutableArray *nameFeature = [NSMutableArray array];
+    double score = [self scoreUsingMatcher:matcher
+                                 documents:@[ snippet.title ?: @"",
+                                              [snippet trimmedValue:80] ?: @"" ]
+                                multiplier:kSnippetMultiplier
+                                      name:nil
+                                  features:nameFeature
+                                     limit:2 * kSnippetMultiplier];
     if (nameFeature.count) {
         [attributedName appendAttributedString:nameFeature[0][0]];
     }
@@ -529,6 +698,13 @@ static const double kProfileNameMultiplierForScriptItem = 0.09;
                            documents:@[ session.originalProfile[KEY_NAME] ?: @"" ]
                           multiplier:kProfileNameMultiplier
                                 name:@"Profile"
+                            features:features
+                               limit:maxScorePerFeature];
+
+    score += [self scoreUsingMatcher:matcher
+                           documents:[self gitBranchesInSession:session]
+                          multiplier:kGitBranchMultiplier
+                                name:@"Git Branch"
                             features:features
                                limit:maxScorePerFeature];
 
@@ -689,6 +865,18 @@ static const double kProfileNameMultiplierForScriptItem = 0.09;
         [names addObject:host.username];
     }
     return names;
+}
+
+- (NSArray<NSString *> *)gitBranchesInSession:(PTYSession *)session {
+    NSString *pwd = session.directories.lastObject;
+    if (!pwd) {
+        return @[];
+    }
+    NSString *branch = [[iTermGitPollWorker sharedInstance] cachedBranchForPath:pwd];
+    if (!branch) {
+        return @[];
+    }
+    return @[branch];
 }
 
 @end

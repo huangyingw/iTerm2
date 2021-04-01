@@ -54,7 +54,7 @@
 }
 
 - (NSString *)displayName {
-    return [NSString stringWithFormat:@"＞ %@ (%@)", _session.name, _session.guid];
+    return [NSString stringWithFormat:@"＞ %@ (%@)", [_session.name removingHTMLFromTabTitleIfNeeded], _session.guid];
 }
 
 - (iTermVariableScope *)scope {
@@ -242,6 +242,12 @@
 }
 
 - (void)awakeFromNib {
+    if (@available(macOS 10.16, *)) {
+#ifdef MAC_OS_X_VERSION_10_16
+        _sessionTabWindowOutlineView.style = NSTableViewStyleInset;
+        _variablesOutlineView.style = NSTableViewStyleInset;
+#endif
+    }
     [_sessionTabWindowOutlineView expandItem:nil expandChildren:YES];
 }
 
@@ -346,8 +352,8 @@
 - (IBAction)copyIdentifier:(id)sender {
     id<iTermOutlineProxy> proxy = [_sessionTabWindowOutlineView itemAtRow:_sessionTabWindowOutlineView.clickedRow];
     NSPasteboard *pboard = [NSPasteboard generalPasteboard];
-    [pboard declareTypes:@[NSStringPboardType] owner:NSApp];
-    [pboard setString:proxy.identifier forType:NSStringPboardType];
+    [pboard declareTypes:@[NSPasteboardTypeString] owner:NSApp];
+    [pboard setString:proxy.identifier forType:NSPasteboardTypeString];
 }
 
 - (IBAction)copyPath:(id)sender {

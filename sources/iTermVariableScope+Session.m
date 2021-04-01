@@ -154,6 +154,14 @@
     [self setValue:newValue forVariableNamed:iTermVariableKeySessionJob];
 }
 
+- (NSString *)processTitle {
+    return [self valueForVariableName:iTermVariableKeySessionProcessTitle];
+}
+
+- (void)setProcessTitle:(NSString *)processTitle {
+    [self setValue:processTitle forVariableNamed:iTermVariableKeySessionProcessTitle];
+}
+
 - (NSString *)commandLine {
     return [self valueForVariableName:iTermVariableKeySessionCommandLine];
 }
@@ -268,6 +276,30 @@
 
 - (iTermVariableScope<iTermTabScope> *)tab {
     return [iTermVariableScope newTabScopeWithVariables:[self valueForVariableName:iTermVariableKeySessionTab]];
+}
+
+- (NSString *)selection {
+    return [self valueForVariableName:iTermVariableKeySessionSelection];
+}
+
+- (void)setSelection:(NSString *)newValue {
+    [self setValue:newValue forVariableNamed:iTermVariableKeySessionSelection];
+}
+
+- (NSNumber *)selectionLength {
+    return [self valueForVariableName:iTermVariableKeySessionSelectionLength];
+}
+
+- (void)setSelectionLength:(NSNumber *)newValue {
+    [self setValue:newValue forVariableNamed:iTermVariableKeySessionSelectionLength];
+}
+
+- (NSNumber *)bellCount {
+    return [self valueForVariableName:iTermVariableKeySessionBellCount];
+}
+
+- (void)setBellCount:(NSNumber *)bellCount {
+    [self setValue:bellCount forVariableNamed:iTermVariableKeySessionBellCount];
 }
 
 @end

@@ -19,6 +19,9 @@
 
 static NSString * const kColorGalleryURL = @"https://www.iterm2.com/colorgallery";
 
+@interface ProfilesColorsPreferencesViewController()<NSMenuDelegate>
+@end
+
 @implementation ProfilesColorsPreferencesViewController {
     IBOutlet CPKColorWell *_ansi0Color;
     IBOutlet CPKColorWell *_ansi1Color;
@@ -39,6 +42,7 @@ static NSString * const kColorGalleryURL = @"https://www.iterm2.com/colorgallery
     IBOutlet CPKColorWell *_foregroundColor;
     IBOutlet CPKColorWell *_backgroundColor;
     IBOutlet NSButton *_useBrightBold;  // Respect bold
+    IBOutlet NSButton *_brightenBoldText;
     IBOutlet CPKColorWell *_boldColor;
     IBOutlet CPKColorWell *_linkColor;
     IBOutlet CPKColorWell *_selectionColor;
@@ -84,6 +88,9 @@ static NSString * const kColorGalleryURL = @"https://www.iterm2.com/colorgallery
     IBOutlet NSPopUpButton *_presetsPopupButton;
     IBOutlet NSView *_bwWarning1;
     IBOutlet NSView *_bwWarning2;
+
+    NSDictionary<NSString *, id> *_savedColors;
+    NSTimer *_timer;
 }
 
 + (NSArray<NSString *> *)presetNames {
@@ -209,6 +216,12 @@ static NSString * const kColorGalleryURL = @"https://www.iterm2.com/colorgallery
                           type:kPreferenceInfoTypeCheckbox];
     info.observer = ^{ [weakSelf updateColorControlsEnabled]; };
 
+    info = [self defineControl:_brightenBoldText
+                           key:KEY_BRIGHTEN_BOLD_TEXT
+                   displayName:@"Brighten bold text"
+                          type:kPreferenceInfoTypeCheckbox];
+    info.observer = ^{ [weakSelf updateColorControlsEnabled]; };
+
     [self addViewToSearchIndex:_presetsPopupButton
                    displayName:@"Color presets"
                        phrases:@[]
@@ -312,6 +325,7 @@ static NSString * const kColorGalleryURL = @"https://www.iterm2.com/colorgallery
     [self addPresetItemWithTitle:@"Export..." action:@selector(exportColorPreset:)];
     [self addPresetItemWithTitle:@"Delete Preset..." action:@selector(deleteColorPreset:)];
     [self addPresetItemWithTitle:@"Visit Online Gallery" action:@selector(visitGallery:)];
+    _presetsMenu.delegate = self;
 }
 
 - (void)addPresetItemWithTitle:(NSString *)title action:(SEL)action {
@@ -411,6 +425,7 @@ static NSString * const kColorGalleryURL = @"https://www.iterm2.com/colorgallery
 }
 
 - (void)loadColorPreset:(id)sender {
+    _savedColors = nil;
     [self loadColorPresetWithName:[sender title]];
 }
 
@@ -431,23 +446,73 @@ static NSString * const kColorGalleryURL = @"https://www.iterm2.com/colorgallery
     return YES;
 }
 
+- (NSDictionary *)currentColors {
+    NSMutableDictionary<NSString *, id> *dict = [NSMutableDictionary dictionary];
+    for (NSString *key in [ProfileModel colorKeys]) {
+        dict[key] = [self objectForKey:key] ?: [NSNull null];
+    }
+    return dict;
+}
+
+- (void)restoreColors {
+    [_savedColors enumerateKeysAndObjectsUsingBlock:^(NSString * _Nonnull key, id  _Nonnull obj, BOOL * _Nonnull stop) {
+        id value = [obj nilIfNull];
+        if (![NSObject object:value isEqualToObject:[self objectForKey:key]]) {
+            [self setObject:value forKey:key];
+        }
+    }];
+}
+
 // If the current color settings exactly match a preset, place a check mark next to it and uncheck
 // all others. If multiple presets match, check the first matching one.
 - (void)popupButtonWillPopUp:(id)sender {
     BOOL found = NO;
     iTermColorPresetDictionary *allPresets = [iTermColorPresets allColorPresets];
 
+    _savedColors = [self currentColors];
+
     for (NSMenuItem *item in _presetsMenu.itemArray) {
         if (item.action == @selector(loadColorPreset:)) {
             NSString *name = item.title;
             if (!found && [self currentColorsEqualPreset:allPresets[name]]) {
-                item.state = NSOnState;
+                item.state = NSControlStateValueOn;
                 found = YES;
             } else {
-                item.state = NSOffState;
+                item.state = NSControlStateValueOff;
             }
         }
     }
+}
+
+#pragma mark - NSMenuDelegate
+
+- (void)menu:(NSMenu *)menu willHighlightItem:(nullable NSMenuItem *)item {
+    if (item.action == @selector(loadColorPreset:)) {
+        [self removeTimer];
+        _timer = [NSTimer scheduledTimerWithTimeInterval:0.4 target:self selector:@selector(previewColors:) userInfo:item repeats:NO];
+        [[NSRunLoop currentRunLoop] addTimer:_timer forMode:NSRunLoopCommonModes];
+    } else {
+        [self removeTimer];
+        [self restoreColors];
+    }
+}
+
+- (void)previewColors:(NSTimer *)timer {
+    NSMenuItem *item = timer.userInfo;
+    if (_timer) {
+        [self loadColorPresetWithName:item.title];
+    }
+    [self removeTimer];
+}
+- (void)removeTimer {
+    [_timer invalidate];
+    _timer = nil;
+}
+
+- (void)menuDidClose:(NSMenu *)menu {
+    [self removeTimer];
+    [self restoreColors];
+    _savedColors = nil;
 }
 
 @end

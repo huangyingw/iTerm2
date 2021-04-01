@@ -29,12 +29,14 @@
 
 #import "DebugLogging.h"
 #import "iTermDynamicProfileManager.h"
+#import "iTermExpressionEvaluator.h"
 #import "iTermHotKeyController.h"
-#import "iTermKeyBindingMgr.h"
 #import "iTermHotKeyMigrationHelper.h"
 #import "iTermHotKeyProfileBindingController.h"
+#import "iTermKeyMappings.h"
 #import "iTermMigrationHelper.h"
 #import "iTermPreferences.h"
+#import "iTermProfilesMenuController.h"
 #import "iTermProfilePreferences.h"
 #import "PreferencePanel.h"
 #import "ProfileModel.h"
@@ -45,7 +47,12 @@
 
 NSString *const iTermUnicodeVersionDidChangeNotification = @"iTermUnicodeVersionDidChangeNotification";
 
+NSString *const kProfilePreferenceCommandTypeCustomValue = @"Yes";
+NSString *const kProfilePreferenceCommandTypeLoginShellValue = @"No";
+NSString *const kProfilePreferenceCommandTypeCustomShellValue = @"Custom Shell";
+
 const NSTimeInterval kMinimumAntiIdlePeriod = 1.0;
+const NSInteger iTermMaxInitialSessionSize = 1250;
 
 static NSMutableArray<NSNotification *> *sDelayedNotifications;
 
@@ -149,6 +156,8 @@ iTermWindowType iTermThemedWindowType(iTermWindowType windowType) {
             [[ProfileModel sharedInstance] removeAllBookmarks];
         }
 
+        iTermProfilesMenuController *menuController = [[iTermProfilesMenuController alloc] init];
+        [[ProfileModel sharedInstance] setMenuController:menuController];
         // Load new-style bookmarks.
         id newBookmarks = [prefs objectForKey:KEY_NEW_BOOKMARKS];
         NSString *originalDefaultGuid = [[prefs objectForKey:KEY_DEFAULT_GUID] copy];
@@ -280,8 +289,7 @@ iTermWindowType iTermThemedWindowType(iTermWindowType windowType) {
     return [fontDesc fontValue];
 }
 
-- (void)setBookmarks:(NSArray*)newBookmarksArray defaultGuid:(NSString*)guid
-{
+- (void)setBookmarks:(NSArray *)newBookmarksArray defaultGuid:(NSString *)guid {
     [[ProfileModel sharedInstance] load:newBookmarksArray];
     if (guid) {
         if ([[ProfileModel sharedInstance] bookmarkWithGuid:guid]) {
@@ -368,7 +376,7 @@ iTermWindowType iTermThemedWindowType(iTermWindowType windowType) {
                                                [NSBundle bundleForClass: [self class]],
                                                @"Terminal Profiles");
     [aDict setObject:aName forKey: KEY_NAME];
-    [aDict setObject:@"No" forKey:KEY_CUSTOM_COMMAND];
+    [aDict setObject:kProfilePreferenceCommandTypeLoginShellValue forKey:KEY_CUSTOM_COMMAND];
     [aDict setObject:@"" forKey: KEY_COMMAND_LINE];
     [aDict setObject:aName forKey: KEY_DESCRIPTION];
     [aDict setObject:kProfilePreferenceInitialDirectoryHomeValue
@@ -376,10 +384,23 @@ iTermWindowType iTermThemedWindowType(iTermWindowType windowType) {
     [aDict setObject:NSHomeDirectory() forKey: KEY_WORKING_DIRECTORY];
 }
 
+- (BOOL)usernameIsSafe:(NSString *)username {
+    NSCharacterSet *unsafeSet = [[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyz_1234567890"] invertedSet];
+    const NSRange range = [username rangeOfCharacterFromSet:unsafeSet
+                                                    options:NSCaseInsensitiveSearch];
+    return range.location == NSNotFound;
+}
+
 - (void)_addBonjourHostProfileWithName:(NSString *)serviceName
-                       ipAddressString:(NSString *)ipAddressString
+                       ipAddressString:(NSString *)address
                                   port:(int)port
-                           serviceType:(NSString *)serviceType {
+                           serviceType:(NSString *)serviceType
+                              userName:(NSString *)username {
+    NSArray<NSString *> *allowedServices = @[ @"ssh", @"scp", @"sftp" ];
+    if (![allowedServices containsObject:serviceType]) {
+        return;
+    }
+
     NSMutableDictionary *newBookmark;
     Profile* prototype = [[ProfileModel sharedInstance] defaultBookmark];
     if (prototype) {
@@ -396,13 +417,22 @@ iTermWindowType iTermThemedWindowType(iTermWindowType windowType) {
     if ([serviceType isEqualToString:@"ssh"] && port != 22) {
         optionalPortArg = [NSString stringWithFormat:@"-p %d ", port];
     }
-    [newBookmark setObject:[NSString stringWithFormat:@"%@ %@%@", serviceType, optionalPortArg, ipAddressString]
+    NSString *userNameArg = @"";
+    NSString *destination = address;
+    if (username.length > 0 && [self usernameIsSafe:username]) {
+        if ([serviceType isEqualToString:@"ssh"]) {
+            userNameArg = [NSString stringWithFormat:@"-l %@ ", username];
+        } else {
+            destination = [NSString stringWithFormat:@"%@@%@", username, address];
+        }
+    }
+    [newBookmark setObject:[NSString stringWithFormat:@"%@ %@%@%@", serviceType, userNameArg, optionalPortArg, destination]
                     forKey:KEY_COMMAND_LINE];
     [newBookmark setObject:@"" forKey:KEY_WORKING_DIRECTORY];
-    [newBookmark setObject:@"Yes" forKey:KEY_CUSTOM_COMMAND];
+    [newBookmark setObject:kProfilePreferenceCommandTypeCustomValue forKey:KEY_CUSTOM_COMMAND];
     [newBookmark setObject:kProfilePreferenceInitialDirectoryHomeValue
                     forKey:KEY_CUSTOM_DIRECTORY];
-    [newBookmark setObject:ipAddressString forKey:KEY_BONJOUR_SERVICE_ADDRESS];
+    [newBookmark setObject:destination forKey:KEY_BONJOUR_SERVICE_ADDRESS];
     [newBookmark setObject:[NSArray arrayWithObjects:@"bonjour",nil] forKey:KEY_TAGS];
     [newBookmark setObject:[ProfileModel freshGuid] forKey:KEY_GUID];
     [newBookmark setObject:@"No" forKey:KEY_DEFAULT_BOOKMARK];
@@ -439,6 +469,14 @@ iTermWindowType iTermThemedWindowType(iTermWindowType windowType) {
         // Assume ipv6
         return htons(((struct sockaddr_in6*)sa)->sin6_port);
     }
+}
+
+- (NSString *)usernameFromTXTRecord:(NSData *)txtData {
+    NSDictionary<NSString *, NSData *> *txtFields = [NSNetService dictionaryFromTXTRecordData:txtData];
+    // https://kodi.wiki/view/Avahi_Zeroconf
+    NSData *usernameData = txtFields[@"u"] ?: txtFields[@"username"];
+    NSString *usernameString = [[NSString alloc] initWithData:usernameData encoding:NSUTF8StringEncoding];
+    return usernameString;
 }
 
 // NSNetService delegate
@@ -482,10 +520,13 @@ iTermWindowType iTermThemedWindowType(iTermWindowType windowType) {
         if ([self verbose]) {
             NSLog(@"netServiceDidResolveAddress add profile with address %s", strAddr);
         }
+        
+        NSString *username = [self usernameFromTXTRecord:sender.TXTRecordData];
         [self _addBonjourHostProfileWithName:serviceName
                              ipAddressString:[NSString stringWithFormat:@"%s", strAddr]
                                         port:[self portFromSockaddr:socketAddress]
-                                 serviceType:serviceType];
+                                 serviceType:serviceType
+                                    userName:username];
 
         // remove from array now that resolving is done
         if ([bonjourServices containsObject:sender]) {
@@ -536,11 +577,24 @@ iTermWindowType iTermThemedWindowType(iTermWindowType windowType) {
     }
 }
 
-+ (NSString *)shellLauncherCommand {
-    return [NSString stringWithFormat:@"/usr/bin/login -f%@pl %@ %@ --launch_shell",
++ (NSString *)sanitizedCustomShell:(NSString *)customShell {
+    NSArray<NSString *> *parts = [customShell componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    if ([parts[0] length] == 0) {
+        return nil;
+    }
+    return parts[0];
+}
+
++ (NSString *)shellLauncherCommandWithCustomShell:(NSString *)customShell {
+    NSString *sanitizedCustomShell = [self sanitizedCustomShell:customShell];
+    NSString *customShellArg = sanitizedCustomShell ? [@" SHELL=" stringByAppendingString:sanitizedCustomShell] : @"";
+    NSString *shellLauncher = [[NSBundle bundleForClass:self.class] pathForAuxiliaryExecutable:@"ShellLauncher"];
+
+    return [NSString stringWithFormat:@"/usr/bin/login -f%@pl %@ %@ --launch_shell%@",
             [self hushlogin] ? @"q" : @"",
             [NSUserName() stringWithBackslashEscapedShellCharactersIncludingNewlines:YES],
-            [[[NSBundle mainBundle] executablePath] stringWithBackslashEscapedShellCharactersIncludingNewlines:YES]];
+            [shellLauncher stringWithBackslashEscapedShellCharactersIncludingNewlines:YES],
+            customShellArg];
 }
 
 + (NSString*)loginShellCommandForBookmark:(Profile*)profile
@@ -565,14 +619,15 @@ iTermWindowType iTermThemedWindowType(iTermWindowType windowType) {
         customDirectoryString = profile[KEY_CUSTOM_DIRECTORY];
     }
 
-    if ([customDirectoryString isEqualToString:kProfilePreferenceInitialDirectoryHomeValue]) {
+    if ([customDirectoryString isEqualToString:kProfilePreferenceInitialDirectoryHomeValue] &&
+        [[self customShellForProfile:profile] length] == 0) {
         // Run login without -l argument: this is a login session and will use the home dir.
         return [self standardLoginCommand];
     } else {
-        // Not using the home directory. This requires some trickery.
+        // Not using the home directory/default shell. This requires some trickery.
         // Run iTerm2's executable with a special flag that makes it run the shell as a login shell
         // (with "-" inserted at the start of argv[0]). See shell_launcher.c for more details.
-        NSString *launchShellCommand = [self shellLauncherCommand];
+        NSString *launchShellCommand = [self shellLauncherCommandWithCustomShell:[self customShellForProfile:profile]];
         return launchShellCommand;
     }
 }
@@ -584,13 +639,54 @@ iTermWindowType iTermThemedWindowType(iTermWindowType windowType) {
 }
 
 + (NSString *)standardLoginCommand {
+    NSString *userName = NSUserName();
+    // Active directory users have backslash in their user name (issue 6999)
+    // Somehow, users can have spaces in their user name (issue 8360)
+    //
+    // Avoid using standard escaping which is wrong for a quoted string. I don't know why
+    // this is in quotes, but I'm afraid to change it because it's been that way for so
+    // long and the original commit message was lost.
+    //
+    // The returned value gets parsed into an argument array using -componentsInShellCommand
+    // by computeArgvForCommand:substitutions:completion:.
+    userName = [userName stringByReplacingOccurrencesOfString:@"\\" withString:@"\\\\"];
+    userName = [userName stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
     return [NSString stringWithFormat:@"login -f%@p \"%@\"", [self hushlogin] ? @"q" : @"",
-            [NSUserName() stringWithBackslashEscapedShellCharactersIncludingNewlines:YES]];
+            userName];
 }
 
-+ (NSString*)bookmarkCommand:(Profile*)bookmark
-               forObjectType:(iTermObjectType)objectType {
-    BOOL custom = [bookmark[KEY_CUSTOM_COMMAND] isEqualToString:@"Yes"];
++ (void)computeCommandForProfile:(Profile *)profile
+                      objectType:(iTermObjectType)objectType
+                           scope:(iTermVariableScope *)scope
+                      completion:(void (^)(NSString *command))completion {
+    BOOL custom = [profile[KEY_CUSTOM_COMMAND] isEqualToString:kProfilePreferenceCommandTypeCustomValue];
+    NSString *swifty = [self bookmarkCommandSwiftyString:profile forObjectType:objectType];
+    if (!custom) {
+        DLog(@"Don't have a custom command. COmputed command is %@", swifty);
+        completion(swifty);
+        return;
+    }
+
+    DLog(@"Must evaluate swifty string: %@", swifty);
+    iTermExpressionEvaluator *evaluator =
+    [[iTermExpressionEvaluator alloc] initWithStrictInterpolatedString:swifty
+                                                                 scope:scope];
+    [evaluator evaluateWithTimeout:5 completion:^(iTermExpressionEvaluator * _Nonnull evaluator) {
+        NSString *string = [NSString castFrom:evaluator.value];
+        DLog(@"Evaluation finished with value %@", string);
+        string = [string stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (!string.length) {
+            string = [ITAddressBookMgr loginShellCommandForBookmark:profile
+                                                      forObjectType:objectType];
+        }
+        DLog(@"Finish with %@", string);
+        completion(string);
+    }];
+}
+
++ (NSString *)bookmarkCommandSwiftyString:(Profile *)bookmark
+                            forObjectType:(iTermObjectType)objectType {
+    BOOL custom = [bookmark[KEY_CUSTOM_COMMAND] isEqualToString:kProfilePreferenceCommandTypeCustomValue];
     if (custom) {
         NSString *command = bookmark[KEY_COMMAND_LINE];
         if ([[command stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet] ] length] > 0) {
@@ -599,6 +695,18 @@ iTermWindowType iTermThemedWindowType(iTermWindowType windowType) {
     }
     return [ITAddressBookMgr loginShellCommandForBookmark:bookmark
                                             forObjectType:objectType];
+}
+
++ (NSString *)customShellForProfile:(Profile *)profile {
+    if (![profile[KEY_CUSTOM_COMMAND] isEqualToString:kProfilePreferenceCommandTypeCustomShellValue]) {
+        return nil;
+    }
+    NSString *customShell = profile[KEY_COMMAND_LINE];
+    customShell = [customShell stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (customShell.length == 0) {
+        return nil;
+    }
+    return customShell;
 }
 
 + (NSString *)_advancedWorkingDirWithOption:(NSString *)option
@@ -658,19 +766,19 @@ iTermWindowType iTermThemedWindowType(iTermWindowType windowType) {
 + (void)removeKeyMappingsReferringToGuid:(NSString *)badRef {
     for (NSString* guid in [[ProfileModel sharedInstance] guids]) {
         Profile *profile = [[ProfileModel sharedInstance] bookmarkWithGuid:guid];
-        profile = [iTermKeyBindingMgr removeMappingsReferencingGuid:badRef fromBookmark:profile];
+        profile = [iTermKeyMappings removeKeyMappingsReferencingGuid:badRef fromProfile:profile];
         if (profile) {
             [[ProfileModel sharedInstance] setBookmark:profile withGuid:guid];
         }
     }
     for (NSString* guid in [[ProfileModel sessionsInstance] guids]) {
         Profile* profile = [[ProfileModel sessionsInstance] bookmarkWithGuid:guid];
-        profile = [iTermKeyBindingMgr removeMappingsReferencingGuid:badRef fromBookmark:profile];
+        profile = [iTermKeyMappings removeKeyMappingsReferencingGuid:badRef fromProfile:profile];
         if (profile) {
             [[ProfileModel sessionsInstance] setBookmark:profile withGuid:guid];
         }
     }
-    [iTermKeyBindingMgr removeMappingsReferencingGuid:badRef fromBookmark:nil];
+    [iTermKeyMappings removeKeyMappingsReferencingGuid:badRef fromProfile:nil];
     [self postNotificationName:kKeyBindingsChangedNotification object:nil userInfo:nil];
 }
 
@@ -708,6 +816,18 @@ iTermWindowType iTermThemedWindowType(iTermWindowType windowType) {
     } else {
         block();
     }
+}
+
+// identifier is optional. Old shortcuts only have a title.
++ (BOOL)shortcutIdentifier:(NSString *)identifier title:(NSString *)title matchesItem:(NSMenuItem *)item {
+    if (item.identifier && [identifier isEqualToString:item.identifier]) {
+        return YES;
+    }
+    if (!identifier && [title isEqualToString:[item title]]) {
+        return YES;
+    }
+
+    return NO;
 }
 
 @end

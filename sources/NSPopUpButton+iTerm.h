@@ -16,4 +16,7 @@
 // Add color presets and selected the indicated one.
 - (void)loadColorPresetsSelecting:(NSString *)presetName;
 
+// Add snippets.
+- (void)populateWithSnippetsSelectingActionKey:(id)actionKey;
+
 @end

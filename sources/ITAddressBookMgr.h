@@ -45,7 +45,7 @@
 #define KEY_DESCRIPTION                 @"Description"  // Deprecated
 #define KEY_CUSTOM_COMMAND              @"Custom Command"
 #define KEY_COMMAND_LINE                @"Command"
-#define KEY_INITIAL_TEXT                @"Initial Text"
+#define KEY_INITIAL_TEXT                @"Initial Text"  // String. Evaluated as a swifty string.
 #define KEY_CUSTOM_DIRECTORY            @"Custom Directory"  // values are Yes, No, Recycle, Advanced
 #define KEY_WORKING_DIRECTORY           @"Working Directory"
 #define KEY_BADGE_FORMAT                @"Badge Text"
@@ -70,6 +70,7 @@
 #define KEY_BADGE_MAX_WIDTH             @"Badge Max Width"
 #define KEY_BADGE_MAX_HEIGHT            @"Badge Max Height"
 #define KEY_BADGE_FONT                  @"Badge Font"
+#define KEY_PREVENT_APS                 @"Prevent Automatic Profile Switching"  // Not in regular prefs, only for divorced prefs.
 
 // Advanced working directory settings
 #define KEY_AWDS_WIN_OPTION             @"AWDS Window Option"
@@ -83,7 +84,8 @@
 #define KEY_FOREGROUND_COLOR       @"Foreground Color"
 #define KEY_BACKGROUND_COLOR       @"Background Color"
 #define KEY_BOLD_COLOR             @"Bold Color"
-#define KEY_USE_BOLD_COLOR         @"Use Bright Bold"  // Means "use the specified bold color, and also use the bright version of dark ansi colors".
+#define KEY_USE_BOLD_COLOR         @"Use Bright Bold"  // Pre-3.3.7: Means "use the specified bold color, and also use the bright version of dark ansi colors". Post-3.3.7: Use the specified bold color
+#define KEY_BRIGHTEN_BOLD_TEXT     @"Brighten Bold Text"  // New in 3.3.7.
 #define KEY_LINK_COLOR             @"Link Color"
 #define KEY_SELECTION_COLOR        @"Selection Color"
 #define KEY_SELECTED_TEXT_COLOR    @"Selected Text Color"
@@ -118,12 +120,14 @@
 #define KEY_BADGE_COLOR            @"Badge Color"
 
 // Display
-#define KEY_ROWS                   @"Rows"
-#define KEY_COLUMNS                @"Columns"
+#define KEY_ROWS                   @"Rows"  // not to exceed iTermMaxInitialSessionSize
+#define KEY_COLUMNS                @"Columns"  // not to exceed iTermMaxInitialSessionSize
 #define KEY_FULLSCREEN             @"Full Screen"  // DEPRECATED
 #define KEY_WINDOW_TYPE            @"Window Type"
 #define KEY_USE_CUSTOM_WINDOW_TITLE           @"Use Custom Window Title"
 #define KEY_CUSTOM_WINDOW_TITLE               @"Custom Window Title"
+#define KEY_USE_CUSTOM_TAB_TITLE   @"Use Custom Tab Title"
+#define KEY_CUSTOM_TAB_TITLE       @"Custom Tab Title"
 #define KEY_SCREEN                 @"Screen"
 #define KEY_SPACE                  @"Space"  // integer, iTermProfileSpaceSetting
 #define KEY_NORMAL_FONT            @"Normal Font"
@@ -170,6 +174,7 @@
 #define KEY_FLASHING_BELL                     @"Flashing Bell"
 #define KEY_XTERM_MOUSE_REPORTING             @"Mouse Reporting"
 #define KEY_XTERM_MOUSE_REPORTING_ALLOW_MOUSE_WHEEL @"Mouse Reporting allow mouse wheel"
+#define KEY_XTERM_MOUSE_REPORTING_ALLOW_CLICKS_AND_DRAGS @"Mouse Reporting allow clicks and drags"
 #define KEY_UNICODE_VERSION                   @"Unicode Version"
 #define KEY_DISABLE_SMCUP_RMCUP               @"Disable Smcup Rmcup"
 #define KEY_ALLOW_TITLE_REPORTING             @"Allow Title Reporting"
@@ -208,13 +213,17 @@
 #define KEY_REDUCE_FLICKER                    @"Reduce Flicker"
 #define KEY_SHOW_STATUS_BAR                   @"Show Status Bar"
 #define KEY_STATUS_BAR_LAYOUT                 @"Status Bar Layout"
+#define KEY_PLAIN_TEXT_LOGGING                @"Plain Text Logging"
 
 // Keyboard
 #define KEY_KEYBOARD_MAP                      @"Keyboard Map"
 #define KEY_TOUCHBAR_MAP                      @"Touch Bar Map"
 #define KEY_OPTION_KEY_SENDS                  @"Option Key Sends"
 #define KEY_RIGHT_OPTION_KEY_SENDS            @"Right Option Key Sends"
+#define KEY_LEFT_OPTION_KEY_CHANGEABLE        @"Left Option Key Changeable"
+#define KEY_RIGHT_OPTION_KEY_CHANGEABLE       @"Right Option Key Changeable"
 #define KEY_APPLICATION_KEYPAD_ALLOWED        @"Application Keypad Allowed"
+#define KEY_ALLOW_MODIFY_OTHER_KEYS           @"Allow modifyOtherKeys"
 #define KEY_HAS_HOTKEY                        @"Has Hotkey"  // This determines whether the "has a hotkey" box is checked. See also KEY_HOTKEY_CHARACTERS_IGNORING_MODIFIERS.
 #define KEY_HOTKEY_KEY_CODE                   @"HotKey Key Code"
 #define KEY_HOTKEY_CHARACTERS                 @"HotKey Characters"
@@ -249,6 +258,10 @@
 // field correctly.
 #define KEY_TMUX_PANE_TITLE                  @"tmux Pane Title"
 
+// This is not a real setting. It's a way to communicate that a newly created
+// window should not use auto-saved frames (see -loadAutoSave). Takes a boolean.
+#define KEY_DISABLE_AUTO_FRAME               @"Disable Auto Frame"
+
 @class iTermVariableScope;
 
 // Posted when a session's unicode version changes.
@@ -256,6 +269,15 @@ extern NSString *const iTermUnicodeVersionDidChangeNotification;
 
 // Minimum time between sending anti-idle codes. "1" otherwise results in a flood.
 extern const NSTimeInterval kMinimumAntiIdlePeriod;
+
+// Values for KEY_CUSTOM_COMMAND
+extern NSString *const kProfilePreferenceCommandTypeCustomValue;
+extern NSString *const kProfilePreferenceCommandTypeLoginShellValue;
+extern NSString *const kProfilePreferenceCommandTypeCustomShellValue;
+
+// I chose 1250 because on a 6k display each cell would be less than 5 points wide,
+// which won't be legible. It needs an upper bound because of issue 8592.
+extern const NSInteger iTermMaxInitialSessionSize;
 
 // Special values for KEY_SPACE.
 typedef NS_ENUM(NSInteger, iTermProfileSpaceSetting) {
@@ -380,15 +402,23 @@ typedef NS_ENUM(NSUInteger, iTermProfileIcon) {
 + (NSDictionary*)encodeColor:(NSColor*)origColor;
 + (NSColor*)decodeColor:(NSDictionary*)plist;
 + (void)setDefaultsInBookmark:(NSMutableDictionary*)aDict;
-+ (NSString *)shellLauncherCommand;
++ (NSString *)shellLauncherCommandWithCustomShell:(NSString *)customShell;
 // Login command that leaves you in your home directory.
 + (NSString *)standardLoginCommand;
 + (NSFont *)fontWithDesc:(NSString *)fontDesc;
 
 // This is deprecated in favor of -[NSString fontValue] and -[NSFont stringValue].
-+ (NSString*)descFromFont:(NSFont*)font __attribute__((deprecated));
-+ (NSString*)bookmarkCommand:(Profile*)bookmark
-               forObjectType:(iTermObjectType)objectType;
++ (NSString *)descFromFont:(NSFont*)font __attribute__((deprecated));
++ (void)computeCommandForProfile:(Profile *)profile
+                      objectType:(iTermObjectType)objectType
+                           scope:(iTermVariableScope *)scope
+                      completion:(void (^)(NSString *command))completion;
+
+// Like computeCommandForProfile:objectType:scope:completion: but does not evaluate it.
++ (NSString *)bookmarkCommandSwiftyString:(Profile *)bookmark
+                            forObjectType:(iTermObjectType)objectType;
+
++ (NSString *)customShellForProfile:(Profile *)profile;
 
 // Indicates if it is safe to remove the profile from the model.
 + (BOOL)canRemoveProfile:(Profile *)profile fromModel:(ProfileModel *)model;
@@ -397,5 +427,5 @@ typedef NS_ENUM(NSUInteger, iTermProfileIcon) {
 // kProfileWasDeletedNotification notification, then flushes the model to backing store.
 + (BOOL)removeProfile:(Profile *)profile fromModel:(ProfileModel *)model;
 + (void)performBlockWithCoalescedNotifications:(void (^)(void))block;
-
++ (BOOL)shortcutIdentifier:(NSString *)identifier title:(NSString *)title matchesItem:(NSMenuItem *)item;
 @end

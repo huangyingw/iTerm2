@@ -7,6 +7,14 @@
 
 #import <Cocoa/Cocoa.h>
 
+typedef NS_ENUM(NSUInteger, iTermKeyMappingMode) {
+    iTermKeyMappingModeStandard,
+    iTermKeyMappingModeCSIu,
+    iTermKeyMappingModeRaw,
+    iTermKeyMappingModeModifyOtherKeys1,
+    iTermKeyMappingModeModifyOtherKeys2
+};
+
 NS_ASSUME_NONNULL_BEGIN
 
 // A key mapper is responsible for converting an event into the data that gets sent to the pty.
@@ -32,6 +40,13 @@ NS_ASSUME_NONNULL_BEGIN
 // the event itself, will send the event to the post-cocoa handler here. Don't return YES if the
 // event should go through the IME.
 - (BOOL)keyMapperShouldBypassPreCocoaForEvent:(NSEvent *)event;
+
+// Prepare to handle this event. Update config from delegate.
+- (void)keyMapperSetEvent:(NSEvent *)event;
+
+// When a keystroke is routed to performKeyEquivalent instead of keyDown, this is called to check
+// if the key mapper is interested in it.
+- (BOOL)keyMapperWantsKeyEquivalent:(NSEvent *)event;
 
 @optional
 - (void)setDelegate:(id)delegate;

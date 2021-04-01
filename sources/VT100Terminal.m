@@ -1,5 +1,6 @@
 #import "VT100Terminal.h"
 #import "DebugLogging.h"
+#import "iTermAdvancedSettingsModel.h"
 #import "iTermParser.h"
 #import "iTermURLStore.h"
 #import "NSColor+iTerm.h"
@@ -17,6 +18,7 @@ NSString *const kGraphicRenditionBoldKey = @"Bold";
 NSString *const kGraphicRenditionBlinkKey = @"Blink";
 NSString *const kGraphicRenditionUnderlineKey = @"Underline";
 NSString *const kGraphicRenditionStrikethroughKey = @"Strikethrough";
+NSString *const kGraphicRenditionUnderlineStyle = @"Underline Style";
 NSString *const kGraphicRenditionReversedKey = @"Reversed";
 NSString *const kGraphicRenditionFaintKey = @"Faint";
 NSString *const kGraphicRenditionItalicKey = @"Italic";
@@ -74,6 +76,9 @@ NSString *const kTerminalStateUnicodeVersionStack = @"Unicode Version Stack";
 NSString *const kTerminalStateURL = @"URL";
 NSString *const kTerminalStateURLParams = @"URL Params";
 NSString *const kTerminalStateReportKeyUp = @"Report Key Up";
+NSString *const kTerminalStateMetaSendsEscape = @"Meta Sends Escape";
+NSString *const kTerminalStateSendModifiers = @"Send Modifiers";
+NSString *const kTerminalStateKeyReportingModeStack = @"Key Reporting Mode Stack";
 
 @interface VT100Terminal ()
 @property(nonatomic, assign) BOOL reverseVideo;
@@ -105,6 +110,10 @@ typedef struct {
     NSInteger unicodeVersion;
 } VT100SavedCursor;
 
+@interface VT100Terminal()
+@property (nonatomic, strong, readwrite) NSMutableArray<NSNumber *> *sendModifiers;
+@end
+
 @implementation VT100Terminal {
     // In FinalTerm command mode (user is at the prompt typing a command).
     BOOL inCommand_;
@@ -117,14 +126,13 @@ typedef struct {
     VT100SavedCursor mainSavedCursor_;
     VT100SavedCursor altSavedCursor_;
 
-    // TODO: Actually use this.
-    int sendModifiers_[NUM_MODIFIABLE_RESOURCES];
     NSMutableArray *_unicodeVersionStack;
 
     // Code for the current hypertext link, or 0 if not in a hypertext link.
     unsigned short _currentURLCode;
 
     BOOL _softAlternateScreenMode;
+    NSMutableArray<NSNumber *> *_keyReportingModeStack;
 }
 
 @synthesize delegate = delegate_;
@@ -217,7 +225,8 @@ static const int kMaxScreenRows = 4096;
 
         _allowKeypadMode = YES;
         _allowPasteBracketing = YES;
-
+        _sendModifiers = [@[ @-1, @-1, @-1, @-1, @-1 ] mutableCopy];
+        _keyReportingModeStack = [[NSMutableArray alloc] init];
         numLock_ = YES;
         [self saveCursor];  // initialize save area
         _unicodeVersionStack = [[NSMutableArray alloc] init];
@@ -233,11 +242,14 @@ static const int kMaxScreenRows = 4096;
     [_unicodeVersionStack release];
     [_url release];
     [_urlParams release];
+    [_sendModifiers release];
+    [_keyReportingModeStack release];
 
     [super dealloc];
 }
 
 - (void)stopReceivingFile {
+    DLog(@"%@", [NSThread callStackSymbols]);
     receivingFile_ = NO;
 }
 
@@ -254,6 +266,7 @@ static const int kMaxScreenRows = 4096;
 }
 
 - (void)setTermType:(NSString *)termtype {
+    DLog(@"setTermType:%@", termtype);
     [_termType autorelease];
     _termType = [termtype copy];
 
@@ -266,7 +279,7 @@ static const int kMaxScreenRows = 4096;
     // fix this disaster.
     setupterm((char *)[_termType UTF8String], fileno(stdout), &r);
     if (r != 1) {
-        NSLog(@"Terminal type %s is not defined.", [_termType UTF8String]);
+        DLog(@"Terminal type %s is not defined.", [_termType UTF8String]);
     }
     _output.termTypeIsValid = (r == 1);
     if ([termtype isEqualToString:@"VT100"]) {
@@ -319,6 +332,7 @@ static const int kMaxScreenRows = 4096;
 }
 
 - (void)commonReset {
+    DLog(@"TERMINAL RESET");
     self.cursorMode = NO;
     _reverseVideo = NO;
     _originMode = NO;
@@ -328,6 +342,7 @@ static const int kMaxScreenRows = 4096;
     self.autorepeatMode = YES;
     self.keypadMode = NO;
     self.reportKeyUp = NO;
+    self.metaSendsEscape = NO;
     self.insertMode = NO;
     self.sendReceiveMode = NO;
     self.bracketedPasteMode = NO;
@@ -350,9 +365,21 @@ static const int kMaxScreenRows = 4096;
         mainSavedCursor_.lineDrawing[i] = NO;
         altSavedCursor_.lineDrawing[i] = NO;
     }
+    [_keyReportingModeStack removeAllObjects];
     [self resetSavedCursorPositions];
     [delegate_ terminalShowPrimaryBuffer];
     self.softAlternateScreenMode = NO;
+    [self resetSendModifiersWithSideEffects:NO];
+    [self.delegate terminalDidChangeSendModifiers];
+}
+
+- (void)resetSendModifiersWithSideEffects:(BOOL)sideEffects {
+    for (int i = 0; i < NUM_MODIFIABLE_RESOURCES; i++) {
+        _sendModifiers[i] = @-1;
+    }
+    if (sideEffects) {
+        [self.delegate terminalDidChangeSendModifiers];
+    }
 }
 
 - (void)gentleReset {
@@ -361,15 +388,30 @@ static const int kMaxScreenRows = 4096;
 }
 
 - (void)resetByUserRequest:(BOOL)userInitiated {
-    if (_columnMode) {
+    [self resetAllowingResize:YES preservePrompt:userInitiated resetParser:userInitiated modifyContent:YES];
+}
+
+- (void)resetForRelaunch {
+    [self resetAllowingResize:NO preservePrompt:NO resetParser:YES modifyContent:NO];
+}
+
+- (void)resetAllowingResize:(BOOL)canResize
+             preservePrompt:(BOOL)preservePrompt
+                resetParser:(BOOL)resetParser
+              modifyContent:(BOOL)modifyContent {
+    if (canResize && _columnMode) {
         [delegate_ terminalSetWidth:80];
     }
     self.columnMode = NO;
     [self commonReset];
-    if (userInitiated) {
+    if (resetParser) {
         [_parser reset];
     }
-    [delegate_ terminalResetPreservingPrompt:userInitiated];
+    [delegate_ terminalResetPreservingPrompt:preservePrompt modifyContent:modifyContent];
+}
+
+- (void)resetForTmuxUnpause {
+    [self resetAllowingResize:NO preservePrompt:NO resetParser:YES modifyContent:YES];
 }
 
 - (void)setWraparoundMode:(BOOL)mode {
@@ -413,6 +455,10 @@ static const int kMaxScreenRows = 4096;
     [self.delegate terminalReportKeyUpDidChange:reportKeyUp];
 }
 
+- (VT100TerminalKeyReportingFlags)keyReportingFlags {
+    return _keyReportingModeStack.lastObject.intValue;
+}
+
 - (screen_char_t)foregroundColorCode
 {
     screen_char_t result = { 0 };
@@ -437,6 +483,7 @@ static const int kMaxScreenRows = 4096;
     result.italic = graphicRendition_.italic;
     result.underline = graphicRendition_.underline;
     result.strikethrough = graphicRendition_.strikethrough;
+    result.underlineStyle = graphicRendition_.underlineStyle;
     result.blink = graphicRendition_.blink;
     result.image = NO;
     result.urlCode = _currentURLCode;
@@ -477,6 +524,7 @@ static const int kMaxScreenRows = 4096;
     result.italic = graphicRendition_.italic;
     result.underline = graphicRendition_.underline;
     result.strikethrough = graphicRendition_.strikethrough;
+    result.underlineStyle = graphicRendition_.underlineStyle;
     result.blink = graphicRendition_.blink;
     result.urlCode = _currentURLCode;
     return result;
@@ -623,6 +671,10 @@ static const int kMaxScreenRows = 4096;
                 }
                 break;
 
+            case 1036:
+                self.metaSendsEscape = mode;
+                break;
+
             case 1337:
                 self.reportKeyUp = mode;
                 break;
@@ -651,9 +703,8 @@ static const int kMaxScreenRows = 4096;
 
             case 2004:
                 // Set bracketed paste mode
-                self.bracketedPasteMode = mode && self.allowPasteBracketing;
+                [self setBracketedPasteMode:mode && self.allowPasteBracketing withSideEffects:YES];
                 break;
-
         }
     }
 }
@@ -689,9 +740,25 @@ static const int kMaxScreenRows = 4096;
                 case VT100CHARATTR_NOT_ITALIC:
                     graphicRendition_.italic = NO;
                     break;
-                case VT100CHARATTR_UNDERLINE:
+                case VT100CHARATTR_UNDERLINE: {
                     graphicRendition_.underline = YES;
+                    int subs[VT100CSISUBPARAM_MAX];
+                    const int numberOfSubparameters = iTermParserGetAllCSISubparametersForParameter(token.csi, i, subs);
+                    if (numberOfSubparameters > 0) {
+                        switch (subs[0]) {
+                            case 0:
+                                graphicRendition_.underline = NO;
+                                break;
+                            case 1:
+                                graphicRendition_.underlineStyle = VT100UnderlineStyleSingle;
+                                break;
+                            case 3:
+                                graphicRendition_.underlineStyle = VT100UnderlineStyleCurly;
+                                break;
+                        }
+                    }
                     break;
+                }
                 case VT100CHARATTR_NOT_UNDERLINE:
                     graphicRendition_.underline = NO;
                     break;
@@ -825,12 +892,24 @@ static const int kMaxScreenRows = 4096;
                             graphicRendition_.bgBlue = 0;
                             graphicRendition_.bgColorMode = ColorModeNormal;
                         } else if (numberOfSubparameters >= 4 && subs[0] == 2) {
-                            // CSI 48:2:R:G:B m
                             // 24-bit color
-                            graphicRendition_.bgColorCode = subs[1];
-                            graphicRendition_.bgGreen = subs[2];
-                            graphicRendition_.bgBlue = subs[3];
-                            graphicRendition_.bgColorMode = ColorMode24bit;
+                            if (numberOfSubparameters >= 5) {
+                                // Spec-compliant. Likely rarely used in 2020.
+                                // CSI 48:2:colorspace:R:G:B m
+                                // TODO: Respect the color space argument. See ITU-T Rec. T.414,
+                                // but good luck actually finding the colour space IDs.
+                                graphicRendition_.bgColorCode = subs[2];
+                                graphicRendition_.bgGreen = subs[3];
+                                graphicRendition_.bgBlue = subs[4];
+                                graphicRendition_.bgColorMode = ColorMode24bit;
+                            } else {
+                                // Misinterpretation compliant.
+                                // CSI 48:2:R:G:B m  <- misinterpretation compliant
+                                graphicRendition_.bgColorCode = subs[1];
+                                graphicRendition_.bgGreen = subs[2];
+                                graphicRendition_.bgBlue = subs[3];
+                                graphicRendition_.bgColorMode = ColorMode24bit;
+                            }
                         }
                     } else if (token.csi->count - i >= 3 && token.csi->p[i + 1] == 5) {
                         // CSI 48;5;P m
@@ -841,6 +920,7 @@ static const int kMaxScreenRows = 4096;
                         i += 2;
                     } else if (token.csi->count - i >= 5 && token.csi->p[i + 1] == 2) {
                         // CSI 48;2;R;G;B m
+                        // Hack for xterm compatibility
                         // 24-bit color
                         graphicRendition_.bgColorCode = token.csi->p[i + 2];
                         graphicRendition_.bgGreen = token.csi->p[i + 3];
@@ -919,7 +999,7 @@ static const int kMaxScreenRows = 4096;
                                                 green:((double)g)/255.0
                                                  blue:((double)b)/255.0
                                                 alpha:1];
-            NSColor *theColor = [srgb colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+            NSColor *theColor = [srgb colorUsingColorSpace:[NSColorSpace genericRGBColorSpace]];
             *numberPtr = n;
             return theColor;
         }
@@ -1164,6 +1244,17 @@ static const int kMaxScreenRows = 4096;
     _reportFocus = reportFocus;
 }
 
+- (void)setBracketedPasteMode:(BOOL)bracketedPasteMode {
+    [self setBracketedPasteMode:bracketedPasteMode withSideEffects:NO];
+}
+
+- (void)setBracketedPasteMode:(BOOL)bracketedPasteMode withSideEffects:(BOOL)sideEffects {
+    if (sideEffects) {
+        [delegate_ terminalPasteBracketingWillChangeTo:bracketedPasteMode];
+    }
+    _bracketedPasteMode = bracketedPasteMode;
+}
+
 - (void)resetSavedCursorPositions {
     mainSavedCursor_.position = VT100GridCoordMake(0, 0);
     altSavedCursor_.position = VT100GridCoordMake(0, 0);
@@ -1246,6 +1337,7 @@ static const int kMaxScreenRows = 4096;
     self.keypadMode = NO;
 
     self.reportKeyUp = NO;
+    self.metaSendsEscape = NO;
 
     // Set WRAPROUND to initial value
     self.wraparoundMode = YES;
@@ -1271,6 +1363,7 @@ static const int kMaxScreenRows = 4096;
     // Reset UNDERLINE & STRIKETHROUGH
     graphicRendition_.underline = NO;
     graphicRendition_.strikethrough = NO;
+    graphicRendition_.underlineStyle = VT100UnderlineStyleSingle;
 
     self.url = nil;
     self.urlParams = nil;
@@ -1307,7 +1400,7 @@ static const int kMaxScreenRows = 4096;
         return;
     }
 
-    if (_tmuxMode) {
+    if ([iTermAdvancedSettingsModel translateScreenToXterm] && [self.termType containsString:@"screen"]) {
         [token translateFromScreenTerminal];
     }
 
@@ -1324,6 +1417,7 @@ static const int kMaxScreenRows = 4096;
             receivingFile_ = NO;
             return;
         } else {
+            DLog(@"Unexpected field receipt end");
             [delegate_ terminalFileReceiptEndedUnexpectedly];
             receivingFile_ = NO;
         }
@@ -1467,6 +1561,13 @@ static const int kMaxScreenRows = 4096;
                 [delegate_ terminalSendReport:[self.output reportSecondaryDeviceAttribute]];
             }
             break;
+        case VT100CSI_XDA:
+            if ([delegate_ terminalShouldSendReport]) {
+                if (token.csi->p[0] == 0 || token.csi->p[0] == -1) {
+                    [delegate_ terminalSendReport:[self.output reportExtendedDeviceAttribute]];
+                }
+            }
+            break;
         case VT100CSI_DECALN:
             [delegate_ terminalShowTestPattern];
             break;
@@ -1521,6 +1622,9 @@ static const int kMaxScreenRows = 4096;
             break;
         case VT100CSI_DECRQCRA: {
             if ([delegate_ terminalIsTrusted]) {
+                if (![delegate_ terminalCanUseDECRQCRA]) {
+                    break;
+                }
                 VT100GridRect defaultRectangle = VT100GridRectMake(0,
                                                                    0,
                                                                    [delegate_ terminalWidth],
@@ -1631,28 +1735,30 @@ static const int kMaxScreenRows = 4096;
         case VT100CSI_DECSCUSR:
             switch (token.csi->p[0]) {
                 case 0:
+                    [delegate_ terminalResetCursorTypeAndBlink];
+                    break;
                 case 1:
-                    [delegate_ terminalSetCursorBlinking:true];
+                    [delegate_ terminalSetCursorBlinking:YES];
                     [delegate_ terminalSetCursorType:CURSOR_BOX];
                     break;
                 case 2:
-                    [delegate_ terminalSetCursorBlinking:false];
+                    [delegate_ terminalSetCursorBlinking:NO];
                     [delegate_ terminalSetCursorType:CURSOR_BOX];
                     break;
                 case 3:
-                    [delegate_ terminalSetCursorBlinking:true];
+                    [delegate_ terminalSetCursorBlinking:YES];
                     [delegate_ terminalSetCursorType:CURSOR_UNDERLINE];
                     break;
                 case 4:
-                    [delegate_ terminalSetCursorBlinking:false];
+                    [delegate_ terminalSetCursorBlinking:NO];
                     [delegate_ terminalSetCursorType:CURSOR_UNDERLINE];
                     break;
                 case 5:
-                    [delegate_ terminalSetCursorBlinking:true];
+                    [delegate_ terminalSetCursorBlinking:YES];
                     [delegate_ terminalSetCursorType:CURSOR_VERTICAL];
                     break;
                 case 6:
-                    [delegate_ terminalSetCursorBlinking:false];
+                    [delegate_ terminalSetCursorBlinking:NO];
                     [delegate_ terminalSetCursorType:CURSOR_VERTICAL];
                     break;
             }
@@ -1760,6 +1866,25 @@ static const int kMaxScreenRows = 4096;
 
         case VT100CSI_DECRQM_ANSI:
             [self executeANSIRequestMode:token.csi->p[0]];
+            break;
+
+        case VT100CSI_PUSH_KEY_REPORTING_MODE:
+            [_keyReportingModeStack addObject:@(token.csi->p[0])];
+            [self.delegate terminalKeyReportingFlagsDidChange];
+            break;
+
+        case VT100CSI_POP_KEY_REPORTING_MODE:
+            if (_keyReportingModeStack.count == 0) {
+                break;
+            }
+            [_keyReportingModeStack removeLastObject];
+            [self.delegate terminalKeyReportingFlagsDidChange];
+            break;
+
+        case VT100CSI_QUERY_KEY_REPORTING_MODE:
+            if ([delegate_ terminalShouldSendReport]) {
+                [delegate_ terminalSendReport:[_output reportKeyReportingMode:_keyReportingModeStack.lastObject.intValue]];
+            }
             break;
 
         case VT100CSI_DECRQM_DEC:
@@ -1995,32 +2120,36 @@ static const int kMaxScreenRows = 4096;
 
         case VT100CSI_RESET_MODIFIERS:
             if (token.csi->count == 0) {
-                sendModifiers_[2] = -1;
-            } else {
-                int resource = token.csi->p[0];
-                if (resource >= 0 && resource <= NUM_MODIFIABLE_RESOURCES) {
-                    sendModifiers_[resource] = -1;
-                }
+                [self resetSendModifiersWithSideEffects:YES];
+                break;
+            }
+            int resource = token.csi->p[0];
+            if (resource >= 0 && resource <= NUM_MODIFIABLE_RESOURCES) {
+                _sendModifiers[resource] = @-1;
+                [self.delegate terminalDidChangeSendModifiers];
             }
             break;
 
         case VT100CSI_SET_MODIFIERS: {
             if (token.csi->count == 0) {
-                for (int j = 0; j < NUM_MODIFIABLE_RESOURCES; j++) {
-                    sendModifiers_[j] = 0;
-                }
+                [self resetSendModifiersWithSideEffects:YES];
+                break;
+            }
+            const int resource = token.csi->p[0];
+            if (resource < 0 || resource >= NUM_MODIFIABLE_RESOURCES) {
+                break;
+            }
+            int value;
+            if (token.csi->count == 1) {
+                value = -1;
             } else {
-                int resource = token.csi->p[0];
-                int value;
-                if (token.csi->count == 1) {
-                    value = 0;
-                } else {
-                    value = token.csi->p[1];
-                }
-                if (resource >= 0 && resource < NUM_MODIFIABLE_RESOURCES && value >= 0) {
-                    sendModifiers_[resource] = value;
+                value = token.csi->p[1];
+                if (value < 0) {
+                    break;
                 }
             }
+            _sendModifiers[resource] = @(value);
+            [self.delegate terminalDidChangeSendModifiers];
             break;
         }
 
@@ -2107,10 +2236,200 @@ static const int kMaxScreenRows = 4096;
             [delegate_ terminalAppendSixelData:token.savedData];
             break;
 
+        case DCS_DECRQSS:
+            [delegate_ terminalSendReport:[[self decrqss:token.string] dataUsingEncoding:_encoding]];
+            break;
+
         default:
             NSLog(@"Unexpected token type %d", (int)token->type);
             break;
     }
+}
+
+- (NSString *)decrqss:(NSString *)pt {
+    NSString *payload = [self decrqssPayload:pt];
+    if (payload) {
+        return [NSString stringWithFormat:@"%cP1$r%@%c\\", VT100CC_ESC, payload, VT100CC_ESC];
+    }
+    return [NSString stringWithFormat:@"%cP0$r%@%c\\", VT100CC_ESC, pt, VT100CC_ESC];
+}
+
+- (NSString *)decrqssPayload:(NSString *)pt {
+    /* Per xterm's ctlseqs:
+    m       ⇒  SGR
+    " p     ⇒  DECSCL
+    SP q    ⇒  DECSCUSR
+    " q     ⇒  DECSCA
+    r       ⇒  DECSTBM
+    s       ⇒  DECSLRM
+    t       ⇒  DECSLPP
+    $ |     ⇒  DECSCPP
+    * |     ⇒  DECSNLS
+     */
+    if ([pt isEqualToString:@"m"]) {
+        NSArray<NSString *> *codes = [[self sgrCodesForGraphicRendition:graphicRendition_].allObjects sortedArrayUsingSelector:@selector(compare:)];
+        return [NSString stringWithFormat:@"%@m", [codes componentsJoinedByString:@";"]];
+    }
+    if ([pt isEqualToString:@" q"]) {
+        ITermCursorType type = CURSOR_BOX;
+        BOOL blinking = YES;
+        [self.delegate terminalGetCursorType:&type blinking:&blinking];
+        int code = 0;
+        switch (type) {
+            case CURSOR_DEFAULT:
+            case CURSOR_BOX:
+                code = 1;
+                break;
+            case CURSOR_UNDERLINE:
+                code = 3;
+                break;
+            case CURSOR_VERTICAL:
+                code = 5;
+                break;
+        }
+        if (!blinking) {
+            code++;
+        }
+        return [NSString stringWithFormat:@"%@ q", @(code)];
+    }
+    return nil;
+}
+
+- (NSSet<NSString *> *)sgrCodesForCharacter:(screen_char_t)c {
+    VT100GraphicRendition g = {
+        .bold = c.bold,
+        .blink = c.blink,
+        .underline = c.underline,
+        .underlineStyle = c.underlineStyle,
+        .strikethrough = c.strikethrough,
+        .reversed = 0,
+        .faint = c.faint,
+        .italic = c.italic,
+        .fgColorCode = c.foregroundColor,
+        .fgGreen = c.fgGreen,
+        .fgBlue = c.fgBlue,
+        .fgColorMode = c.foregroundColorMode,
+
+        .bgColorCode = c.backgroundColor,
+        .bgGreen = c.bgGreen,
+        .bgBlue = c.bgBlue,
+        .bgColorMode = c.backgroundColorMode
+    };
+    return [self sgrCodesForGraphicRendition:g];
+}
+
+- (NSSet<NSString *> *)sgrCodesForGraphicRendition:(VT100GraphicRendition)graphicRendition {
+    NSMutableSet<NSString *> *result = [NSMutableSet set];
+    [result addObject:@"0"];  // for xterm compatibility. Also makes esctest happy.
+    switch (graphicRendition.fgColorMode) {
+        case ColorModeNormal:
+            if (graphicRendition.fgColorCode < 8) {
+                [result addObject:[NSString stringWithFormat:@"%@", @(graphicRendition.fgColorCode + 30)]];
+            } else if (graphicRendition.fgColorCode < 16) {
+                [result addObject:[NSString stringWithFormat:@"%@", @(graphicRendition.fgColorCode + 90)]];
+            } else {
+                [result addObject:[NSString stringWithFormat:@"38:5:%@", @(graphicRendition.fgColorCode)]];
+            }
+            break;
+
+        case ColorModeAlternate:
+            switch (graphicRendition.fgColorCode) {
+                case ALTSEM_DEFAULT:
+                    break;
+                case ALTSEM_REVERSED_DEFAULT:  // Not sure quite how to handle this, going with the simplest approach for now.
+                    [result addObject:@"39"];
+                    break;
+
+                case ALTSEM_SYSTEM_MESSAGE:
+                    // There is no SGR code for this case.
+                    break;
+
+                case ALTSEM_SELECTED:
+                case ALTSEM_CURSOR:
+                    // This isn't used as far as I can tell.
+                    break;
+
+            }
+            break;
+
+        case ColorMode24bit:
+            [result addObject:[NSString stringWithFormat:@"38:2:1:%@:%@:%@",
+              @(graphicRendition.fgColorCode), @(graphicRendition.fgGreen), @(graphicRendition.fgBlue)]];
+            break;
+
+        case ColorModeInvalid:
+            break;
+    }
+
+    switch (graphicRendition.bgColorMode) {
+        case ColorModeNormal:
+            if (graphicRendition.bgColorCode < 8) {
+                [result addObject:[NSString stringWithFormat:@"%@", @(graphicRendition.bgColorCode + 40)]];
+            } else if (graphicRendition.bgColorCode < 16) {
+                [result addObject:[NSString stringWithFormat:@"%@", @(graphicRendition.bgColorCode + 100)]];
+            } else {
+                [result addObject:[NSString stringWithFormat:@"48:5:%@", @(graphicRendition.bgColorCode)]];
+            }
+            break;
+
+        case ColorModeAlternate:
+            switch (graphicRendition.bgColorCode) {
+                case ALTSEM_DEFAULT:
+                    break;
+                case ALTSEM_REVERSED_DEFAULT:  // Not sure quite how to handle this, going with the simplest approach for now.
+                    [result addObject:@"49"];
+                    break;
+
+                case ALTSEM_SYSTEM_MESSAGE:
+                    // There is no SGR code for this case.
+                    break;
+
+                case ALTSEM_SELECTED:
+                case ALTSEM_CURSOR:
+                    // This isn't used as far as I can tell.
+                    break;
+
+            }
+            break;
+
+        case ColorMode24bit:
+            [result addObject:[NSString stringWithFormat:@"48:2:1:%@:%@:%@",
+              @(graphicRendition.bgColorCode), @(graphicRendition.bgGreen), @(graphicRendition.bgBlue)]];
+            break;
+
+        case ColorModeInvalid:
+            break;
+    }
+
+    if (graphicRendition.bold) {
+        [result addObject:@"1"];
+    }
+    if (graphicRendition.faint) {
+        [result addObject:@"2"];
+    }
+    if (graphicRendition.italic) {
+        [result addObject:@"3"];
+    }
+    if (graphicRendition.underline) {
+        switch (graphicRendition.underlineStyle) {
+            case VT100UnderlineStyleSingle:
+                [result addObject:@"4"];
+                break;
+            case VT100UnderlineStyleCurly:
+                [result addObject:@"4:3"];
+                break;
+        }
+    }
+    if (graphicRendition.blink) {
+        [result addObject:@"5"];
+    }
+    if (graphicRendition.reversed) {
+        [result addObject:@"7"];
+    }
+    if (graphicRendition.strikethrough) {
+        [result addObject:@"9"];
+    }
+    return result;
 }
 
 - (NSArray<NSNumber *> *)xtermParseColorArgument:(NSString *)part {
@@ -2158,7 +2477,7 @@ static const int kMaxScreenRows = 4096;
                                                     green:components[1].doubleValue
                                                      blue:components[2].doubleValue
                                                     alpha:1];
-                NSColor *theColor = [srgb colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+                NSColor *theColor = [srgb colorUsingColorSpace:[NSColorSpace genericRGBColorSpace]];
                 [delegate_ terminalSetColorTableEntryAtIndex:theIndex
                                                        color:theColor];
             } else if ([part isEqualToString:@"?"]) {
@@ -2251,6 +2570,7 @@ static const int kMaxScreenRows = 4096;
             return;
         }
     }
+    DLog(@"Start file receipt");
     receivingFile_ = YES;
 }
 
@@ -2288,7 +2608,7 @@ static const int kMaxScreenRows = 4096;
                                                 green:components[1].doubleValue
                                                  blue:components[2].doubleValue
                                                 alpha:1];
-            NSColor *theColor = [srgb colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+            NSColor *theColor = [srgb colorUsingColorSpace:[NSColorSpace genericRGBColorSpace]];
             [delegate_ terminalSetColorTableEntryAtIndex:ptyIndex
                                                    color:theColor];
         }
@@ -2376,6 +2696,8 @@ static const int kMaxScreenRows = 4096;
         [delegate_ terminalAddNote:(NSString *)value show:NO];
     } else if ([key isEqualToString:@"HighlightCursorLine"]) {
         [delegate_ terminalSetHighlightCursorLine:value.length ? [value boolValue] : YES];
+    } else if ([key isEqualToString:@"ClearCapturedOutput"]) {
+        [delegate_ terminalClearCapturedOutput];
     } else if ([key isEqualToString:@"CopyToClipboard"]) {
         if ([delegate_ terminalIsTrusted]) {
             [delegate_ terminalSetPasteboard:value];
@@ -2469,20 +2791,22 @@ static const int kMaxScreenRows = 4096;
     } else if ([key isEqualToString:@"Disinter"]) {
         [delegate_ terminalDisinterSession];
     } else if ([key isEqualToString:@"ReportVariable"]) {
-        if ([delegate_ terminalShouldSendReport] && [delegate_ terminalIsTrusted]) {
+        if ([delegate_ terminalIsTrusted]) {
             NSData *valueAsData = [value dataUsingEncoding:NSISOLatin1StringEncoding];
             if (!valueAsData) {
                 return;
             }
             NSData *decodedData = [[[NSData alloc] initWithBase64EncodedData:valueAsData options:0] autorelease];
             NSString *name = [decodedData stringWithEncoding:self.encoding];
-            NSString *encodedValue = @"";
-            if (name) {
-                NSString *variableValue = [delegate_ terminalValueOfVariableNamed:name];
-                encodedValue = [[variableValue dataUsingEncoding:self.encoding] base64EncodedStringWithOptions:0];
+            if (name && [delegate_ terminalShouldSendReportForVariable:name]) {
+                NSString *encodedValue = @"";
+                if (name) {
+                    NSString *variableValue = [delegate_ terminalValueOfVariableNamed:name];
+                    encodedValue = [[variableValue dataUsingEncoding:self.encoding] base64EncodedStringWithOptions:0];
+                }
+                NSString *report = [NSString stringWithFormat:@"%c]1337;ReportVariable=%@%c", VT100CC_ESC, encodedValue ?: @"", VT100CC_BEL];
+                [delegate_ terminalSendReport:[report dataUsingEncoding:self.encoding]];
             }
-            NSString *report = [NSString stringWithFormat:@"%c]1337;ReportVariable=%@%c", VT100CC_ESC, encodedValue ?: @"", VT100CC_BEL];
-            [delegate_ terminalSendReport:[report dataUsingEncoding:self.encoding]];
         }
     } else if ([key isEqualToString:@"Custom"]) {
         if ([delegate_ terminalIsTrusted]) {
@@ -2640,10 +2964,8 @@ static const int kMaxScreenRows = 4096;
         case 'B':
             // Sequence marking the start of the command read from the command prompt
             // (FTCS_COMMAND_START)
-            if (!inCommand_) {
-                [delegate_ terminalCommandDidStart];
-                inCommand_ = YES;
-            }
+            [delegate_ terminalCommandDidStart];
+            inCommand_ = YES;
             break;
 
         case 'C':
@@ -2827,6 +3149,9 @@ static iTermDECRPMSetting VT100TerminalDECRPMSettingFromBoolean(BOOL flag) {
         case 1015:
             return VT100TerminalDECRPMSettingFromBoolean(self.mouseFormat == MOUSE_FORMAT_URXVT);
 
+        case 1036:
+            return VT100TerminalDECRPMSettingFromBoolean(self.metaSendsEscape);
+
         case 1337:
             return VT100TerminalDECRPMSettingFromBoolean(self.reportKeyUp);
 
@@ -2878,6 +3203,7 @@ static iTermDECRPMSetting VT100TerminalDECRPMSettingFromBoolean(BOOL flag) {
               kGraphicRenditionBlinkKey: @(graphicRendition.blink),
               kGraphicRenditionUnderlineKey: @(graphicRendition.underline),
               kGraphicRenditionStrikethroughKey: @(graphicRendition.strikethrough),
+              kGraphicRenditionUnderlineStyle: @(graphicRendition.underlineStyle),
               kGraphicRenditionReversedKey: @(graphicRendition.reversed),
               kGraphicRenditionFaintKey: @(graphicRendition.faint),
               kGraphicRenditionItalicKey: @(graphicRendition.italic),
@@ -2897,6 +3223,7 @@ static iTermDECRPMSetting VT100TerminalDECRPMSettingFromBoolean(BOOL flag) {
     graphicRendition.blink = [dict[kGraphicRenditionBlinkKey] boolValue];
     graphicRendition.underline = [dict[kGraphicRenditionUnderlineKey] boolValue];
     graphicRendition.strikethrough = [dict[kGraphicRenditionStrikethroughKey] boolValue];
+    graphicRendition.underlineStyle = [dict[kGraphicRenditionUnderlineStyle] unsignedIntegerValue];
     graphicRendition.reversed = [dict[kGraphicRenditionReversedKey] boolValue];
     graphicRendition.faint = [dict[kGraphicRenditionFaintKey] boolValue];
     graphicRendition.italic = [dict[kGraphicRenditionItalicKey] boolValue];
@@ -2966,6 +3293,9 @@ static iTermDECRPMSetting VT100TerminalDECRPMSettingFromBoolean(BOOL flag) {
            kTerminalStateCursorModeKey: @(self.cursorMode),
            kTerminalStateKeypadModeKey: @(self.keypadMode),
            kTerminalStateReportKeyUp: @(self.reportKeyUp),
+           kTerminalStateMetaSendsEscape: @(self.metaSendsEscape),
+           kTerminalStateSendModifiers: _sendModifiers ?: @[],
+           kTerminalStateKeyReportingModeStack: _keyReportingModeStack.copy,
            kTerminalStateAllowKeypadModeKey: @(self.allowKeypadMode),
            kTerminalStateAllowPasteBracketing: @(self.allowPasteBracketing),
            kTerminalStateBracketedPasteModeKey: @(self.bracketedPasteMode),
@@ -3015,6 +3345,18 @@ static iTermDECRPMSetting VT100TerminalDECRPMSettingFromBoolean(BOOL flag) {
     self.cursorMode = [dict[kTerminalStateCursorModeKey] boolValue];
     self.keypadMode = [dict[kTerminalStateKeypadModeKey] boolValue];
     self.reportKeyUp = [dict[kTerminalStateReportKeyUp] boolValue];
+    self.metaSendsEscape = [dict[kTerminalStateMetaSendsEscape] boolValue];
+    if (!_sendModifiers) {
+        self.sendModifiers = [[@[ @-1, @-1, @-1, @-1, @-1 ] mutableCopy] autorelease];
+    } else {
+        while (_sendModifiers.count < NUM_MODIFIABLE_RESOURCES) {
+            [_sendModifiers addObject:@-1];
+        }
+    }
+    if ([dict[kTerminalStateKeyReportingModeStack] isKindOfClass:[NSArray class]]) {
+        [_keyReportingModeStack release];
+        _keyReportingModeStack = [dict[kTerminalStateKeyReportingModeStack] mutableCopy];
+    }
     self.allowKeypadMode = [dict[kTerminalStateAllowKeypadModeKey] boolValue];
     self.allowPasteBracketing = [dict[kTerminalStateAllowPasteBracketing] boolValue];
     self.url = [dict[kTerminalStateURL] nilIfNull];

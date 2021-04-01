@@ -25,7 +25,8 @@ BOOL CheckFindMatchAtIndex(NSData *findMatches, int index);
 @protocol iTermTextDrawingHelperDelegate <NSObject>
 
 - (void)drawingHelperDrawBackgroundImageInRect:(NSRect)rect
-                        blendDefaultBackground:(BOOL)blendDefaultBackground;
+                        blendDefaultBackground:(BOOL)blendDefaultBackground
+                                 virtualOffset:(CGFloat)virtualOffset;
 
 - (VT100ScreenMark *)drawingHelperMarkOnLine:(int)line;
 
@@ -156,7 +157,7 @@ BOOL CheckFindMatchAtIndex(NSData *findMatches, int index);
 @property(nonatomic, assign) BOOL shouldDrawFilledInCursor;
 
 // Does bold text render as the bright version of a dim ansi color, and also use specified bold color?
-@property(nonatomic, assign) BOOL useBoldColor;
+@property(nonatomic, assign) BOOL useCustomBoldColor;
 
 // Is this the current text view of the "front" terminal window?
 // TODO: This might be the same as textViewIsActiveSession.
@@ -234,6 +235,7 @@ BOOL CheckFindMatchAtIndex(NSData *findMatches, int index);
 @property(nonatomic, assign) BOOL animated;
 
 @property(nonatomic, assign) BOOL isRetina;
+@property(nonatomic, assign) BOOL forceAntialiasingOnRetina;
 
 // Draw mark indicators?
 @property(nonatomic, assign) BOOL drawMarkIndicators;
@@ -319,13 +321,14 @@ BOOL CheckFindMatchAtIndex(NSData *findMatches, int index);
 // Updates self.blinkingFound.
 - (void)drawTextViewContentInRect:(NSRect)rect
                          rectsPtr:(const NSRect *)rectArray
-                        rectCount:(NSInteger)rectCount;
+                        rectCount:(NSInteger)rectCount
+                    virtualOffset:(CGFloat)virtualOffset;
 
 // If timestamps are to be shown, call this just before drawing.
 - (void)createTimestampDrawingHelper;
 
 // Draw timestamps.
-- (void)drawTimestamps;
+- (void)drawTimestampsWithVirtualOffset:(CGFloat)virtualOffset;
 
 - (VT100GridCoordRange)coordRangeForRect:(NSRect)rect;
 
@@ -344,7 +347,8 @@ NS_INLINE BOOL iTermTextDrawingHelperIsCharacterDrawable(const screen_char_t *co
                                                          const screen_char_t *const predecessor,
                                                          BOOL isStringifiable,
                                                          BOOL blinkingItemsVisible,
-                                                         BOOL blinkAllowed) {
+                                                         BOOL blinkAllowed,
+                                                         BOOL preferSpeedToFullLigatureSupport) {
     const unichar code = c->code;
     if (c->image) {
         return YES;
@@ -355,7 +359,8 @@ NS_INLINE BOOL iTermTextDrawingHelperIsCharacterDrawable(const screen_char_t *co
             code == TAB_FILLER ||
             code < ' ') {
             return NO;
-        } else if (code == ' ' &&
+        } else if (preferSpeedToFullLigatureSupport &&
+                   code == ' ' &&
                    !c->underline &&
                    !c->strikethrough &&
                    !c->urlCode) {

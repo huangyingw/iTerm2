@@ -20,7 +20,11 @@
 // on (even if self.isAnyModifierRemapped is NO).
 @property(nonatomic, getter=isRemappingModifiers) BOOL remapModifiers;
 
++ (NSEvent *)remapModifiers:(NSEvent *)event;
+
 + (instancetype)sharedInstance;
 - (instancetype)init NS_UNAVAILABLE;
+
+- (CGEventRef)eventByRemappingEvent:(CGEventRef)event;
 
 @end

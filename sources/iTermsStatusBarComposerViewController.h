@@ -9,6 +9,7 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class VT100RemoteHost;
 @class iTermsStatusBarComposerViewController;
 
 @protocol iTermsStatusBarComposerViewControllerDelegate<NSObject>
@@ -19,15 +20,19 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSArray<NSString *> *)statusBarComposerSuggestions:(iTermsStatusBarComposerViewController *)composer;
 - (NSFont *)statusBarComposerFont:(iTermsStatusBarComposerViewController *)composer;
 - (BOOL)statusBarComposerShouldForceDarkAppearance:(iTermsStatusBarComposerViewController *)composer;
-
+- (void)statusBarComposerDidEndEditing:(iTermsStatusBarComposerViewController *)composer;
+- (void)statusBarComposerRevealComposer:(iTermsStatusBarComposerViewController *)composer;
 @end
 
 @interface iTermsStatusBarComposerViewController : NSViewController
 @property (nonatomic, weak) id<iTermsStatusBarComposerViewControllerDelegate> delegate;
+@property (nonatomic, copy) NSString *stringValue;
 
 - (void)setTintColor:(NSColor *)tintColor;
 
 - (void)reloadData;
+- (void)makeFirstResponder;
+- (void)setHost:(VT100RemoteHost *)host;
 
 @end
 

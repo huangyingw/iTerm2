@@ -6,6 +6,7 @@
 //
 
 #import <Cocoa/Cocoa.h>
+
 #import "iTermStatusBarSetupElement.h"
 
 @class iTermStatusBarLayout;
@@ -18,12 +19,14 @@
 @property (nonatomic, strong) NSColor *defaultBackgroundColor;
 @property (nonatomic, strong) NSColor *defaultTextColor;
 @property (nonatomic, copy) void (^onChange)(void);
+// Drops from this view are accepted
+@property (nonatomic, weak) NSCollectionView *sourceCollectionView;
+@property (nonatomic) BOOL darkBackground;
 
 - (void)setLayout:(iTermStatusBarLayout *)layout;
 - (NSDictionary *)layoutDictionary;
 
 - (void)deleteSelected;
-- (void)autoRainbowWithDarkBackground:(BOOL)darkBackground;
 - (void)configureStatusBarComponentWithIdentifier:(NSString *)identifier;
 
 @end

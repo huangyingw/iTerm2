@@ -16,6 +16,8 @@
 #import "iTermToolWrapper.h"
 #import "NSDateFormatterExtras.h"
 #import "NSEvent+iTerm.h"
+#import "NSFont+iTerm.h"
+#import "NSImage+iTerm.h"
 #import "NSStringITerm.h"
 #import "NSTableColumn+iTerm.h"
 #import "NSTextField+iTerm.h"
@@ -56,9 +58,12 @@ static const CGFloat kHelpMargin = 5;
         [self addSubview:searchField_];
 
         help_ = [[NSButton alloc] initWithFrame:NSMakeRect(0, 0, 0, 0)];
-        [help_ setBezelStyle:NSHelpButtonBezelStyle];
-        [help_ setButtonType:NSMomentaryPushInButton];
+        [help_ setBezelStyle:NSBezelStyleHelpButton];
+        [help_ setButtonType:NSButtonTypeMomentaryPushIn];
         [help_ setBordered:YES];
+        if (@available(macOS 10.16, *)) {
+            help_.controlSize = NSControlSizeSmall;
+        }
         [help_ sizeToFit];
         help_.target = self;
         help_.action = @selector(help:);
@@ -67,29 +72,44 @@ static const CGFloat kHelpMargin = 5;
         [self addSubview:help_];
 
         clear_ = [[NSButton alloc] initWithFrame:NSMakeRect(0, 0, 0, 0)];
-        [clear_ setButtonType:NSMomentaryPushInButton];
-        [clear_ setTitle:@"Clear All"];
+        if (@available(macOS 10.16, *)) {
+            clear_.bezelStyle = NSBezelStyleRegularSquare;
+            clear_.bordered = NO;
+            clear_.image = [NSImage it_imageForSymbolName:@"trash" accessibilityDescription:@"Clear"];
+            clear_.imagePosition = NSImageOnly;
+            clear_.frame = NSMakeRect(0, 0, 22, 22);
+        } else {
+            [clear_ setButtonType:NSButtonTypeMomentaryPushIn];
+            [clear_ setTitle:@"Clear All"];
+            [clear_ setBezelStyle:NSBezelStyleSmallSquare];
+            [clear_ sizeToFit];
+        }
         [clear_ setTarget:self];
         [clear_ setAction:@selector(clear:)];
-        [clear_ setBezelStyle:NSSmallSquareBezelStyle];
-        [clear_ sizeToFit];
         [clear_ setAutoresizingMask:NSViewMinYMargin | NSViewMinXMargin];
         [self addSubview:clear_];
-        [clear_ release];
 
         scrollView_ = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 0, 0)];
         [scrollView_ setHasVerticalScroller:YES];
         [scrollView_ setHasHorizontalScroller:NO];
         [scrollView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-        [scrollView_ setBorderType:NSBezelBorder];
-        if (@available(macOS 10.14, *)) { } else {
-            scrollView_.drawsBackground = NO;
+        if (@available(macOS 10.16, *)) {
+            [scrollView_ setBorderType:NSLineBorder];
+            scrollView_.scrollerStyle = NSScrollerStyleOverlay;
+        } else {
+            [scrollView_ setBorderType:NSBezelBorder];
         }
+        scrollView_.drawsBackground = NO;
 
         tableView_ = [[NSTableView alloc] initWithFrame:NSMakeRect(0, 0, 0, 0)];
+#ifdef MAC_OS_X_VERSION_10_16
+        if (@available(macOS 10.16, *)) {
+            tableView_.style = NSTableViewStyleInset;
+        }
+#endif
         NSTableColumn *col;
-        col = [[[NSTableColumn alloc] initWithIdentifier:@"directories"] autorelease];
-        [[col dataCell] setFont:[NSFont fontWithName:@"Menlo" size:11]];
+        col = [[NSTableColumn alloc] initWithIdentifier:@"directories"];
+        [[col dataCell] setFont:[NSFont it_toolbeltFont]];
         [col setEditable:NO];
         [tableView_ addTableColumn:col];
         [tableView_ setHeaderView:nil];
@@ -100,6 +120,9 @@ static const CGFloat kHelpMargin = 5;
 
         [tableView_ setDoubleAction:@selector(doubleClickOnTableView:)];
         [tableView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+        if (@available(macOS 10.14, *)) {
+            tableView_.backgroundColor = [NSColor clearColor];
+        }
 
         [searchField_ setArrowHandler:tableView_];
 
@@ -109,7 +132,7 @@ static const CGFloat kHelpMargin = 5;
         [tableView_ sizeToFit];
         [tableView_ setColumnAutoresizingStyle:NSTableViewSequentialColumnAutoresizingStyle];
 
-        tableView_.menu = [[[NSMenu alloc] init] autorelease];
+        tableView_.menu = [[NSMenu alloc] init];
         tableView_.menu.delegate = self;
         NSMenuItem *item;
         item = [[NSMenuItem alloc] initWithTitle:@"Toggle Star"
@@ -117,7 +140,7 @@ static const CGFloat kHelpMargin = 5;
                                    keyEquivalent:@""];
         [tableView_.menu addItem:item];
 
-        boldFont_ = [NSFont boldSystemFontOfSize:[NSFont smallSystemFontSize]];
+        boldFont_ = [[NSFontManager sharedFontManager] convertFont:[NSFont it_toolbeltFont] toHaveTrait:NSFontBoldTrait];
 
         [self relayout];
         [[NSNotificationCenter defaultCenter] addObserver:self
@@ -133,13 +156,6 @@ static const CGFloat kHelpMargin = 5;
     return self;
 }
 
-- (void)dealloc {
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
-    [tableView_ release];
-    [scrollView_ release];
-    [super dealloc];
-}
-
 - (void)shutdown {
     shutdown_ = YES;
     [[NSNotificationCenter defaultCenter] removeObserver:self];
@@ -152,7 +168,73 @@ static const CGFloat kHelpMargin = 5;
     return size;
 }
 
+- (void)resizeSubviewsWithOldSize:(NSSize)oldSize {
+    [super resizeSubviewsWithOldSize:oldSize];
+    [self relayout];
+}
+
 - (void)relayout {
+    if (@available(macOS 10.16, *)) {
+        [self relayout_bigSur];
+    } else {
+        [self relayout_legacy];
+    }
+}
+
+- (void)relayout_bigSur {
+    NSRect frame = self.frame;
+
+    // Search field
+    NSRect searchFieldFrame = NSMakeRect(0,
+                                         0,
+                                         frame.size.width - help_.frame.size.width - clear_.frame.size.width - 2 * kMargin,
+                                         searchField_.frame.size.height);
+    searchField_.frame = searchFieldFrame;
+
+    // Help button
+    {
+        CGFloat fudgeFactor = 1;
+        if (@available(macOS 10.16, *)) {
+            fudgeFactor = 2;
+        }
+        help_.frame = NSMakeRect(frame.size.width - help_.frame.size.width,
+                                 fudgeFactor,
+                                 help_.frame.size.width,
+                                 help_.frame.size.height);
+    }
+
+    // Clear button
+    {
+        CGFloat fudgeFactor = 1;
+        if (@available(macOS 10.16, *)) {
+            fudgeFactor = 0;
+        }
+        clear_.frame = NSMakeRect(help_.frame.origin.x - clear_.frame.size.width - kMargin,
+                                  fudgeFactor,
+                                  clear_.frame.size.width,
+                                  clear_.frame.size.height);
+    }
+    
+    // Scroll view
+    [scrollView_ setFrame:NSMakeRect(0,
+                                     searchFieldFrame.size.height + kMargin,
+                                     frame.size.width,
+                                     frame.size.height - searchFieldFrame.size.height - 2 * kMargin)];
+
+    // Table view
+    NSSize contentSize = [scrollView_ contentSize];
+    NSTableColumn *column = tableView_.tableColumns[0];
+    CGFloat fudgeFactor = 0;
+    if (@available(macOS 10.16, *)) {
+        fudgeFactor = 32;
+    }
+    column.minWidth = contentSize.width - fudgeFactor;
+    column.maxWidth = contentSize.width - fudgeFactor;
+    [tableView_ sizeToFit];
+    [tableView_ reloadData];
+}
+
+- (void)relayout_legacy {
     NSRect frame = self.frame;
     searchField_.frame = NSMakeRect(0, 0, frame.size.width, searchField_.frame.size.height);
     help_.frame = NSMakeRect(frame.size.width - help_.frame.size.width,
@@ -200,6 +282,13 @@ static const CGFloat kHelpMargin = 5;
     return result;
 }
 
+- (id <NSPasteboardWriting>)tableView:(NSTableView *)tableView pasteboardWriterForRow:(NSInteger)row {
+    NSPasteboardItem *pbItem = [[NSPasteboardItem alloc] init];
+    iTermRecentDirectoryMO *entry = filteredEntries_[row];
+    [pbItem setString:entry.path forType:(NSString *)kUTTypeUTF8PlainText];
+    return pbItem;
+}
+
 - (id)stringOrAttributedStringForColumn:(NSTableColumn *)aTableColumn
                                     row:(NSInteger)rowIndex {
     iTermRecentDirectoryMO *entry = filteredEntries_[rowIndex];
@@ -214,13 +303,13 @@ static const CGFloat kHelpMargin = 5;
 }
 
 - (void)updateDirectories {
-    [entries_ autorelease];
+    entries_ = nil;
     iTermToolWrapper *wrapper = self.toolWrapper;
     VT100RemoteHost *host = [wrapper.delegate.delegate toolbeltCurrentHost];
     NSArray<iTermRecentDirectoryMO *> *entries =
         [[iTermShellHistoryController sharedInstance] directoriesSortedByScoreOnHost:host];
     NSArray<iTermRecentDirectoryMO *> *reversed = [[entries reverseObjectEnumerator] allObjects];
-    entries_ = [reversed retain];
+    entries_ = reversed;
     [tableView_ reloadData];
 
     [self computeFilteredEntries];
@@ -262,7 +351,7 @@ static const CGFloat kHelpMargin = 5;
 }
 
 - (void)clear:(id)sender {
-    NSAlert *alert = [[[NSAlert alloc] init] autorelease];
+    NSAlert *alert = [[NSAlert alloc] init];
     alert.messageText = @"Erase Saved Directories?";
     [alert addButtonWithTitle:@"OK"];
     [alert addButtonWithTitle:@"Cancel"];
@@ -272,9 +361,9 @@ static const CGFloat kHelpMargin = 5;
 }
 
 - (void)computeFilteredEntries {
-    [filteredEntries_ release];
+    filteredEntries_ = nil;
     if (searchField_.stringValue.length == 0) {
-        filteredEntries_ = [entries_ retain];
+        filteredEntries_ = entries_;
     } else {
         NSMutableArray *array = [NSMutableArray array];
         for (iTermRecentDirectoryMO *entry in entries_) {
@@ -283,7 +372,7 @@ static const CGFloat kHelpMargin = 5;
                 [array addObject:entry];
             }
         }
-        filteredEntries_ = [array retain];
+        filteredEntries_ = array;
     }
     [tableView_ reloadData];
 }
@@ -309,7 +398,10 @@ static const CGFloat kHelpMargin = 5;
 }
 
 - (NSTableRowView *)tableView:(NSTableView *)tableView rowViewForRow:(NSInteger)row {
-    return [[[iTermCompetentTableRowView alloc] initWithFrame:NSZeroRect] autorelease];
+    if (@available(macOS 10.16, *)) {
+        return [[iTermBigSurTableRowView alloc] initWithFrame:NSZeroRect];
+    }
+    return [[iTermCompetentTableRowView alloc] initWithFrame:NSZeroRect];
 }
 
 - (void)toggleStar:(id)sender {

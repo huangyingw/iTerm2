@@ -50,7 +50,16 @@
 }
 
 - (NSEvent *)eventWithButtonNumber:(NSInteger)buttonNumber {
-    CGEventRef cgEvent = [self CGEvent];
+    NSEvent *original = [NSEvent mouseEventWithType:NSEventTypeOtherMouseDown
+                                           location:self.locationInWindow
+                                      modifierFlags:self.modifierFlags
+                                          timestamp:self.timestamp
+                                       windowNumber:self.windowNumber
+                                            context:[NSGraphicsContext currentContext]
+                                        eventNumber:self.eventNumber
+                                         clickCount:self.clickCount
+                                           pressure:self.pressure];
+    CGEventRef cgEvent = [original CGEvent];
     CGEventRef modifiedCGEvent = CGEventCreateCopy(cgEvent);
     CGEventSetIntegerValueField(modifiedCGEvent, kCGMouseEventButtonNumber, buttonNumber);
     NSEvent *fakeEvent = [NSEvent eventWithCGEvent:modifiedCGEvent];
@@ -78,6 +87,39 @@
         default:
             return self.modifierFlags;
     }
+}
+
+- (NSEvent *)eventByRoundingScrollWheelClicksAwayFromZero {
+    if (self.type != NSEventTypeScrollWheel) {
+        return self;
+    }
+    if (self.phase != NSEventPhaseNone) {
+        return self;
+    }
+    if (self.momentumPhase != NSEventPhaseNone) {
+        return self;
+    }
+
+    // Mouse wheel
+    CGEventRef cgEvent = self.CGEvent;
+    const double originalDeltaY = CGEventGetDoubleValueField(cgEvent,
+                                                             kCGScrollWheelEventFixedPtDeltaAxis1);
+    if (round(originalDeltaY) != 0) {
+        return self;
+    }
+    if (fabs(originalDeltaY) < 0.01) {
+        return self;
+    }
+    // It looks like mouse wheel movements on mice with clicky wheels give you a step of
+    // 0.1 per click. I'd like those to scroll by a whole line, so rewrite the event
+    // to do that. All this stuff was done by trial and error.
+    // Note that this makes it compatible with the behavior in
+    // -[iTermScrollAccumulator accumulateDeltaYForMouseWheelEvent:] and nobody has
+    // complained about that.
+    CGEventSetDoubleValueField(cgEvent,
+                               kCGScrollWheelEventFixedPtDeltaAxis1,
+                               originalDeltaY > 0 ? 1 : -1);
+    return [NSEvent eventWithCGEvent:cgEvent];
 }
 
 @end

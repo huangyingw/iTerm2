@@ -11,6 +11,8 @@
 #import "iTermOpenQuicklyTableRowView.h"
 #import "iTermOpenQuicklyTextField.h"
 #import "iTermScriptsMenuController.h"
+#import "iTermSessionLauncher.h"
+#import "iTermSnippetsMenuController.h"
 #import "NSColor+iTerm.h"
 #import "NSObject+iTerm.h"
 #import "NSTextField+iTerm.h"
@@ -68,6 +70,13 @@
 
 - (void)awakeFromNib {
     // Initialize the table
+#ifdef MAC_OS_X_VERSION_10_16
+    if (@available(macOS 10.16, *)) {
+        _table.style = NSTableViewStyleInset;
+        // Possibly a 10.16 beta bug? Using intercell spacing clips the selection rect.
+        _table.intercellSpacing = NSZeroSize;
+    }
+#endif
     [_table setDoubleAction:@selector(doubleClick:)];
 
     // Initialize the window's contentView
@@ -166,6 +175,9 @@
         NSRect frameOfLastVisibleCell = [_table frameOfCellAtColumn:0
                                                                 row:numberOfVisibleRowsDesired - 1];
         contentSize.height += NSMaxY(frameOfLastVisibleCell);
+        if (@available(macOS 10.16, *)) {
+            contentSize.height += 10;
+        }
     }
     frame.size.height = contentSize.height;
 
@@ -199,17 +211,17 @@
             iTermProfileHotKey *profileHotkey = [[iTermHotKeyController sharedInstance] profileHotKeyForGUID:profile[KEY_GUID]];
             if (!profileHotkey || profileHotkey.windowController.weaklyReferencedObject) {
                 // Create a new non-hotkey window
-                [[iTermController sharedInstance] launchBookmark:profile
-                                                      inTerminal:[[iTermController sharedInstance] currentTerminal]
-                                                         withURL:nil
-                                                hotkeyWindowType:iTermHotkeyWindowTypeNone
-                                                         makeKey:YES
-                                                     canActivate:YES
-                                              respectTabbingMode:NO
-                                                         command:nil
-                                                           block:nil
-                                                     synchronous:NO
-                                                      completion:nil];
+                [iTermSessionLauncher launchBookmark:profile
+                                          inTerminal:[[iTermController sharedInstance] currentTerminal]
+                                             withURL:nil
+                                    hotkeyWindowType:iTermHotkeyWindowTypeNone
+                                             makeKey:YES
+                                         canActivate:YES
+                                  respectTabbingMode:NO
+                                             command:nil
+                                         makeSession:nil
+                                      didMakeSession:nil
+                                          completion:nil];
             } else {
                 // Create the hotkey window for this profile
                 [[iTermHotKeyController sharedInstance] showWindowForProfileHotKey:profileHotkey url:nil];
@@ -220,9 +232,10 @@
             [[iTermController sharedInstance] loadWindowArrangementWithName:item.identifier asTabsInTerminal:item.inTabs ? [[iTermController sharedInstance] currentTerminal] : nil];
         } else if ([object isKindOfClass:[iTermOpenQuicklyChangeProfileItem class]]) {
             // Change profile
+            iTermOpenQuicklyChangeProfileItem *item = object;
             PseudoTerminal *term = [[iTermController sharedInstance] currentTerminal];
             PTYSession *session = term.currentSession;
-            NSString *guid = [object identifier];
+            NSString *guid = [item identifier];
             Profile *profile = [[ProfileModel sharedInstance] bookmarkWithGuid:guid];
             if (profile) {
                 [session setProfile:profile preservingName:YES];
@@ -230,18 +243,30 @@
                 [term.window makeKeyAndOrderFront:nil];
             }
         } else if ([object isKindOfClass:[iTermOpenQuicklyHelpItem class]]) {
-            _textField.stringValue = [object identifier];
+            iTermOpenQuicklyHelpItem *item = object;
+            _textField.stringValue = [item identifier];
             [self update];
             return;
         } else if ([object isKindOfClass:[iTermOpenQuicklyScriptItem class]]) {
             iTermOpenQuicklyScriptItem *item = [iTermOpenQuicklyScriptItem castFrom:object];
             [[[[iTermApplication sharedApplication] delegate] scriptsMenuController] launchScriptWithRelativePath:item.identifier
+                                                                                                        arguments:@[]
                                                                                                explicitUserAction:YES];
         } else if ([object isKindOfClass:[iTermOpenQuicklyColorPresetItem class]]) {
             iTermOpenQuicklyColorPresetItem *item = [iTermOpenQuicklyColorPresetItem castFrom:object];
             PseudoTerminal *term = [[iTermController sharedInstance] currentTerminal];
             PTYSession *session = term.currentSession;
             [session setColorsFromPresetNamed:item.presetName];
+        } else if ([object isKindOfClass:[iTermOpenQuicklyActionItem class]]) {
+            iTermOpenQuicklyActionItem *item = [iTermOpenQuicklyActionItem castFrom:object];
+            PseudoTerminal *term = [[iTermController sharedInstance] currentTerminal];
+            PTYSession *session = term.currentSession;
+            [session applyAction:item.action];
+        } else if ([object isKindOfClass:[iTermOpenQuicklySnippetItem class]]) {
+            iTermOpenQuicklySnippetItem *item = [iTermOpenQuicklySnippetItem castFrom:object];
+            PseudoTerminal *term = [[iTermController sharedInstance] currentTerminal];
+            PTYSession *session = term.currentSession;
+            [session.textview sendSnippet:item];
         }
     }
 
@@ -295,7 +320,11 @@
 }
 
 - (NSTableRowView *)tableView:(NSTableView *)tableView rowViewForRow:(NSInteger)row {
-    return [[[iTermOpenQuicklyTableRowView alloc] init] autorelease];
+    if (@available(macOS 10.16, *)) {
+        return [[[iTermOpenQuicklyTableRowView_BigSur alloc] init] autorelease];
+    } else {
+        return [[[iTermOpenQuicklyTableRowView alloc] init] autorelease];
+    }
 }
 
 - (void)updateTextColorForAllRows {
@@ -411,6 +440,11 @@
     [theString appendAttributedString:[self attributedStringFromString:value
                                                  byHighlightingIndices:highlight]];
     return theString;
+}
+
+- (NSAttributedString *)openQuicklyModelAttributedStringForDetail:(NSString *)detail {
+    return [self attributedStringFromString:detail
+                      byHighlightingIndices:nil];
 }
 
 #pragma mark - String Formatting

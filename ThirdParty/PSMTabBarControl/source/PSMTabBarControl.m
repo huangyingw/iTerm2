@@ -54,6 +54,12 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionMinimumSpaceForLabel =
 PSMTabBarControlOptionKey PSMTabBarControlOptionHighVisibility = @"PSMTabBarControlOptionHighVisibility";
 PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizontalTabBar =
     @"PSMTabBarControlOptionColoredDrawBottomLineForHorizontalTabBar";
+PSMTabBarControlOptionKey PSMTabBarControlOptionFontSizeOverride =
+    @"PSMTabBarControlOptionFontSizeOverride";
+PSMTabBarControlOptionKey PSMTabBarControlOptionMinimalSelectedTabUnderlineProminence = @"PSMTabBarControlOptionMinimalSelectedTabUnderlineProminence";
+PSMTabBarControlOptionKey PSMTabBarControlOptionDragEdgeHeight = @"PSMTabBarControlOptionDragEdgeHeight";
+PSMTabBarControlOptionKey PSMTabBarControlOptionAttachedToTitleBar = @"PSMTabBarControlOptionAttachedToTitleBar";
+PSMTabBarControlOptionKey PSMTabBarControlOptionHTMLTabTitles = @"PSMTabBarControlOptionHTMLTabTitles";
 
 @interface PSMTabBarControl ()<PSMTabBarControlProtocol>
 @end
@@ -89,8 +95,11 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
     BOOL _closeClicked;
 
     // iTerm2 additions
-    int _modifier;
+    NSUInteger _modifier;
     BOOL _hasCloseButton;
+    BOOL _needsUpdateAnimate;
+    BOOL _needsUpdate;
+    NSInteger _preDragSelectedTabIndex;  // or NSNotFound
 }
 
 #pragma mark -
@@ -147,6 +156,7 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
         _hasCloseButton = YES;
         _tabLocation = PSMTab_TopTab;
         _style = [[PSMYosemiteTabStyle alloc] init];
+        _preDragSelectedTabIndex = NSNotFound;
 
         // the overflow button/menu
         NSRect overflowButtonRect = NSMakeRect([self frame].size.width - [_style rightMarginForTabBarControlWithOverflow:YES
@@ -181,9 +191,9 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
                 [_addTabButton setRolloverImage:newButtonImage];
             [_addTabButton setTitle:@""];
             [_addTabButton setImagePosition:NSImageOnly];
-            [_addTabButton setButtonType:NSMomentaryChangeButton];
+            [_addTabButton setButtonType:NSButtonTypeMomentaryChange];
             [_addTabButton setBordered:NO];
-            [_addTabButton setBezelStyle:NSShadowlessSquareBezelStyle];
+            [_addTabButton setBezelStyle:NSBezelStyleShadowlessSquare];
             if (_showAddTabButton){
                 [_addTabButton setHidden:NO];
             } else {
@@ -280,7 +290,7 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
                 [self sanityCheckFailedWithCallsite:callsite reason:@"cells[i].representedObject != tabView.tabViewItems[i].representedObject"];
             }
         }
-        NSLog(@"Sanity check passed. cells=%@. tabView.tabViewITems=%@", self.cells, self.tabView.tabViewItems);
+        DLog(@"Sanity check passed. cells=%@. tabView.tabViewITems=%@", self.cells, self.tabView.tabViewItems);
     }
 }
 
@@ -373,7 +383,7 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
 
 - (void)setDisableTabClose:(BOOL)value {
     _disableTabClose = value;
-    [self update:_automaticallyAnimates];
+    [self setNeedsUpdate:YES animate:YES];
 }
 
 - (void)setHideForSingleTab:(BOOL)value {
@@ -383,32 +393,32 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
 
 - (void)setShowAddTabButton:(BOOL)value {
     _showAddTabButton = value;
-    [self update];
+    [self setNeedsUpdate:YES];
 }
 
 - (void)setCellMinWidth:(int)value {
     _cellMinWidth = value;
-    [self update:_automaticallyAnimates];
+    [self setNeedsUpdate:YES animate:YES];
 }
 
 - (void)setCellMaxWidth:(int)value {
     _cellMaxWidth = value;
-    [self update:_automaticallyAnimates];
+    [self setNeedsUpdate:YES animate:YES];
 }
 
 - (void)setCellOptimumWidth:(int)value {
     _cellOptimumWidth = value;
-    [self update:_automaticallyAnimates];
+    [self setNeedsUpdate:YES animate:YES];
 }
 
 - (void)setSizeCellsToFit:(BOOL)value {
     _sizeCellsToFit = value;
-    [self update:_automaticallyAnimates];
+    [self setNeedsUpdate:YES animate:YES];
 }
 
 - (void)setStretchCellsToFit:(BOOL)value {
     _stretchCellsToFit = value;
-    [self update:_automaticallyAnimates];
+    [self setNeedsUpdate:YES animate:YES];
 }
 
 - (void)setUseOverflowMenu:(BOOL)value {
@@ -558,6 +568,36 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
 
     // pull from collection
     [_cells removeObject:cell];
+}
+
+- (void)dragDidFinish {
+    _preDragSelectedTabIndex = NSNotFound;
+}
+
+- (void)dragWillExitTabBar {
+    const NSInteger count = self.tabView.tabViewItems.count;
+    if (_preDragSelectedTabIndex == NSNotFound || _preDragSelectedTabIndex < 0 || _preDragSelectedTabIndex >= count) {
+        // There is no most-recent. Can we select the next one?
+        if (count == 1) {
+            // No next one exists.
+            return;
+        }
+        NSInteger currentIndex = [[self tabView] indexOfTabViewItem:self.tabView.selectedTabViewItem];
+        if (currentIndex == NSNotFound) {
+            // Shouldn't happen
+            return;
+        }
+        NSInteger indexToSelect;
+        if (currentIndex + 1 < count) {
+            indexToSelect = currentIndex + 1;
+        } else {
+            indexToSelect = currentIndex - 1;
+        }
+        [self.tabView selectTabViewItem:self.tabView.tabViewItems[indexToSelect]];
+        return;
+    }
+    [self.tabView selectTabViewItem:self.tabView.tabViewItems[_preDragSelectedTabIndex]];
+    _preDragSelectedTabIndex = NSNotFound;
 }
 
 #pragma mark -
@@ -923,7 +963,7 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
         [self finishUpdateWithRegularWidths:newOrigins widthsWithOverflow:newOrigins];
     }
 
-    [self setNeedsDisplay];
+    [self setNeedsDisplay:YES];
 }
 
 // Tab widths may vary. Calculate the widths and see if this will work. Only allow sizes to
@@ -1007,6 +1047,7 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
     // size all cells appropriately and create tracking rects
     // nuke old tracking rects
     int i, cellCount = [_cells count];
+
     for (i = 0; i < cellCount; i++) {
         id cell = [_cells objectAtIndex:i];
         [[NSNotificationCenter defaultCenter] removeObserver:cell];
@@ -1070,7 +1111,7 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
         _animationTimer = nil;
     }
 
-    [self setNeedsDisplay];
+    [self setNeedsDisplay:YES];
 }
 
 - (void)finishUpdateWithRegularWidths:(NSArray *)regularWidths
@@ -1176,7 +1217,7 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
 
             // selected? set tab states...
             if ([[cell representedObject] isEqualTo:[_tabView selectedTabViewItem]]) {
-                [cell setState:NSOnState];
+                [cell setState:NSControlStateValueOn];
                 tabState |= PSMTab_SelectedMask;
                 // previous cell
                 if (i > 0) {
@@ -1184,10 +1225,10 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
                 }
                 // next cell - see below
             } else {
-                [cell setState:NSOffState];
+                [cell setState:NSControlStateValueOff];
                 // see if prev cell was selected
                 if (i > 0) {
-                    if ([[_cells objectAtIndex:i-1] state] == NSOnState){
+                    if ([[_cells objectAtIndex:i-1] state] == NSControlStateValueOn){
                         tabState |= PSMTab_LeftIsSelectedMask;
                     }
                 }
@@ -1229,7 +1270,7 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
             [cell setIsInOverflowMenu:YES];
             [[cell indicator] removeFromSuperview];
             if ([[cell representedObject] isEqualTo:[_tabView selectedTabViewItem]]) {
-                [menuItem setState:NSOnState];
+                [menuItem setState:NSControlStateValueOn];
             }
 
             if ([cell hasIcon]) {
@@ -1325,8 +1366,7 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
     }
 }
 
-- (void)mouseDown:(NSEvent *)theEvent
-{
+- (void)mouseDown:(NSEvent *)theEvent {
     _didDrag = NO;
 
     // keep for dragging
@@ -1352,12 +1392,20 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
         } else {
             [cell setCloseButtonPressed:NO];
             if ([theEvent clickCount] == 1) {
-                if (_selectsTabsOnMouseDown) {
+                const NSEventModifierFlags mask = NSEventModifierFlagOption;
+                if (_selectsTabsOnMouseDown && (theEvent.modifierFlags & mask) == 0) {
+                    if (cell.state != NSControlStateValueOn) {
+                        _preDragSelectedTabIndex = [[self tabView] indexOfTabViewItem:self.tabView.selectedTabViewItem];
+                    } else {
+                        // Because we always want it to switch tabs, don't save
+                        // the index if you're dragging the current tab.
+                        _preDragSelectedTabIndex = NSNotFound;
+                    }
                     [self tabClick:cell];
                 }
             }
         }
-        [self setNeedsDisplay];
+        [self setNeedsDisplay:YES];
     }
 }
 
@@ -1396,8 +1444,8 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
         return;
     }
 
-    if ([self.delegate respondsToSelector:@selector(tabViewShouldDragWindow:)] &&
-        [self.delegate tabViewShouldDragWindow:_tabView]) {
+    if ([self.delegate respondsToSelector:@selector(tabViewShouldDragWindow:event:)] &&
+        [self.delegate tabViewShouldDragWindow:_tabView event:theEvent]) {
         [self.window performWindowDragWithEvent:theEvent];
         return;
     }
@@ -1413,7 +1461,7 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
         if (_closeClicked && NSMouseInRect(trackingStartPoint, iconRect, [self isFlipped]) &&
                 ([self allowsBackgroundTabClosing] || [[cell representedObject] isEqualTo:[_tabView selectedTabViewItem]])) {
             [cell setCloseButtonPressed:NSMouseInRect(currentPoint, iconRect, [self isFlipped])];
-            [self setNeedsDisplay];
+            [self setNeedsDisplay:YES];
             return;
         }
 
@@ -1442,12 +1490,13 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
         PSMTabBarCell *mouseDownCell = [self cellForPoint:[self convertPoint:[[self lastMiddleMouseDownEvent] locationInWindow] fromView:nil]
                                                 cellFrame:&mouseDownCellFrame];
         if (cell && cell == mouseDownCell) {
-            [self closeTabClick:cell];
+            [self closeTabClick:cell button:theEvent.buttonNumber];
         }
     }
 }
 
 - (void)mouseUp:(NSEvent *)theEvent {
+    _preDragSelectedTabIndex = NSNotFound;
     _haveInitialDragLocation = NO;
     if (_resizing) {
         _resizing = NO;
@@ -1474,7 +1523,7 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
         cell.closeButtonVisible &&
         [mouseDownCell closeButtonPressed]) {
         // Clicked on close button
-        [self closeTabClick:cell];
+        [self closeTabClick:cell button:theEvent.buttonNumber];
         return;
     }
 
@@ -1535,6 +1584,27 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
     if ([self orientation] == PSMTabBarVerticalOrientation) {
         NSRect frame = [self frame];
         [self addCursorRect:NSMakeRect(frame.size.width - 2, 0, 2, frame.size.height) cursor:[NSCursor resizeLeftRightCursor]];
+    } else {
+        const CGFloat edgeDragHeight = self.style.edgeDragHeight;
+        if (edgeDragHeight == 0) {
+            return;
+        }
+        switch (_tabLocation) {
+            case PSMTab_TopTab:
+                [self addCursorRect:NSMakeRect(0, 0, self.bounds.size.width, edgeDragHeight)
+                             cursor:[NSCursor openHandCursor]];
+                break;
+            case PSMTab_BottomTab:
+                [self addCursorRect:NSMakeRect(0,
+                                               self.bounds.size.height - edgeDragHeight,
+                                               self.bounds.size.width,
+                                               edgeDragHeight)
+                             cursor:[NSCursor openHandCursor]];
+                break;
+
+            case PSMTab_LeftTab:
+                break;
+        }
     }
 }
 
@@ -1670,8 +1740,7 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
     [self update];
 }
 
-- (void)closeTabClick:(id)sender
-{
+- (void)closeTabClick:(id)sender button:(int)button {
     NSTabViewItem *item = [sender representedObject];
     [[sender retain] autorelease];
     [[item retain] autorelease];
@@ -1684,8 +1753,8 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
         }
     }
 
-    if ([[self delegate] respondsToSelector:@selector(tabView:closeTab:)]) {
-        [[self delegate] tabView:[self tabView] closeTab:[item identifier]];
+    if ([[self delegate] respondsToSelector:@selector(tabView:closeTab:button:)]) {
+        [[self delegate] tabView:[self tabView] closeTab:[item identifier] button:button];
     }
 }
 
@@ -1739,25 +1808,25 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
         [[cell indicator] setAnimate:NO];
         [[cell indicator] setAnimate:YES];
     }
-    [self setNeedsDisplay];
+    [self setNeedsDisplay:YES];
 }
 
 - (void)viewWillStartLiveResize {
     for (PSMTabBarCell *cell in _cells) {
         [[cell indicator] setAnimate:NO];
     }
-    [self setNeedsDisplay];
+    [self setNeedsDisplay:YES];
 }
 
 -(void)viewDidEndLiveResize {
     for (PSMTabBarCell *cell in _cells) {
         [[cell indicator] setAnimate:YES];
     }
-    [self setNeedsDisplay];
+    [self setNeedsDisplay:YES];
 }
 
 - (void)windowDidMove:(NSNotification *)aNotification {
-    [self setNeedsDisplay];
+    [self setNeedsDisplay:YES];
 }
 
 - (void)windowStatusDidChange:(NSNotification *)notification {
@@ -1780,7 +1849,7 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
                     [partnerView setFrame:NSMakeRect(partnerFrame.origin.x, partnerFrame.origin.y - 21, partnerFrame.size.width, partnerFrame.size.height + 21)];
                 }
                 [partnerView setNeedsDisplay:YES];
-                [self setNeedsDisplay];
+                [self setNeedsDisplay:YES];
             } else {
                 // for window movement
                 NSRect windowFrame = [[self window] frame];
@@ -1802,7 +1871,7 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
                 }
                 _tabBarWidth = myFrame.size.width;
                 [partnerView setNeedsDisplay:YES];
-                [self setNeedsDisplay];
+                [self setNeedsDisplay:YES];
             } else {
                 // for window movement
                 NSRect windowFrame = [[self window] frame];
@@ -1818,7 +1887,7 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
         }
     }
 
-    [self setNeedsDisplay];
+    [self setNeedsDisplay:YES];
      _awakenedFromNib = YES;
     [self update];
 }
@@ -2208,7 +2277,10 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
 }
 
 - (void)modifierChanged:(NSNotification *)aNotification {
-    int mask = ([[[aNotification userInfo] objectForKey:kPSMTabModifierKey] intValue]);
+    NSUInteger mask = ([[[aNotification userInfo] objectForKey:kPSMTabModifierKey] unsignedIntegerValue]);
+    if (mask == NSUIntegerMax) {
+        mask = 0;
+    }
     [self setModifier:mask];
 }
 
@@ -2229,14 +2301,14 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
     return str;
 }
 
-- (void)setModifier:(int)mask {
+- (void)setModifier:(NSUInteger)mask {
     _modifier = mask;
     NSString *str = [self _modifierString];
 
     for (PSMTabBarCell *cell in _cells) {
         [cell setModifierString:str];
     }
-    [self setNeedsDisplay];
+    [self setNeedsDisplay:YES];
 }
 
 - (void)fillPath:(NSBezierPath*)path {
@@ -2293,6 +2365,35 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
     }
 }
 
+- (void)setNeedsUpdate:(BOOL)needsUpdate {
+    [self setNeedsUpdate:needsUpdate animate:NO];
+}
+
+- (void)setNeedsUpdate:(BOOL)needsUpdate animate:(BOOL)animate {
+    _needsUpdateAnimate = _needsUpdateAnimate && animate;
+    if (_needsUpdate == needsUpdate) {
+        return;
+    }
+    if (!needsUpdate) {
+        _needsUpdate = NO;
+        return;
+    }
+    _needsUpdate = YES;
+    __weak __typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [weakSelf updateIfNeeded];
+    });
+}
+
+- (void)updateIfNeeded {
+    if (!_needsUpdate) {
+        return;
+    }
+    [self setNeedsUpdate:_needsUpdateAnimate];
+    [self update];
+}
+
+
 #pragma mark - NSDraggingSource
 
 - (NSDragOperation)draggingSession:(NSDraggingSession *)session sourceOperationMaskForDraggingContext:(NSDraggingContext)context {
@@ -2309,7 +2410,7 @@ PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizont
 #pragma mark - PSMProgressIndicatorDelegate
 
 - (void)progressIndicatorNeedsUpdate {
-    [self update];
+    [self setNeedsUpdate:YES];
 }
 
 @end

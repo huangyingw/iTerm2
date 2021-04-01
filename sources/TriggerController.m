@@ -20,12 +20,14 @@
 #import "iTermSetTitleTrigger.h"
 #import "ITAddressBookMgr.h"
 #import "iTermFunctionCallTextFieldDelegate.h"
+#import "iTermHighlightLineTrigger.h"
 #import "iTermNoColorAccessoryButton.h"
 #import "iTermProfilePreferences.h"
 #import "iTermRPCTrigger.h"
 #import "iTermShellPromptTrigger.h"
 #import "MarkTrigger.h"
 #import "NSColor+iTerm.h"
+#import "NSObject+iTerm.h"
 #import "PasswordTrigger.h"
 #import "ProfileModel.h"
 #import "ScriptTrigger.h"
@@ -43,8 +45,8 @@ static NSString *const kiTermTriggerControllerPasteboardType =
 
 static NSString *const kRegexColumnIdentifier = @"kRegexColumnIdentifier";
 static NSString *const kParameterColumnIdentifier = @"kParameterColumnIdentifier";
-static NSString *const kTextColorWellIdentifier = @"kTextColorWellIdentifier";
-static NSString *const kBackgroundColorWellIdentifier = @"kBackgroundColorWellIdentifier";
+NSString *const kTextColorWellIdentifier = @"kTextColorWellIdentifier";
+NSString *const kBackgroundColorWellIdentifier = @"kBackgroundColorWellIdentifier";
 
 // This is a color well that continues to work after it's removed from the view
 // hierarchy. NSTableView likes to randomly remove its views, so a regular
@@ -68,7 +70,7 @@ static NSString *const kBackgroundColorWellIdentifier = @"kBackgroundColorWellId
 
 @end
 
-@interface TriggerController() <NSTextFieldDelegate>
+@interface TriggerController() <iTermTriggerParameterController>
 // Keeps the color well whose popover is currently open from getting
 // deallocated. It may get removed from the view hierarchy but we need it to
 // continue existing so we can get the color out of it.
@@ -86,29 +88,38 @@ static NSString *const kBackgroundColorWellIdentifier = @"kBackgroundColorWellId
     IBOutlet NSTableColumn *_partialLineColumn;
     IBOutlet NSTableColumn *_actionColumn;
     IBOutlet NSTableColumn *_parametersColumn;
+    IBOutlet NSTableColumn *_enabledColumn;
     IBOutlet NSButton *_removeTriggerButton;
     IBOutlet NSButton *_interpolatedStringParameters;
+    IBOutlet NSButton *_updateProfileButton;
+    NSArray *_cached;
 }
 
 - (instancetype)init {
-    self = [super init];
+    self = [self initWithWindowNibName:@"iTermTriggersPanel"];
     if (self) {
         NSMutableArray *triggers = [NSMutableArray array];
-        for (Class class in [self triggerClasses]) {
+        for (Class class in [self.class triggerClasses]) {
             [triggers addObject:[[class alloc] init]];
         }
         _triggers = triggers;
+        _textEditingRow = -1;
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(reloadAllProfiles:)
+                                                     name:kReloadAllProfiles
+                                                   object:nil];
     }
     return self;
 }
 
-- (NSArray *)triggerClasses {
++ (NSArray<Class> *)triggerClasses {
     NSArray *allClasses = @[ [AlertTrigger class],
                              [AnnotateTrigger class],
                              [BellTrigger class],
                              [BounceTrigger class],
                              [iTermRPCTrigger class],
                              [CaptureTrigger class],
+                             [iTermHighlightLineTrigger class],
                              [iTermUserNotificationTrigger class],
                              [iTermShellPromptTrigger class],
                              [iTermSetTitleTrigger class],
@@ -133,6 +144,45 @@ static NSString *const kBackgroundColorWellIdentifier = @"kBackgroundColorWellId
     [_tableView registerForDraggedTypes:@[ kiTermTriggerControllerPasteboardType ]];
     _tableView.doubleAction = @selector(doubleClick:);
     _tableView.target = self;
+    [self updateCopyToProfileButtonVisibility];
+    [self updateUseInterpolatedStringParametersState];
+}
+
+- (void)setDelegate:(id<TriggerDelegate>)delegate {
+    _delegate = delegate;
+    [self updateCopyToProfileButtonVisibility];
+}
+
+- (BOOL)sharedProfileTriggersDifferFromMine {
+    if ([[ProfileModel sharedInstance] bookmarkWithGuid:self.guid] != nil) {
+        return NO;
+    }
+    NSString *originalGUID = self.bookmark[KEY_ORIGINAL_GUID];
+    if (!originalGUID) {
+        return NO;
+    }
+    Profile *sharedProfile = [[ProfileModel sharedInstance] bookmarkWithGuid:originalGUID];
+    if (!sharedProfile) {
+        return NO;
+    }
+    NSArray *sharedTriggers = sharedProfile[KEY_TRIGGERS];
+    NSArray *myTriggers = [self triggerDictionariesForCurrentProfile];
+    if (![sharedTriggers isEqual:myTriggers]) {
+        return YES;
+    }
+
+    if ([iTermProfilePreferences boolForKey:KEY_TRIGGERS_USE_INTERPOLATED_STRINGS inProfile:sharedProfile] !=
+        [iTermProfilePreferences boolForKey:KEY_TRIGGERS_USE_INTERPOLATED_STRINGS inProfile:self.bookmark]) {
+        return YES;
+    }
+    return NO;
+}
+
+- (void)updateCopyToProfileButtonVisibility {
+    if (self.delegate) {
+        _updateProfileButton.hidden = ![self.delegate respondsToSelector:@selector(triggersCopyToProfile)];
+        _updateProfileButton.enabled = [self sharedProfileTriggersDifferFromMine];
+    }
 }
 
 - (void)windowWillOpen {
@@ -142,15 +192,19 @@ static NSString *const kBackgroundColorWellIdentifier = @"kBackgroundColorWellId
 }
 
 - (int)numberOfTriggers {
-    return [[self triggerClasses] count];
+    return [[self.class triggerClasses] count];
 }
 
 - (int)indexOfAction:(NSString *)action {
     int n = [self numberOfTriggers];
-    NSArray *classes = [self triggerClasses];
+    NSArray *classes = [self.class triggerClasses];
     for (int i = 0; i < n; i++) {
         NSString *className = NSStringFromClass(classes[i]);
         if ([className isEqualToString:action]) {
+            return i;
+        }
+        Class theClass = NSClassFromString(className);
+        if ([[theClass synonyms] containsObject:action]) {
             return i;
         }
     }
@@ -159,7 +213,7 @@ static NSString *const kBackgroundColorWellIdentifier = @"kBackgroundColorWellId
 
 // Index in triggerClasses of an object of class "c"
 - (NSInteger)indexOfTriggerClass:(Class)c {
-    NSArray *classes = [self triggerClasses];
+    NSArray *classes = [self.class triggerClasses];
     for (int i = 0; i < classes.count; i++) {
         if (classes[i] == c) {
             return i;
@@ -187,7 +241,8 @@ static NSString *const kBackgroundColorWellIdentifier = @"kBackgroundColorWellId
 - (NSArray *)triggerDictionariesForCurrentProfile {
     Profile *bookmark = [self bookmark];
     NSArray *triggers = [bookmark objectForKey:KEY_TRIGGERS];
-    return triggers ? triggers : [NSArray array];
+    _cached = triggers ? triggers : [NSArray array];
+    return _cached;
 }
 
 - (void)setTriggerDictionary:(NSDictionary *)triggerDictionary
@@ -242,10 +297,14 @@ static NSString *const kBackgroundColorWellIdentifier = @"kBackgroundColorWellId
 - (void)setGuid:(NSString *)guid {
     _guid = [guid copy];
     [_tableView reloadData];
-    _interpolatedStringParameters.state = [iTermProfilePreferences boolForKey:KEY_TRIGGERS_USE_INTERPOLATED_STRINGS inProfile:[self bookmark]] ? NSOnState : NSOffState;
+    [self updateUseInterpolatedStringParametersState];
 }
 
-- (NSTextField *)labelWithString:(NSString *)string origin:(NSPoint)origin {
+- (void)updateUseInterpolatedStringParametersState {
+    _interpolatedStringParameters.state = [iTermProfilePreferences boolForKey:KEY_TRIGGERS_USE_INTERPOLATED_STRINGS inProfile:[self bookmark]] ? NSControlStateValueOn : NSControlStateValueOff;
+}
+
++ (NSTextField *)labelWithString:(NSString *)string origin:(NSPoint)origin {
     NSTextField *textField = [[NSTextField alloc] initWithFrame:NSMakeRect(origin.x,
                                                                            origin.y,
                                                                            0,
@@ -262,9 +321,17 @@ static NSString *const kBackgroundColorWellIdentifier = @"kBackgroundColorWellId
     return textField;
 }
 
+- (void)reloadAllProfiles:(NSNotification *)notification {
+    if (_cached && ![_cached isEqual:[self triggerDictionariesForCurrentProfile]]) {
+        [_tableView reloadData];
+    }
+    [self updateUseInterpolatedStringParametersState];
+}
+
 #pragma mark - NSTableViewDataSource
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)aTableView {
+    [self updateCopyToProfileButtonVisibility];
     return [[self triggerDictionariesForCurrentProfile] count];
 }
 
@@ -278,7 +345,9 @@ static NSString *const kBackgroundColorWellIdentifier = @"kBackgroundColorWellId
         [indexes addObject:@(idx)];
     }];
 
-    NSData *data = [NSKeyedArchiver archivedDataWithRootObject:indexes];
+    NSData *data = [NSKeyedArchiver archivedDataWithRootObject:indexes
+                                         requiringSecureCoding:NO
+                                                         error:nil];
     [pasteboard declareTypes:@[ kiTermTriggerControllerPasteboardType ] owner:self];
     [pasteboard setData:data forType:kiTermTriggerControllerPasteboardType];
     return YES;
@@ -311,7 +380,14 @@ static NSString *const kBackgroundColorWellIdentifier = @"kBackgroundColorWellId
     dropOperation:(NSTableViewDropOperation)operation {
     NSPasteboard *pasteboard = [info draggingPasteboard];
     NSData *rowData = [pasteboard dataForType:kiTermTriggerControllerPasteboardType];
-    NSArray *indexes = [NSKeyedUnarchiver unarchiveObjectWithData:rowData];
+    NSError *error = nil;
+    NSArray *indexes = [NSKeyedUnarchiver unarchivedObjectOfClass:[NSArray class]
+                                                         fromData:rowData
+                                                            error:&error];
+    if (error) {
+        DLog(@"Drop failed: %@", error);
+        return NO;
+    }
 
     // This code assumes you can only select one trigger at a time.
     int sourceRow = [indexes[0] intValue];
@@ -325,7 +401,7 @@ static NSString *const kBackgroundColorWellIdentifier = @"kBackgroundColorWellId
 - (BOOL)tableView:(NSTableView *)aTableView
     shouldEditTableColumn:(NSTableColumn *)aTableColumn
                       row:(NSInteger)rowIndex {
-    if (aTableColumn == _regexColumn || aTableColumn == _partialLineColumn) {
+    if (aTableColumn == _regexColumn || aTableColumn == _partialLineColumn | aTableColumn == _enabledColumn) {
         return YES;
     }
     if (aTableColumn == _parametersColumn) {
@@ -334,6 +410,110 @@ static NSString *const kBackgroundColorWellIdentifier = @"kBackgroundColorWellId
         return [self actionTakesParameter:action];
     }
     return NO;
+}
+
++ (NSView *)viewForParameterForTrigger:(Trigger *)trigger
+                                  size:(CGSize)size
+                                 value:(id)value
+                              receiver:(id<iTermTriggerParameterController>)receiver
+                   interpolatedStrings:(BOOL)interpolatedStrings
+                           delegateOut:(out id *)delegateOut
+                           wellFactory:(CPKColorWell *(^ NS_NOESCAPE)(NSRect, NSColor *))wellFactory {
+    if (![trigger takesParameter]) {
+        return [[NSView alloc] initWithFrame:NSZeroRect];
+    }
+    if ([trigger paramIsTwoColorWells]) {
+        NSView *container = [[NSView alloc] initWithFrame:NSMakeRect(0,
+                                                                     0,
+                                                                     size.width,
+                                                                     size.height)];
+        CGFloat x = 4;
+        NSTextField *label = [self labelWithString:@"Text:" origin:NSMakePoint(x, 0)];
+        [container addSubview:label];
+        x += label.frame.size.width;
+        const CGFloat kWellWidth = 30;
+        CPKColorWell *well = wellFactory(NSMakeRect(x,
+                                                    0,
+                                                    kWellWidth,
+                                                    size.height),
+                                         trigger.textColor);
+        well.identifier = kTextColorWellIdentifier;
+
+        [container addSubview:well];
+
+        x += 10 + kWellWidth;
+        label = [self labelWithString:@"Background:" origin:NSMakePoint(x, 0)];
+        [container addSubview:label];
+        x += label.frame.size.width;
+
+        well = wellFactory(NSMakeRect(x,
+                                      0,
+                                      kWellWidth,
+                                      size.height),
+                           trigger.backgroundColor);
+        [container addSubview:well];
+        well.identifier = kBackgroundColorWellIdentifier;
+        return container;
+    }
+    if ([trigger paramIsPopupButton]) {
+        NSPopUpButton *popUpButton = [[NSPopUpButton alloc] init];
+        [popUpButton setTitle:@""];
+        popUpButton.bordered = NO;
+
+        NSMenu *theMenu = popUpButton.menu;
+        BOOL isFirst = YES;
+        for (NSDictionary *items in [trigger groupedMenuItemsForPopupButton]) {
+            if (!isFirst) {
+                [theMenu addItem:[NSMenuItem separatorItem]];
+            }
+            isFirst = NO;
+            for (id object in [trigger objectsSortedByValueInDict:items]) {
+                NSString *theTitle = [items objectForKey:object];
+                if (theTitle) {
+                    NSMenuItem *anItem = [[NSMenuItem alloc] initWithTitle:theTitle
+                                                                    action:nil
+                                                             keyEquivalent:@""];
+                    [theMenu addItem:anItem];
+                }
+            }
+        }
+
+        id param = value;
+        if (!param) {
+            // Force popup buttons to have the first item selected by default
+            [popUpButton selectItemAtIndex:trigger.defaultIndex];
+        } else {
+            [popUpButton selectItemAtIndex:[trigger indexForObject:param]];
+        }
+        popUpButton.target = receiver;
+        popUpButton.action = @selector(parameterPopUpButtonDidChange:);
+
+        return popUpButton;
+    }
+
+
+    // If not a popup button, then text by default.
+    iTermFocusReportingTextField *textField =
+    [[iTermFocusReportingTextField alloc] initWithFrame:NSMakeRect(0,
+                                                                   0,
+                                                                   size.width,
+                                                                   size.height)];
+    textField.font = [NSFont systemFontOfSize:[NSFont systemFontSize]];
+    textField.stringValue = value ?: @"";
+    textField.editable = YES;
+    textField.selectable = YES;
+    textField.bordered = NO;
+    textField.drawsBackground = NO;
+    if ([textField respondsToSelector:@selector(setPlaceholderString:)]) {
+        textField.placeholderString = [trigger triggerOptionalParameterPlaceholderWithInterpolation:interpolatedStrings];
+    }
+    *delegateOut = [trigger newParameterDelegateWithPassthrough:receiver];
+    id<iTermFocusReportingTextFieldDelegate> delegate =
+        *delegateOut  ?: receiver;
+    textField.delegate = delegate;
+    textField.identifier = kParameterColumnIdentifier;
+
+    return textField;
 }
 
 - (NSView *)tableView:(NSTableView *)tableView
@@ -373,141 +553,58 @@ static NSString *const kBackgroundColorWellIdentifier = @"kBackgroundColorWellId
     } else if (tableColumn == _partialLineColumn) {
         NSButton *checkbox = [[NSButton alloc] initWithFrame:NSZeroRect];
         [checkbox sizeToFit];
-        [checkbox setButtonType:NSSwitchButton];
+        [checkbox setButtonType:NSButtonTypeSwitch];
         checkbox.title = @"";
-        checkbox.state = [triggerDictionary[kTriggerPartialLineKey] boolValue] ? NSOnState : NSOffState;
+        checkbox.state = [triggerDictionary[kTriggerPartialLineKey] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
         checkbox.target = self;
         checkbox.action = @selector(instantDidChange:);
+        return checkbox;
+    } else if (tableColumn == _enabledColumn) {
+        NSButton *checkbox = [[NSButton alloc] initWithFrame:NSZeroRect];
+        [checkbox sizeToFit];
+        [checkbox setButtonType:NSButtonTypeSwitch];
+        checkbox.title = @"";
+        checkbox.state = [triggerDictionary[kTriggerDisabledKey] boolValue] ? NSControlStateValueOff : NSControlStateValueOn;
+        checkbox.target = self;
+        checkbox.action = @selector(enabledDidChange:);
         return checkbox;
     } else if (tableColumn == _parametersColumn) {
         NSArray *triggerDicts = [self triggerDictionariesForCurrentProfile];
         Trigger *trigger = [self triggerWithAction:triggerDicts[row][kTriggerActionKey]];
         trigger.param = triggerDicts[row][kTriggerParameterKey];
-        if ([trigger takesParameter]) {
-            if ([trigger paramIsTwoColorWells]) {
-                NSView *container = [[NSView alloc] initWithFrame:NSMakeRect(0,
-                                                                             0,
-                                                                             tableColumn.width,
-                                                                             _tableView.rowHeight)];
-                CGFloat x = 4;
-                NSTextField *label = [self labelWithString:@"Text:" origin:NSMakePoint(x, 0)];
-                [container addSubview:label];
-                x += label.frame.size.width;
-                const CGFloat kWellWidth = 30;
-                iTermColorWell *well =
-                    [[iTermColorWell alloc] initWithFrame:NSMakeRect(x,
-                                                                     0,
-                                                                     kWellWidth,
-                                                                     _tableView.rowHeight)];
-                well.noColorAllowed = YES;
-                well.continuous = NO;
-                well.tag = row;
-                x += kWellWidth;
-                well.color = trigger.textColor;
-                [container addSubview:well];
-                well.target = self;
-                well.action = @selector(colorWellDidChange:);
-                well.identifier = kTextColorWellIdentifier;
-                __weak __typeof(self) weakSelf = self;
-                __weak __typeof(well) weakWell = well;
-                well.willOpenPopover = ^() {
-                    if (weakWell) {
-                        weakSelf.activeWell = weakWell;
-                    }
-                };
-                well.willClosePopover = ^() {
-                    if (self.activeWell == well) {
-                        self.activeWell = nil;
-                    }
-                };
-                x += 10;
-                label = [self labelWithString:@"Background:" origin:NSMakePoint(x, 0)];
-                [container addSubview:label];
-                x += label.frame.size.width;
-                well = [[iTermColorWell alloc] initWithFrame:NSMakeRect(x,
-                                                                        0,
-                                                                        kWellWidth,
-                                                                        _tableView.rowHeight)];
-                well.noColorAllowed = YES;
-                well.continuous = NO;
-                well.color = trigger.backgroundColor;
-                well.tag = row;
-                [container addSubview:well];
-                well.target = self;
-                well.action = @selector(colorWellDidChange:);
-                well.identifier = kBackgroundColorWellIdentifier;
-                weakWell = well;
-                well.willOpenPopover = ^() {
-                    if (weakWell) {
-                        weakSelf.activeWell = weakWell;
-                    }
-                };
-                well.willClosePopover = ^() {
-                    if (self.activeWell == well) {
-                        self.activeWell = nil;
-                    }
-                };
-
-                return container;
-            } else if ([trigger paramIsPopupButton]) {
-                NSPopUpButton *popUpButton = [[NSPopUpButton alloc] init];
-                [popUpButton setTitle:@""];
-                popUpButton.bordered = NO;
-
-                NSMenu *theMenu = popUpButton.menu;
-                BOOL isFirst = YES;
-                for (NSDictionary *items in [trigger groupedMenuItemsForPopupButton]) {
-                    if (!isFirst) {
-                        [theMenu addItem:[NSMenuItem separatorItem]];
-                    }
-                    isFirst = NO;
-                    for (id object in [trigger objectsSortedByValueInDict:items]) {
-                        NSString *theTitle = [items objectForKey:object];
-                        if (theTitle) {
-                            NSMenuItem *anItem = [[NSMenuItem alloc] initWithTitle:theTitle
-                                                                            action:nil
-                                                                     keyEquivalent:@""];
-                            [theMenu addItem:anItem];
-                        }
-                    }
+        id delegateToSave;
+        NSView *result = [self.class viewForParameterForTrigger:trigger
+                                                           size:NSMakeSize(tableColumn.width, _tableView.rowHeight)
+                                                          value:triggerDictionary[kTriggerParameterKey]
+                                                       receiver:self
+                                            interpolatedStrings:_interpolatedStringParameters.state == NSControlStateValueOn
+                                                    delegateOut:&delegateToSave
+                                                    wellFactory:
+                          ^iTermColorWell *(NSRect frame,
+                                            NSColor *color) {
+            iTermColorWell *well = [[iTermColorWell alloc] initWithFrame:frame];
+            well.noColorAllowed = YES;
+            well.continuous = NO;
+            well.tag = row;
+            well.color = color;
+            well.target = self;
+            well.action = @selector(colorWellDidChange:);
+            __weak __typeof(self) weakSelf = self;
+            __weak __typeof(well) weakWell = well;
+            well.willOpenPopover = ^() {
+                if (weakWell) {
+                    weakSelf.activeWell = weakWell;
                 }
-
-                id param = triggerDictionary[kTriggerParameterKey];
-                if (!param) {
-                    // Force popup buttons to have the first item selected by default
-                    [popUpButton selectItemAtIndex:trigger.defaultIndex];
-                } else {
-                    [popUpButton selectItemAtIndex:[trigger indexForObject:param]];
+            };
+            well.willClosePopover = ^() {
+                if (self.activeWell == well) {
+                    self.activeWell = nil;
                 }
-                popUpButton.target = self;
-                popUpButton.action = @selector(parameterPopUpButtonDidChange:);
-
-                return popUpButton;
-            } else {
-                // If not a popup button, then text by default.
-                iTermFocusReportingTextField *textField =
-                    [[iTermFocusReportingTextField alloc] initWithFrame:NSMakeRect(0,
-                                                                                   0,
-                                                                                   tableColumn.width,
-                                                                                   self.tableView.rowHeight)];
-                textField.font = [NSFont systemFontOfSize:[NSFont systemFontSize]];
-                textField.stringValue = triggerDictionary[kTriggerParameterKey] ?: @"";
-                textField.editable = YES;
-                textField.selectable = YES;
-                textField.bordered = NO;
-                textField.drawsBackground = NO;
-                _parameterDelegate = [trigger newParameterDelegateWithPassthrough:self];
-                textField.delegate = _parameterDelegate ?: self;
-                if ([textField respondsToSelector:@selector(setPlaceholderString:)]) {
-                    textField.placeholderString = [trigger triggerOptionalParameterPlaceholderWithInterpolation:_interpolatedStringParameters.state == NSOnState];
-                }
-                textField.identifier = kParameterColumnIdentifier;
-
-                return textField;
-            }
-        } else {
-            return [[NSView alloc] initWithFrame:NSZeroRect];
-        }
+            };
+            return well;
+        }];
+        _parameterDelegate = delegateToSave;
+        return result;
     }
     return nil;
 }
@@ -546,8 +643,9 @@ static NSString *const kBackgroundColorWellIdentifier = @"kBackgroundColorWellId
 }
 
 - (IBAction)toggleUseInterpolatedStrings:(id)sender {
-    _interpolatedStringParameters.state = (![iTermProfilePreferences boolForKey:KEY_TRIGGERS_USE_INTERPOLATED_STRINGS inProfile:[self bookmark]]) ? NSOnState : NSOffState;
-    [self.delegate triggerSetUseInterpolatedStrings:_interpolatedStringParameters.state == NSOnState];
+    const BOOL wasEnabled = [iTermProfilePreferences boolForKey:KEY_TRIGGERS_USE_INTERPOLATED_STRINGS inProfile:[self bookmark]];
+    _interpolatedStringParameters.state = (!wasEnabled) ? NSControlStateValueOn : NSControlStateValueOff;
+    [self.delegate triggerSetUseInterpolatedStrings:_interpolatedStringParameters.state == NSControlStateValueOn];
     [_tableView reloadData];
 }
 
@@ -580,12 +678,11 @@ static NSString *const kBackgroundColorWellIdentifier = @"kBackgroundColorWellId
     }
     NSMutableDictionary *triggerDictionary =
         [[self triggerDictionariesForCurrentProfile][row] mutableCopy];
-    HighlightTrigger *trigger =
-        (HighlightTrigger *)[HighlightTrigger triggerFromDict:triggerDictionary];
+    Trigger<iTermColorSettable> *trigger = (id)[Trigger triggerFromDict:triggerDictionary];
     if ([colorWell.identifier isEqual:kTextColorWellIdentifier]) {
-        trigger.textColor = colorWell.color;
+        [trigger setTextColor:colorWell.color];
     } else {
-        trigger.backgroundColor = colorWell.color;
+        [trigger setBackgroundColor:colorWell.color];
     }
     if (trigger.param) {
         triggerDictionary[kTriggerParameterKey] = trigger.param;
@@ -599,7 +696,7 @@ static NSString *const kBackgroundColorWellIdentifier = @"kBackgroundColorWellId
 }
 
 - (void)instantDidChange:(NSButton *)checkbox {
-    NSNumber *newValue = checkbox.state == NSOnState ? @(YES) : @(NO);
+    NSNumber *newValue = checkbox.state == NSControlStateValueOn ? @(YES) : @(NO);
     NSInteger row = [_tableView rowForView:checkbox];
 
     // If a text field is editing, make it save its contents before we get the trigger dictionary.
@@ -612,6 +709,23 @@ static NSString *const kBackgroundColorWellIdentifier = @"kBackgroundColorWellId
     NSMutableDictionary *triggerDictionary =
         [[self triggerDictionariesForCurrentProfile][row] mutableCopy];
     triggerDictionary[kTriggerPartialLineKey] = newValue;
+    [self setTriggerDictionary:triggerDictionary forRow:row reloadData:YES];
+}
+
+- (void)enabledDidChange:(NSButton *)checkbox {
+    NSNumber *newValue = checkbox.state == NSControlStateValueOff ? @YES : @NO;
+    NSInteger row = [_tableView rowForView:checkbox];
+
+    // If a text field is editing, make it save its contents before we get the trigger dictionary.
+    [_tableView reloadData];
+
+    NSArray *triggerDicts = [self triggerDictionariesForCurrentProfile];
+    if (row < 0 || row >= triggerDicts.count) {
+        return;
+    }
+    NSMutableDictionary *triggerDictionary =
+        [[self triggerDictionariesForCurrentProfile][row] mutableCopy];
+    triggerDictionary[kTriggerDisabledKey] = newValue;
     [self setTriggerDictionary:triggerDictionary forRow:row reloadData:YES];
 }
 
@@ -633,8 +747,8 @@ static NSString *const kBackgroundColorWellIdentifier = @"kBackgroundColorWellId
     Trigger *triggerObj = [self triggerWithAction:triggerDictionary[kTriggerActionKey]];
     if ([triggerObj paramIsPopupButton]) {
         triggerDictionary[kTriggerParameterKey] = [triggerObj defaultPopupParameterObject];
-    } else if ([triggerObj triggerOptionalDefaultParameterValueWithInterpolation:_interpolatedStringParameters.state == NSOnState]) {
-        triggerDictionary[kTriggerParameterKey] = [triggerObj triggerOptionalDefaultParameterValueWithInterpolation:_interpolatedStringParameters.state == NSOnState];
+    } else if ([triggerObj triggerOptionalDefaultParameterValueWithInterpolation:_interpolatedStringParameters.state == NSControlStateValueOn]) {
+        triggerDictionary[kTriggerParameterKey] = [triggerObj triggerOptionalDefaultParameterValueWithInterpolation:_interpolatedStringParameters.state == NSControlStateValueOn];
     }
     [self setTriggerDictionary:triggerDictionary forRow:rowIndex reloadData:YES];
 }
@@ -656,6 +770,17 @@ static NSString *const kBackgroundColorWellIdentifier = @"kBackgroundColorWellId
     [self setTriggerDictionary:triggerDictionary forRow:rowIndex reloadData:YES];
 }
 
+- (IBAction)closeTriggersSheet:(id)sender {
+    [self.delegate triggersCloseSheet];
+}
+
+- (IBAction)copyToProfile:(id)sender {
+    if ([self.delegate respondsToSelector:@selector(triggersCopyToProfile)]) {
+        [self.delegate triggersCopyToProfile];
+        [self updateCopyToProfileButtonVisibility];
+    }
+}
+
 #pragma mark - NSTextFieldDelegate
 
 - (void)controlTextDidBeginEditing:(NSNotification *)obj {
@@ -666,7 +791,7 @@ static NSString *const kBackgroundColorWellIdentifier = @"kBackgroundColorWellId
 
 - (void)controlTextDidEndEditing:(NSNotification *)obj {
     NSTextField *textField = obj.object;
-    if (_textEditingRow < 0) {
+    if (_textEditingRow >= [[self triggerDictionariesForCurrentProfile] count]) {
         return;
     }
     NSMutableDictionary *triggerDictionary =
@@ -679,6 +804,11 @@ static NSString *const kBackgroundColorWellIdentifier = @"kBackgroundColorWellId
         [self setTriggerDictionary:triggerDictionary forRow:_textEditingRow reloadData:YES];
     }
     _textEditingRow = -1;
+}
+
+- (void)profileDidChange {
+    _textEditingRow = -1;
+    [_tableView reloadData];
 }
 
 @end

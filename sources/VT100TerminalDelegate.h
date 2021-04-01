@@ -7,6 +7,7 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "VT100InlineImageHelper.h"
 #import "VT100Token.h"
 
 typedef NS_ENUM(NSInteger, MouseMode) {
@@ -23,13 +24,6 @@ typedef NS_ENUM(NSInteger, VT100TerminalSemanticTextType) {
     kVT100TerminalSemanticTextTypeProcessId = 3,
 
     kVT100TerminalSemanticTextTypeMax
-};
-
-typedef NS_ENUM(NSInteger, VT100TerminalUnits) {
-    kVT100TerminalUnitsCells,
-    kVT100TerminalUnitsPixels,
-    kVT100TerminalUnitsPercentage,
-    kVT100TerminalUnitsAuto,
 };
 
 typedef NS_ENUM(NSUInteger, VT100AttentionRequestType) {
@@ -82,6 +76,8 @@ typedef NS_ENUM(int, VT100TerminalColorIndex) {
 // Returns if it's safe to send reports.
 - (BOOL)terminalShouldSendReport;
 
+- (BOOL)terminalShouldSendReportForVariable:(NSString *)variable;
+
 // Sends a report.
 - (void)terminalSendReport:(NSData *)report;
 
@@ -121,13 +117,20 @@ typedef NS_ENUM(int, VT100TerminalColorIndex) {
 - (void)terminalReverseIndex;
 
 // Clear the screen, preserving the cursor's line.
-- (void)terminalResetPreservingPrompt:(BOOL)preservePrompt;
+- (void)terminalResetPreservingPrompt:(BOOL)preservePrompt modifyContent:(BOOL)modifyContent;
 
 // Changes the cursor type.
 - (void)terminalSetCursorType:(ITermCursorType)cursorType;
 
 // Changes whether the cursor blinks.
 - (void)terminalSetCursorBlinking:(BOOL)blinking;
+
+// Reset type and blink to default
+- (void)terminalResetCursorTypeAndBlink;
+
+// Returns the current cursor style as a DECSCUSR param.
+- (void)terminalGetCursorType:(ITermCursorType *)cursorTypeOut
+                     blinking:(BOOL *)blinking;
 
 // Sets the left/right scroll region.
 - (void)terminalSetLeftMargin:(int)scrollLeft rightMargin:(int)scrollRight;
@@ -307,6 +310,7 @@ typedef NS_ENUM(int, VT100TerminalColorIndex) {
 // nil = name unknown, -1 = size unknown. Return YES to accept it.
 - (BOOL)terminalWillReceiveFileNamed:(NSString *)name
                               ofSize:(NSInteger)size;
+
 - (BOOL)terminalWillReceiveInlineFileNamed:(NSString *)name
                                     ofSize:(NSInteger)size
                                      width:(int)width
@@ -393,6 +397,7 @@ typedef NS_ENUM(int, VT100TerminalColorIndex) {
 - (BOOL)terminalCursorVisible;
 
 - (BOOL)terminalIsTrusted;
+- (BOOL)terminalCanUseDECRQCRA;
 
 - (void)terminalSetUnicodeVersion:(NSInteger)unicodeVersion;
 - (void)terminalSetColorNamed:(NSString *)name to:(NSString *)value;
@@ -424,9 +429,15 @@ typedef NS_ENUM(int, VT100TerminalColorIndex) {
 - (void)terminalSynchronizedUpdate:(BOOL)begin;
 
 - (void)terminalReportFocusWillChangeTo:(BOOL)reportFocus;
+- (void)terminalPasteBracketingWillChangeTo:(BOOL)bracket;
 - (void)terminalSoftAlternateScreenModeDidChange;
 
 - (void)terminalReportKeyUpDidChange:(BOOL)reportKeyUp;
+
 - (void)terminalAppendSixelData:(NSData *)sixelData;
+
+- (void)terminalDidChangeSendModifiers;
+- (void)terminalKeyReportingFlagsDidChange;
+- (void)terminalClearCapturedOutput;
 
 @end

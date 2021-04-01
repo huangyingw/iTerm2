@@ -31,6 +31,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nullable, nonatomic, strong) NSString *triggerName;
 @property (nullable, nonatomic, strong) NSString *windowName;
 @property (nullable, nonatomic, strong) NSString *jobName;
+@property (nullable, nonatomic, strong) NSString *processTitle;
 @property (nullable, nonatomic, strong) NSString *commandLine;
 @property (nullable, nonatomic, strong) NSString *presentationName;
 @property (nullable, nonatomic, strong) NSString *tmuxRole;
@@ -45,7 +46,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nullable, nonatomic, strong) NSString *tmuxStatusRight;
 @property (nullable, nonatomic, strong) NSNumber *mouseReportingMode;
 @property (nullable, nonatomic, strong) NSString *badge;
+@property (nullable, nonatomic, strong) NSString *selection;
+@property (nullable, nonatomic, strong) NSNumber *selectionLength;
 @property (nullable, nonatomic, readonly) iTermVariableScope<iTermTabScope> *tab;
+@property (nullable, nonatomic, strong) NSNumber *bellCount;
 
 @end
 

@@ -9,6 +9,7 @@
 #import "ToolNotes.h"
 #import "iTermSetFindStringNotification.h"
 #import "NSFileManager+iTerm.h"
+#import "NSFont+iTerm.h"
 #import "NSObject+iTerm.h"
 #import "NSWindow+iTerm.h"
 #import "PTYWindow.h"
@@ -64,14 +65,17 @@ static NSString *kToolNotesSetTextNotification = @"kToolNotesSetTextNotification
 
         NSScrollView *scrollview = [[[NSScrollView alloc]
                                      initWithFrame:NSMakeRect(0, 0, frame.size.width, frame.size.height)] autorelease];
-        [scrollview setBorderType:NSBezelBorder];
+        if (@available(macOS 10.16, *)) {
+            [scrollview setBorderType:NSLineBorder];
+            scrollview.scrollerStyle = NSScrollerStyleOverlay;
+        } else {
+            [scrollview setBorderType:NSBezelBorder];
+        }
         [scrollview setHasVerticalScroller:YES];
         [scrollview setHasHorizontalScroller:NO];
         [scrollview setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-        if (@available(macOS 10.14, *)) { } else {
-            scrollview.drawsBackground = NO;
-        }
-        
+        scrollview.drawsBackground = NO;
+
         NSSize contentSize = [scrollview contentSize];
         textView_ = [[iTermUnformattedTextView alloc] initWithFrame:NSMakeRect(0, 0, contentSize.width, contentSize.height)];
         [textView_ setAllowsUndo:YES];
@@ -88,7 +92,7 @@ static NSString *kToolNotesSetTextNotification = @"kToolNotesSetTextNotification
         [textView_ setDelegate:self];
 
         [textView_ readRTFDFromFile:[self filename]];
-        textView_.font = [NSFont fontWithName:@"Menlo" size:[NSFont smallSystemFontSize]];
+        textView_.font = [NSFont it_toolbeltFont];
         textView_.automaticSpellingCorrectionEnabled = NO;
         textView_.automaticDashSubstitutionEnabled = NO;
         textView_.automaticQuoteSubstitutionEnabled = NO;
@@ -157,7 +161,7 @@ static NSString *kToolNotesSetTextNotification = @"kToolNotesSetTextNotification
         return;
     }
     if (@available(macOS 10.14, *)) {
-        textView_.backgroundColor = [NSColor textBackgroundColor];
+        textView_.drawsBackground = NO;
         textView_.textColor = [NSColor textColor];
     } else {
         if ([self.window.appearance.name isEqual:NSAppearanceNameVibrantDark]) {

@@ -92,6 +92,10 @@ static const float kAnimationDuration = 0.2;
 
 #pragma mark - iTermFindViewController
 
+- (void)countDidChange {
+    [findBarTextField_ setNeedsDisplay:YES];
+}
+
 - (BOOL)searchBarIsFirstResponder {
     return [findBarTextField_ textFieldIsFirstResponder];
 }
@@ -190,7 +194,7 @@ static const float kAnimationDuration = 0.2;
 #pragma mark - NSViewController
 
 - (BOOL)validateUserInterfaceItem:(NSMenuItem *)item {
-    item.state = (item.tag == self.driver.mode) ? NSOnState : NSOffState;
+    item.state = (item.tag == self.driver.mode) ? NSControlStateValueOn : NSControlStateValueOff;
     return YES;
 }
 
@@ -211,6 +215,9 @@ static const float kAnimationDuration = 0.2;
          completions:(NSArray *)words  // Dictionary words
  forPartialWordRange:(NSRange)charRange
  indexOfSelectedItem:(NSInteger *)index {
+    DLog(@"completions:forPartialWordRange: existing string is %@, range is %@\n%@",
+         textView.string, NSStringFromRange(charRange), [NSThread callStackSymbols]);
+
     *index = -1;
     return [self.driver completionsForText:[textView string]
                                      range:charRange];
@@ -219,7 +226,9 @@ static const float kAnimationDuration = 0.2;
 - (BOOL)control:(NSControl *)control
        textView:(NSTextView *)textView
     doCommandBySelector:(SEL)commandSelector {
+    DLog(@"doCommandBySelector: %@\n%@", NSStringFromSelector(commandSelector), [NSThread callStackSymbols]);
     if (control != findBarTextField_) {
+        DLog(@"Wrong control. I'm %@ but was sent by %@", findBarTextField_, control);
         return NO;
     }
 
@@ -244,8 +253,10 @@ static const float kAnimationDuration = 0.2;
 }
 
 - (void)controlTextDidEndEditing:(NSNotification *)aNotification {
+    DLog(@"controlTextDidEndEditing: %@\n%@", aNotification.userInfo, [NSThread callStackSymbols]);
     NSControl *postingObject = [aNotification object];
     if (postingObject != findBarTextField_) {
+        DLog(@"Wrong object. I'm %@, but posting object is %@", self, postingObject);
         return;
     }
 
@@ -342,6 +353,14 @@ static const float kAnimationDuration = 0.2;
 
 - (void)focusReportingSearchFieldWillBecomeFirstResponder:(iTermFocusReportingSearchField *)sender {
     [self.driver searchFieldWillBecomeFirstResponder:findBarTextField_];
+}
+
+- (NSInteger)focusReportingSearchFieldNumberOfResults:(iTermFocusReportingSearchField *)sender {
+    return [self.driver numberOfResults];
+}
+
+- (NSInteger)focusReportingSearchFieldCurrentIndex:(iTermFocusReportingSearchField *)sender {
+    return [self.driver currentIndex];
 }
 
 @end

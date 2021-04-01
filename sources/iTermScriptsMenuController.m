@@ -11,7 +11,6 @@
 #import "iTermAPIHelper.h"
 #import "iTermAPIScriptLauncher.h"
 #import "iTermAdvancedSettingsModel.h"
-#import "iTermBuildingScriptWindowController.h"
 #import "iTermCommandRunner.h"
 #import "iTermPythonRuntimeDownloader.h"
 #import "iTermScriptChooser.h"
@@ -111,7 +110,6 @@ NS_ASSUME_NONNULL_BEGIN
     BOOL _ranAutoLaunchScript;
     SCEvents *_events;
     NSArray<NSString *> *_allScripts;
-    NSInteger _disablePathWatcher;
 }
 
 - (instancetype)initWithMenu:(NSMenu *)menu {
@@ -139,7 +137,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem {
     NSString *path = menuItem.identifier;
     const BOOL isRunning = path && !![[iTermScriptHistory sharedInstance] runningEntryWithPath:path];
-    menuItem.state = isRunning ? NSOnState : NSOffState;
+    menuItem.state = isRunning ? NSControlStateValueOn : NSControlStateValueOff;
     return YES;
 }
 
@@ -190,7 +188,16 @@ NS_ASSUME_NONNULL_BEGIN
 }
 
 - (NSArray<iTermScriptItem *> *)scriptItems {
-    iTermScriptItem *root = [[iTermScriptItem alloc] initFolderWithPath:[[NSFileManager defaultManager] scriptsPathWithoutSpaces] parent:nil];
+    if (![[NSFileManager defaultManager] homeDirectoryDotDir]) {
+        return @[];
+    }
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *path = [fm scriptsPath];
+    if ([fm fileExistsAtPath:path]) {
+        [fm spacelessAppSupportCreatingLink];  // create link if needed
+        path = [fm scriptsPathWithoutSpaces];
+    }
+    iTermScriptItem *root = [[iTermScriptItem alloc] initFolderWithPath:path parent:nil];
     [self populateScriptItem:root];
     return root.children;
 }
@@ -211,9 +218,11 @@ NS_ASSUME_NONNULL_BEGIN
         BOOL isDirectory = NO;
         [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDirectory];
         if (isDirectory) {
-            [directoryEnumerator skipDescendents];
+            [directoryEnumerator skipDescendants];
             if ([workspace isFilePackageAtPath:path] ||
-                [iTermAPIScriptLauncher environmentForScript:path checkForMain:NO]) {
+                [iTermAPIScriptLauncher environmentForScript:path
+                                                checkForMain:NO
+                                               checkForSaved:YES]) {
                 [parentFolderItem addChild:[[iTermScriptItem alloc] initFullEnvironmentWithPath:path parent:parentFolderItem]];
                 continue;
             }
@@ -251,6 +260,9 @@ NS_ASSUME_NONNULL_BEGIN
     NSURL *url = [NSURL fileURLWithPath:file];
     switch (selection) {
         case kiTermWarningSelection0: {
+            if (![[NSFileManager defaultManager] homeDirectoryDotDir]) {
+                break;
+            }
             [iTermScriptImporter importScriptFromURL:url
                                        userInitiated:YES
                                      offerAutoLaunch:autolaunch
@@ -356,6 +368,9 @@ NS_ASSUME_NONNULL_BEGIN
 }
 
 - (void)chooseAndImportScript {
+    if (![[NSFileManager defaultManager] homeDirectoryDotDir]) {
+        return;
+    }
     NSOpenPanel *panel = [[NSOpenPanel alloc] init];
     panel.allowedFileTypes = @[ @"zip", @"its", @"py" ];
     if ([panel runModal] == NSModalResponseOK) {
@@ -367,6 +382,9 @@ NS_ASSUME_NONNULL_BEGIN
 }
 
 - (void)importFromURL:(NSURL *)url {
+    if (![[NSFileManager defaultManager] homeDirectoryDotDir]) {
+        return;
+    }
     [iTermScriptImporter importScriptFromURL:url
                                userInitiated:YES
                              offerAutoLaunch:NO
@@ -406,6 +424,7 @@ NS_ASSUME_NONNULL_BEGIN
         }
         if (response == NSAlertSecondButtonReturn) {
             [self launchScriptWithAbsolutePath:location.path
+                                     arguments:@[]
                             explicitUserAction:YES];
         }
     }
@@ -420,6 +439,9 @@ NS_ASSUME_NONNULL_BEGIN
 }
 
 - (BOOL)couldMoveScriptToAutoLaunch:(NSString *)fullPath {
+    if (![[NSFileManager defaultManager] homeDirectoryDotDir]) {
+        return NO;
+    }
     if (![[NSFileManager defaultManager] fileExistsAtPath:fullPath]) {
         return NO;
     }
@@ -456,7 +478,9 @@ NS_ASSUME_NONNULL_BEGIN
     if (entry) {
         [entry kill];
     } else {
-        [self launchScriptWithAbsolutePath:fullPath explicitUserAction:YES];
+        [self launchScriptWithAbsolutePath:fullPath
+                                 arguments:@[]
+                        explicitUserAction:YES];
     }
 }
 
@@ -468,23 +492,38 @@ NS_ASSUME_NONNULL_BEGIN
 }
 
 - (void)launchScriptWithRelativePath:(NSString *)path
+                           arguments:(NSArray<NSString *> *)arguments
                   explicitUserAction:(BOOL)explicitUserAction {
-    NSString *fullPath = [[[NSFileManager defaultManager] scriptsPath] stringByAppendingPathComponent:path];
-    [self launchScriptWithAbsolutePath:fullPath explicitUserAction:explicitUserAction];
+    if (![[NSFileManager defaultManager] homeDirectoryDotDir]) {
+        return;
+    }
+    NSString *fullPath = [[[NSFileManager defaultManager] scriptsPathWithoutSpaces] stringByAppendingPathComponent:path];
+    [self launchScriptWithAbsolutePath:fullPath
+                             arguments:arguments
+                    explicitUserAction:explicitUserAction];
 }
 
 // NOTE: This logic needs to be kept in sync with -couldLaunchScriptWithAbsolutePath
-- (void)launchScriptWithAbsolutePath:(NSString *)fullPath explicitUserAction:(BOOL)explicitUserAction {
-    NSString *venv = [iTermAPIScriptLauncher environmentForScript:fullPath checkForMain:YES];
+- (void)launchScriptWithAbsolutePath:(NSString *)fullPath
+                           arguments:(NSArray<NSString *> *)arguments
+                  explicitUserAction:(BOOL)explicitUserAction {
+    DLog(@"launch path=%@ args=%@", fullPath, arguments);
+    NSString *venv = [iTermAPIScriptLauncher environmentForScript:fullPath
+                                                     checkForMain:YES
+                                                    checkForSaved:YES];
     if (venv) {
         if (!explicitUserAction && ![iTermAPIHelper isEnabled]) {
             DLog(@"Not launching %@ because the API is not enabled", fullPath);
+            return;
+        }
+        if (![[NSFileManager defaultManager] homeDirectoryDotDir]) {
             return;
         }
         NSString *name = fullPath.lastPathComponent;
         NSString *mainPyPath = [[[fullPath stringByAppendingPathComponent:name] stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"py"];
         [iTermAPIScriptLauncher launchScript:mainPyPath
                                     fullPath:fullPath
+                                   arguments:arguments
                               withVirtualEnv:venv
                                 setupCfgPath:[fullPath stringByAppendingPathComponent:@"setup.cfg"]
                           explicitUserAction:explicitUserAction];
@@ -496,27 +535,32 @@ NS_ASSUME_NONNULL_BEGIN
             DLog(@"Not launching %@ because the API is not enabled", fullPath);
             return;
         }
+        if (![[NSFileManager defaultManager] homeDirectoryDotDir]) {
+            return;
+        }
         [iTermAPIScriptLauncher launchScript:fullPath
+                                   arguments:arguments
                           explicitUserAction:explicitUserAction];
         return;
     }
     if ([[fullPath pathExtension] isEqualToString:@"scpt"]) {
-        NSAppleScript *script;
-        NSDictionary *errorInfo = nil;
         NSURL *aURL = [NSURL fileURLWithPath:fullPath];
 
         // Make sure our script suite registry is loaded
         [NSScriptSuiteRegistry sharedScriptSuiteRegistry];
-
-        script = [[NSAppleScript alloc] initWithContentsOfURL:aURL error:&errorInfo];
-        if (script) {
-            [script executeAndReturnError:&errorInfo];
-            if (errorInfo) {
-                [self showAlertForScript:fullPath error:errorInfo];
-            }
-        } else {
-            [self showAlertForScript:fullPath error:errorInfo];
+        NSError *error = nil;
+        NSUserAppleScriptTask *script = [[NSUserAppleScriptTask alloc] initWithURL:aURL error:&error];
+        if (!script) {
+            [self showAlertForScript:fullPath error:error];
+            return;
         }
+        [script executeWithAppleEvent:nil completionHandler:^(NSAppleEventDescriptor * _Nullable result, NSError * _Nullable error) {
+            if (error) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [self showAlertForScript:fullPath error:error];
+                });
+            }
+        }];
         return;
     }
     if ([[NSFileManager defaultManager] itemIsDirectory:fullPath]) {
@@ -541,7 +585,9 @@ NS_ASSUME_NONNULL_BEGIN
     if (![[NSFileManager defaultManager] fileExistsAtPath:fullPath]) {
         return NO;
     }
-    NSString *venv = [iTermAPIScriptLauncher environmentForScript:fullPath checkForMain:YES];
+    NSString *venv = [iTermAPIScriptLauncher environmentForScript:fullPath
+                                                     checkForMain:YES
+                                                    checkForSaved:YES];
     if (venv) {
         return YES;
     }
@@ -575,6 +621,29 @@ NS_ASSUME_NONNULL_BEGIN
 }
 
 - (void)newPythonScript {
+    __weak __typeof(self) weakSelf = self;
+    iTermPythonRuntimeDownloader *downloader = [iTermPythonRuntimeDownloader sharedInstance];
+    [downloader downloadOptionalComponentsIfNeededWithConfirmation:YES
+                                                     pythonVersion:nil
+                                         minimumEnvironmentVersion:0
+                                                requiredToContinue:YES
+                                                    withCompletion:^(iTermPythonRuntimeDownloaderStatus status) {
+        switch (status) {
+            case iTermPythonRuntimeDownloaderStatusRequestedVersionNotFound:
+            case iTermPythonRuntimeDownloaderStatusCanceledByUser:
+            case iTermPythonRuntimeDownloaderStatusUnknown:
+            case iTermPythonRuntimeDownloaderStatusWorking:
+            case iTermPythonRuntimeDownloaderStatusError:
+                return;
+            case iTermPythonRuntimeDownloaderStatusNotNeeded:
+            case iTermPythonRuntimeDownloaderStatusDownloaded:
+                break;
+        }
+        [weakSelf reallyCreateNewPythonScript];
+    }];
+}
+
+- (void)reallyCreateNewPythonScript {
     iTermScriptTemplatePickerWindowController *picker = [[iTermScriptTemplatePickerWindowController alloc] initWithWindowNibName:@"iTermScriptTemplatePickerWindowController"];
     [NSApp runModalForWindow:picker.window];
     [picker.window close];
@@ -620,25 +689,11 @@ NS_ASSUME_NONNULL_BEGIN
         NSURL *folder = [NSURL fileURLWithPath:[self folderForFullEnvironmentSavePanelURL:url]];
         NSURL *existingEnv = [folder URLByAppendingPathComponent:@"iterm2env"];
         [[NSFileManager defaultManager] removeItemAtURL:existingEnv error:nil];
-        iTermBuildingScriptWindowController *pleaseWait = [iTermBuildingScriptWindowController newPleaseWaitWindowController];
-        id token = [[NSNotificationCenter defaultCenter] addObserverForName:NSApplicationDidBecomeActiveNotification
-                                                                     object:nil
-                                                                      queue:nil
-                                                                 usingBlock:^(NSNotification * _Nonnull note) {
-                                                                     [pleaseWait.window makeKeyAndOrderFront:nil];
-                                                                 }];
-        _disablePathWatcher++;
         [[iTermPythonRuntimeDownloader sharedInstance] installPythonEnvironmentTo:folder
-                                                                 eventualLocation:folder
-                                                                    pythonVersion:pythonVersion
-                                                               environmentVersion:[[iTermPythonRuntimeDownloader sharedInstance] installedVersionWithPythonVersion:pythonVersion]
                                                                      dependencies:dependencies
-                                                                   createSetupCfg:YES
-                                                                       completion:
-         ^(iTermInstallPythonStatus status) {
-             [[NSNotificationCenter defaultCenter] removeObserver:token];
-             [pleaseWait.window close];
-             if (status != iTermInstallPythonStatusOK) {
+                                                                    pythonVersion:pythonVersion
+                                                                       completion:^(BOOL ok) {
+            if (!ok) {
                  NSAlert *alert = [[NSAlert alloc] init];
                  alert.messageText = @"Installation Failed";
                  alert.informativeText = @"Remove ~/Library/Application Support/iTerm2/iterm2env and try again.";
@@ -646,7 +701,6 @@ NS_ASSUME_NONNULL_BEGIN
                  return;
              }
              [self finishInstallingNewPythonScriptForPicker:picker url:url];
-             self->_disablePathWatcher--;
              [self build];
          }];
     } else {
@@ -690,7 +744,7 @@ NS_ASSUME_NONNULL_BEGIN
     NSPopUpButton *popUpButton = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(10, 0, 50, 50)];
 
     NSArray<NSString *> *components = @[ @"iterm2env", @"versions" ];
-    NSString *path = [[NSFileManager defaultManager] applicationSupportDirectoryWithoutSpaces];
+    NSString *path = [[NSFileManager defaultManager] spacelessAppSupportCreatingLink];
     for (NSString *part in components) {
         path = [path stringByAppendingPathComponent:part];
     }
@@ -844,7 +898,7 @@ NS_ASSUME_NONNULL_BEGIN
     }
     savePanel.directoryURL = [NSURL fileURLWithPath:[[NSFileManager defaultManager] scriptsPath]];
 
-    if ([savePanel runModal] == NSFileHandlingPanelOKButton) {
+    if ([savePanel runModal] == NSModalResponseOK) {
         NSURL *url = savePanel.URL;
         NSString *filename = [url lastPathComponent];
         NSString *safeFilename = [filename stringByReplacingOccurrencesOfString:@" " withString:@"_"];
@@ -966,17 +1020,11 @@ NS_ASSUME_NONNULL_BEGIN
     [scriptMenu addItem:altItem];
 }
 
-- (void)showAlertForScript:(NSString *)fullPath error:(NSDictionary *)errorInfo {
-    NSValue *range = errorInfo[NSAppleScriptErrorRange];
-    NSString *location = @"Location of error not known.";
-    if (range) {
-        location = [NSString stringWithFormat:@"The error starts at byte %d of the script.",
-                    (int)[range rangeValue].location];
-    }
+- (void)showAlertForScript:(NSString *)fullPath error:(NSError *)error {
     NSAlert *alert = [[NSAlert alloc] init];
     alert.messageText = @"Problem running script";
-    alert.informativeText = [NSString stringWithFormat:@"The script at \"%@\" failed.\n\nThe error was: \"%@\"\n\n%@",
-                             fullPath, errorInfo[NSAppleScriptErrorMessage], location];
+    alert.informativeText = [NSString stringWithFormat:@"The script at “%@” failed:\n\n%@",
+                             fullPath, error.localizedFailureReason];
     [alert runModal];
 }
 
@@ -992,11 +1040,15 @@ NS_ASSUME_NONNULL_BEGIN
     if (_ranAutoLaunchScript) {
         return NO;
     }
+    if (![[NSFileManager defaultManager] homeDirectoryDotDir]) {
+        return NO;
+    }
     return ([[NSFileManager defaultManager] fileExistsAtPath:self.legacyAutolaunchScriptPath] ||
             [[NSFileManager defaultManager] fileExistsAtPath:self.autolaunchScriptPath]);
 }
 
 - (void)runAutoLaunchScripts {
+    DLog(@"run auto launch scripts");
     _ranAutoLaunchScript = YES;
 
     [self runLegacyAutoLaunchScripts];
@@ -1004,10 +1056,13 @@ NS_ASSUME_NONNULL_BEGIN
 }
 
 - (void)runModernAutoLaunchScripts {
+    if (![[NSFileManager defaultManager] homeDirectoryDotDir]) {
+        return;
+    }
     NSString *scriptsPath = [[NSFileManager defaultManager] autolaunchScriptPath];
     NSDirectoryEnumerator *enumerator = [[NSFileManager defaultManager] enumeratorAtPath:scriptsPath];
     for (NSString *file in enumerator) {
-        if ([file caseInsensitiveCompare:@".DS_Store"] == NSOrderedSame) {
+        if ([file hasPrefix:@"."]) {
             continue;
         }
         NSString *path = [scriptsPath stringByAppendingPathComponent:file];
@@ -1019,25 +1074,28 @@ NS_ASSUME_NONNULL_BEGIN
 }
 
 - (void)runAutoLaunchScript:(NSString *)path {
-    [self launchScriptWithAbsolutePath:path explicitUserAction:NO];
+    [self launchScriptWithAbsolutePath:path arguments:@[] explicitUserAction:NO];
 }
 
 - (void)runLegacyAutoLaunchScripts {
-    NSDictionary *errorInfo = [NSDictionary dictionary];
     NSURL *aURL = [NSURL fileURLWithPath:self.legacyAutolaunchScriptPath];
 
     // Make sure our script suite registry is loaded
     [NSScriptSuiteRegistry sharedScriptSuiteRegistry];
 
-    NSAppleScript *autoLaunchScript = [[NSAppleScript alloc] initWithContentsOfURL:aURL
-                                                                             error:&errorInfo];
-    [autoLaunchScript executeAndReturnError:&errorInfo];
+    NSError *error = nil;
+    NSUserAppleScriptTask *script = [[NSUserAppleScriptTask alloc] initWithURL:aURL error:&error];
+    if (!script) {
+        return;
+    }
+    DLog(@"Execute %@", aURL);
+    [script executeWithAppleEvent:nil completionHandler:nil];
 }
 
 #pragma mark - SCEventListenerProtocol
 
 - (void)pathWatcher:(SCEvents *)pathWatcher eventOccurred:(SCEvent *)event {
-    if (_disablePathWatcher) {
+    if ([[iTermPythonRuntimeDownloader sharedInstance] busy]) {
         return;
     }
     DLog(@"Path watcher noticed a change to scripts directory");
@@ -1063,7 +1121,18 @@ NS_ASSUME_NONNULL_BEGIN
 }
 
 - (BOOL)panel:(id)sender validateURL:(NSURL *)url error:(NSError **)outError {
-    return [self urlIsUnderScripts:url];
+    if ([self urlIsUnderScripts:url]) {
+        return YES;
+    }
+    NSString *message = [NSString stringWithFormat:@"Full-environment scripts must be located under in your Application Support/iTerm2/Scripts directory:\n%@", [[NSFileManager defaultManager] scriptsPath]];
+    [iTermWarning showWarningWithTitle:message
+                               actions:@[ @"OK" ]
+                             accessory:nil
+                            identifier:@"FullEnvironmentScriptsLocationRestricted"
+                           silenceable:kiTermWarningTypePersistent
+                               heading:@"Invalid Folder"
+                                window:sender];
+    return NO;
 }
 
 @end

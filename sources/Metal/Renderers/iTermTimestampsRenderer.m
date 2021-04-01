@@ -8,6 +8,8 @@
 #import "iTermTimestampsRenderer.h"
 
 #import "FutureMethods.h"
+#import "iTermGraphicsUtilities.h"
+#import "iTermSharedImageStore.h"
 #import "iTermTexturePool.h"
 #import "iTermTimestampDrawHelper.h"
 
@@ -91,16 +93,18 @@
                                                            _backgroundColor.greenComponent,
                                                            _backgroundColor.blueComponent,
                                                            _backgroundColor.alphaComponent);
+    const CGFloat scale = self.configuration.scale;
+    const CGFloat vmargin = self.margins.bottom / scale;
     [_timestamps enumerateObjectsUsingBlock:^(NSDate * _Nonnull date, NSUInteger idx, BOOL * _Nonnull stop) {
         iTermTimestampKey *key = [[iTermTimestampKey alloc] init];
         key.width = visibleWidth;
         key.textColor = textColor;
         key.backgroundColor = backgroundColor;
-        key.date = [self->_drawHelper rowIsRepeat:idx] ? 0 : round(date.timeIntervalSinceReferenceDate);
+        key.date = [self->_drawHelper rowIsRepeat:idx] ? -1 : round(date.timeIntervalSinceReferenceDate);
         block(idx,
               key,
-              NSMakeRect(self.configuration.viewportSize.x / self.configuration.scale - visibleWidth,
-                         self.configuration.viewportSize.y / self.configuration.scale - ((idx + 1) * rowHeight),
+              NSMakeRect(self.configuration.viewportSize.x / scale - visibleWidth,
+                         self.configuration.viewportSize.y / scale - ((idx + 1) * rowHeight) - vmargin,
                          visibleWidth,
                          rowHeight));
 
@@ -112,10 +116,16 @@
                              self.cellConfiguration.cellSize.height / self.cellConfiguration.scale);
     assert(size.width * size.height > 0);
     NSImage *image = [[NSImage alloc] initWithSize:size];
-    [image lockFocus];
+    [image lockFocusFlipped:YES];
+    NSGraphicsContext *context = [NSGraphicsContext currentContext];
+    iTermSetSmoothing(context.CGContext,
+                      NULL,
+                      self.useThinStrokes,
+                      self.antialiased);
     [_drawHelper drawRow:row
                inContext:[NSGraphicsContext currentContext]
-                   frame:NSMakeRect(0, 0, size.width, size.height)];
+                   frame:NSMakeRect(0, 0, size.width, size.height)
+           virtualOffset:0];
     [image unlockFocus];
 
     return image;
@@ -183,7 +193,7 @@
         if (!pooledTexture) {
             NSImage *image = [tState imageForRow:row];
             iTermMetalBufferPoolContext *context = tState.poolContext;
-            id<MTLTexture> texture = [self->_cellRenderer textureFromImage:image
+            id<MTLTexture> texture = [self->_cellRenderer textureFromImage:[iTermImageWrapper withImage:image]
                                                                    context:context
                                                                       pool:self->_texturePool];
             assert(texture);
@@ -192,8 +202,14 @@
             [self->_cache setObject:pooledTexture forKey:key];
         }
         [tState addPooledTexture:pooledTexture];
-        assert(tState.configuration.viewportSize.x > pooledTexture.texture.width);
-        tState.vertexBuffer = [self->_cellRenderer newQuadWithFrame:CGRectMake(frame.origin.x * scale,
+        CGFloat overflow;
+        const CGFloat slop = iTermTimestampGradientWidth * scale;
+        if (pooledTexture.texture.width < tState.configuration.viewportSize.x + slop) {
+            overflow = 0;
+        } else {
+            overflow = pooledTexture.texture.width - tState.configuration.viewportSize.x - slop;
+        }
+        tState.vertexBuffer = [self->_cellRenderer newQuadWithFrame:CGRectMake(frame.origin.x * scale + overflow,
                                                                                frame.origin.y * scale,
                                                                                frame.size.width * scale,
                                                                                frame.size.height * scale)

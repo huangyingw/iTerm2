@@ -1,10 +1,13 @@
 """Provides interfaces for getting and changing preferences (excluding
 per-profile preferences; see the profile submodule for that)"""
 import enum
-import iterm2.rpc
 import json
 import typing
 
+import iterm2.rpc
+
+
+# pylint: disable=line-too-long
 class PreferenceKey(enum.Enum):
     """Keys identifying particular preference settings."""
     OPEN_PROFILES_WINDOW_AT_START = "OpenBookmark"  #: Open the profiles window at startup?  Mutually exclusive with OPEN_DEFAULT_ARRANGEMENT_AT_START and RESTORE_ONLY_HOTKEY_AT_START.  Takes a boolean.
@@ -98,17 +101,21 @@ class PreferenceKey(enum.Enum):
     PER_PANE_STATUS_BAR = "SeparateStatusBarsPerPane"  #: Should each split pane have a separate status bar, or just one for the whole window? Takes a boolean.
     EMULATE_US_KEYBOARD = "UseVirtualKeyCodesForDetectingDigits"  #: Emulate US keyboard for the purposes of switching tabs/panes/windows by keyboard? Takes a boolean.
     TEXT_SIZE_CHANGES_AFFECT_PROFILE = "Size Changes Affect Profile"  #: Does increasing/decreasing text size update the backing profile? Takes a boolean.
+    ACTIONS = "Actions"  #: Array of dictionaries defining actions.
+    HTML_TAB_TITLES = "HTMLTabTitles"  #: Support basic HTML tags in tab titles
+
+# pylint: enable=line-too-long
 
 
-
-async def async_get_preference(connection, key: PreferenceKey) -> typing.Union[None, typing.Any]:
+async def async_get_preference(
+        connection, key: PreferenceKey) -> typing.Union[None, typing.Any]:
     """
     Gets a preference by key.
 
     :param key: The preference key, from the `PreferenceKey` enum.
-    :returns: An object with the preferences value, or `None` if unset and no default exists.
+    :returns: An object with the preferences value, or `None` if unset and no
+        default exists.
     """
     proto = await iterm2.rpc.async_get_preference(connection, key.value)
     j = proto.preferences_response.results[0].get_preference_result.json_value
     return json.loads(j)
-

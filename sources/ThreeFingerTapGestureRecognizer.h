@@ -22,6 +22,7 @@
 // method on the recognizer.
 - (void)touchesBeganWithEvent:(NSEvent *)event;
 - (void)touchesEndedWithEvent:(NSEvent *)event;
+- (void)touchesMovedWithEvent:(NSEvent *)event;
 - (void)touchesCancelledWithEvent:(NSEvent *)event;
 
 // If these return YES then do not continue processing them or run [super ...].
@@ -29,5 +30,8 @@
 - (BOOL)rightMouseUp:(NSEvent*)event;
 - (BOOL)mouseDown:(NSEvent*)event;
 - (BOOL)mouseUp:(NSEvent*)event;
+
+- (void)mouseDragged;
+- (void)scrollWheel;
 
 @end

@@ -43,11 +43,15 @@ typedef NS_OPTIONS(NSUInteger, iTermPasteFlags) {
     kPasteFlagsRemovingNewlines = (1 << 9),
 
     kPasteFlagsUseRegexSubstitution = (1 << 10),
+
+    // Disable warnings?
+    kPasteFlagsDisableWarnings = (1 << 11)
 };
 
 @interface PasteEvent : NSEvent
 
-@property(nonatomic, copy) NSString *string;
+@property(nonatomic, copy, readonly) NSString *originalString;
+@property(nonatomic, readonly) NSString *string;
 @property(nonatomic, assign) iTermPasteFlags flags;
 @property(nonatomic, assign) int defaultChunkSize;
 @property(nonatomic, copy) NSString *chunkKey;
@@ -75,5 +79,9 @@ typedef NS_OPTIONS(NSUInteger, iTermPasteFlags) {
                         spacesPerTab:(int)spacePerTab
                                regex:(NSString *)regex
                         substitution:(NSString *)substitution;
+
+- (void)setModifiedString:(NSString *)modifiedString;
+- (void)addPasteBracketing;
+- (void)trimNewlines;
 
 @end

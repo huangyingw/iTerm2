@@ -9,6 +9,7 @@
 
 #import "DebugLogging.h"
 #import "iTermAdvancedSettingsModel.h"
+#import "iTermFindPasteboard.h"
 #import "iTermSearchHistory.h"
 #import "iTermTuple.h"
 #import "NSArray+iTerm.h"
@@ -90,10 +91,10 @@ static NSString *gSearchString;
         });
         _state = [[FindState alloc] init];
         _state.mode = gFindMode;
-        [[NSNotificationCenter defaultCenter] addObserver:self
-                                                 selector:@selector(loadFindStringFromSharedPasteboard:)
-                                                     name:@"iTermLoadFindStringFromSharedPasteboard"
-                                                   object:nil];
+        __weak __typeof(self) weakSelf = self;
+        [[iTermFindPasteboard sharedInstance] addObserver:self block:^(id sender, NSString *newValue) {
+            [weakSelf loadFindStringFromSharedPasteboard:newValue];
+        }];
     }
     return self;
 }
@@ -124,6 +125,7 @@ static NSString *gSearchString;
 }
 
 - (void)saveState {
+    DLog(@"save mode=%@ string=%@", @(_savedState.mode), _savedState.string);
     _savedState = _state;
     _state = [[FindState alloc] init];
     _state.mode = _savedState.mode;
@@ -149,6 +151,7 @@ static NSString *gSearchString;
 - (void)close {
     BOOL wasHidden = _viewController.view.isHidden;
     if (!wasHidden) {
+        DLog(@"Remove timer");
         [_timer invalidate];
         _timer = nil;
     }
@@ -166,6 +169,7 @@ static NSString *gSearchString;
 }
 
 - (void)closeViewAndDoTemporarySearchForString:(NSString *)string mode:(iTermFindMode)mode {
+    DLog(@"begin %@", self);
     [_viewController close];
     if (!_savedState) {
         [self saveState];
@@ -173,12 +177,17 @@ static NSString *gSearchString;
     _state.mode = mode;
     _state.string = string;
     _viewController.findString = string;
+    DLog(@"delegate=%@ state=%@ state.mode=%@ state.string=%@", self.delegate, _state, @(_state.mode), _state.string);
     [self.delegate findViewControllerClearSearch];
     [self doSearch];
 }
 
 - (void)userDidEditSearchQuery:(NSString *)updatedQuery
                    fieldEditor:(NSTextView *)fieldEditor {
+    if (!_savedState) {
+        [self loadFindStringIntoSharedPasteboard:_viewController.findString];
+    }
+
     // A query becomes stale when it is 1 or 2 chars long and it hasn't been edited in 3 seconds (or
     // the search field has lost focus since the last char was entered).
     static const CGFloat kStaleTime = 3;
@@ -303,27 +312,33 @@ static NSString *gSearchString;
     scrollToFirstResult:NO];
 }
 
+- (NSInteger)numberOfResults {
+    return [self.delegate findDriverNumberOfSearchResults];
+}
+
+- (NSInteger)currentIndex {
+    return [self.delegate findDriverCurrentIndex];
+}
+
 #pragma mark - Notifications
 
-- (void)loadFindStringFromSharedPasteboard:(NSNotification *)notification {
+- (void)loadFindStringFromSharedPasteboard:(NSString *)value {
+    DLog(@"[%p loadFindStringFromSharedPasteboard:%@] in window with frame %@", self, value, NSStringFromRect(_viewController.view.window.frame));
     if (![iTermAdvancedSettingsModel loadFromFindPasteboard]) {
         return;
     }
-    if (!_viewController.searchBarIsFirstResponder) {
-        NSPasteboard* findBoard = [NSPasteboard pasteboardWithName:NSFindPboard];
-        if ([[findBoard types] containsObject:NSStringPboardType]) {
-            NSString *value = [findBoard stringForType:NSStringPboardType];
-            if (value && [value length] > 0) {
-                if (_savedState && ![value isEqualTo:_savedState.string]) {
-                    [self setNeedsUpdateOnFocus:YES];
-                    [self restoreState];
-                }
-                if (![value isEqualToString:_viewController.findString]) {
-                    _viewController.findString = value;
-                    self.needsUpdateOnFocus = YES;
-                }
-            }
-        }
+    if (!_viewController.view.window.isKeyWindow) {
+        DLog(@"Not in key window");
+        return;
+    }
+    if (_savedState && ![value isEqualTo:_savedState.string]) {
+        [self setNeedsUpdateOnFocus:YES];
+        [self restoreState];
+    }
+    if (![value isEqualToString:_viewController.findString]) {
+        DLog(@"%@ setFindString:%@", self, value);
+        _viewController.findString = value;
+        self.needsUpdateOnFocus = YES;
     }
 }
 
@@ -341,15 +356,13 @@ static NSString *gSearchString;
 }
 
 - (void)loadFindStringIntoSharedPasteboard:(NSString *)stringValue {
+    DLog(@"begin %@", self);
     if (_savedState) {
+        DLog(@"Have no saved state, doing nothing");
         return;
     }
-    // Copy into the NSFindPboard
-    NSPasteboard *findPB = [NSPasteboard pasteboardWithName:NSFindPboard];
-    if (findPB) {
-        [findPB declareTypes:[NSArray arrayWithObject:NSStringPboardType] owner:nil];
-        [findPB setString:stringValue forType:NSStringPboardType];
-    }
+    // Copy into the NSPasteboardNameFind
+    [[iTermFindPasteboard sharedInstance] setStringValue:stringValue];
 }
 
 - (void)backTab {
@@ -383,14 +396,19 @@ static NSString *gSearchString;
 }
 
 - (void)didLoseFocus {
+    if (_timer == nil) {
+        [_viewController setProgress:0];
+    }
     _lastEditTime = 0;
 }
 
 #pragma mark - Private
 
 - (BOOL)continueSearch {
+    DLog(@"begin self=%@", self);
     BOOL more = NO;
     if ([self.delegate findInProgress]) {
+        DLog(@"Find is in progress");
         double progress;
         more = [self.delegate continueFind:&progress];
         [_viewController setProgress:progress];
@@ -398,13 +416,16 @@ static NSString *gSearchString;
     if (!more) {
         [_timer invalidate];
         _timer = nil;
+        DLog(@"Remove timer");
         [_viewController setProgress:1];
     }
     return more;
 }
 
 - (void)setSearchString:(NSString *)s {
+    DLog(@"begin self=%@ s=%@", self, s);
     if (!_savedState) {
+        DLog(@"Have no saved state so updating gSearchString and _state.string");
         gSearchString = [s copy];
         _state.string = [s copy];
     }
@@ -420,6 +441,7 @@ static NSString *gSearchString;
 }
 
 - (void)setSearchDefaults {
+    DLog(@"begin %@", self);
     [self setSearchString:_viewController.findString];
     [self setGlobalMode:_state.mode];
 }
@@ -429,9 +451,13 @@ static NSString *gSearchString;
                  mode:(iTermFindMode)mode
            withOffset:(int)offset
   scrollToFirstResult:(BOOL)scrollToFirstResult {
+    DLog(@"begin self=%@ subString=%@ direction=%@ mode=%@ offset=%@ scrollToFirstResult=%@",
+         self, subString, @(direction), @(mode), @(offset), @(scrollToFirstResult));
     BOOL ok = NO;
     if ([_delegate canSearch]) {
+        DLog(@"delegate can search %@", _delegate);
         if ([subString length] <= 0) {
+            DLog(@"Clear search");
             [_delegate findViewControllerClearSearch];
         } else {
             [_delegate findString:subString
@@ -443,6 +469,7 @@ static NSString *gSearchString;
         }
     }
 
+    DLog(@"ok=%@ timer=%@", @(ok), _timer);
     if (ok && !_timer) {
         [_viewController setProgress:0];
         if ([self continueSearch]) {
@@ -451,9 +478,11 @@ static NSString *gSearchString;
                                                     selector:@selector(continueSearch)
                                                     userInfo:nil
                                                      repeats:YES];
+            DLog(@"Set timer");
             [[NSRunLoop currentRunLoop] addTimer:_timer forMode:NSRunLoopCommonModes];
         }
     } else if (!ok && _timer) {
+        DLog(@"Remove timer");
         [_timer invalidate];
         _timer = nil;
         [_viewController setProgress:1];
@@ -514,11 +543,11 @@ static NSString *gSearchString;
 }
 
 - (void)doSearch {
+    DLog(@"begin %@ _state.string=%@ _viewController.findString=%@", self, _state.string, _viewController.findString);
     NSString *theString = _savedState ? _state.string : _viewController.findString;
     if (!_savedState) {
+        DLog(@"Have no saved state. Load find string into shared pasteboard: %@", _viewController.findString);
         [self loadFindStringIntoSharedPasteboard:_viewController.findString];
-        [[NSNotificationCenter defaultCenter] postNotificationName:@"iTermLoadFindStringFromSharedPasteboard"
-                                                            object:nil];
     }
     // Search.
     [self setSearchDefaults];

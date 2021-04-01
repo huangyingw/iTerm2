@@ -7,6 +7,7 @@
 #import "FutureMethods.h"
 #import "iTermAdvancedSettingsModel.h"
 #import "iTermASCIITexture.h"
+#import "iTermAlphaBlendingHelper.h"
 #import "iTermBackgroundImageRenderer.h"
 #import "iTermBackgroundColorRenderer.h"
 #import "iTermBadgeRenderer.h"
@@ -81,12 +82,19 @@ typedef struct {
     CGSize glyphSize;
     CGSize asciiOffset;
     CGContextRef context;
+#if ENABLE_UNFAMILIAR_TEXTURE_WORKAROUND
+    NSInteger unfamiliarTextureCount;
+#endif
+    CGFloat maximumExtendedDynamicRangeColorComponentValue NS_AVAILABLE_MAC(10_15);
 } iTermMetalDriverMainThreadState;
 
 @interface iTermMetalDriver()
-// This indicates if a draw call was made while busy. When we stop being busy
-// and this is set, then we must schedule another draw.
-@property (atomic) BOOL needsDraw;
+
+// When less than infinity, we need to trigger our own redraw. This could be because we failed to
+// get a frame or there are too many concurrent draws. When the current attempt at drawing finishes
+// a call to setNeedsDisplay: will be made after this duration. It is reset to INFINITY when a draw
+// is not needed.
+@property (atomic) NSTimeInterval needsDrawAfterDuration;
 @property (atomic) BOOL waitingOnSynchronousDraw;
 @property (nonatomic, readonly) iTermMetalDriverMainThreadState *mainThreadState;
 @end
@@ -113,9 +121,7 @@ typedef struct {
     iTermCopyBackgroundRenderer *_copyBackgroundRenderer;
     iTermCursorRenderer *_keyCursorRenderer;
     iTermImageRenderer *_imageRenderer;
-#if ENABLE_USE_TEMPORARY_TEXTURE
     iTermCopyToDrawableRenderer *_copyToDrawableRenderer;
-#endif
 
     // This one is special because it's debug only
     iTermCopyOffscreenRenderer *_copyOffscreenRenderer;
@@ -130,7 +136,9 @@ typedef struct {
     dispatch_queue_t _queue;
 #endif
     iTermPreciseTimerStats _stats[iTermMetalFrameDataStatCount];
+#if ENABLE_STATS
     NSArray<iTermHistogram *> *_statHistograms;
+#endif
     int _dropped;
     int _total;
 
@@ -149,6 +157,11 @@ typedef struct {
     // be nonnil and holds the state needed by those calls. Will bet set to nil if the frame will
     // be drawn by reallyDrawInMTKView:.
     iTermMetalDriverAsyncContext *_context;
+#if ENABLE_UNFAMILIAR_TEXTURE_WORKAROUND
+    // Used to work around a bug where presentDrawable: sometimes doesn't work. It only seems to
+    // happen with a never-before-seen texture. Holds weak refs to drawables' textures.
+    NSPointerArray *_familiarTextures;
+#endif
 }
 
 - (nullable instancetype)initWithDevice:(nonnull id<MTLDevice>)device {
@@ -182,28 +195,32 @@ typedef struct {
         _copyModeCursorRenderer = [iTermCursorRenderer newCopyModeCursorRendererWithDevice:device];
         _keyCursorRenderer = [iTermCursorRenderer newKeyCursorRendererWithDevice:device];
         _copyBackgroundRenderer = [[iTermCopyBackgroundRenderer alloc] initWithDevice:device];
-#if ENABLE_USE_TEMPORARY_TEXTURE
         if (iTermTextIsMonochrome()) {} else {
             _copyToDrawableRenderer = [[iTermCopyToDrawableRenderer alloc] initWithDevice:device];
         }
-#endif
 
         _commandQueue = [device newCommandQueue];
 #if ENABLE_PRIVATE_QUEUE
         _queue = dispatch_queue_create("com.iterm2.metalDriver", NULL);
 #endif
+#if ENABLE_UNFAMILIAR_TEXTURE_WORKAROUND
+        _familiarTextures = [NSPointerArray weakObjectsPointerArray];
+#endif
+
         _currentFrames = [NSMutableArray array];
         _currentDrawableTime = [[MovingAverage alloc] init];
         _currentDrawableTime.alpha = 0.75;
 
         _fpsMovingAverage = [[MovingAverage alloc] init];
         _fpsMovingAverage.alpha = 0.75;
+#if ENABLE_STATS
         iTermMetalFrameDataStatsBundleInitialize(_stats);
         _statHistograms = [[NSArray sequenceWithRange:NSMakeRange(0, iTermMetalFrameDataStatCount)] mapWithBlock:^id(NSNumber *anObject) {
             return [[iTermHistogram alloc] init];
         }];
-
+#endif
         _maxFramesInFlight = iTermMetalDriverMaximumNumberOfFramesInFlight;
+        _needsDrawAfterDuration = INFINITY;
 
         [[NSNotificationCenter defaultCenter] addObserver:self
                                                  selector:@selector(applicationDidBecomeActive:)
@@ -232,6 +249,7 @@ typedef struct {
 }
 
 - (void)applicationDidBecomeActive:(NSNotification *)notification {
+#if ENABLE_STATS
 #if ENABLE_PRIVATE_QUEUE
     dispatch_async(_queue, ^{
         iTermMetalFrameDataStatsBundleInitialize(self->_stats);
@@ -242,6 +260,7 @@ typedef struct {
 #else
     iTermMetalFrameDataStatsBundleInitialize(_stats);
 #endif
+#endif  // ENABLE_STATS
 }
 
 - (NSString *)description {
@@ -376,6 +395,22 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
     });
 }
 
+- (MTLCaptureDescriptor *)triggerProgrammaticCapture:(id<MTLDevice>)device NS_AVAILABLE_MAC(10_15) {
+    MTLCaptureManager* captureManager = [MTLCaptureManager sharedCaptureManager];
+    MTLCaptureDescriptor* captureDescriptor = [[MTLCaptureDescriptor alloc] init];
+    NSString *filename = [NSString stringWithFormat:@"/tmp/%@.gputrace", [[NSUUID UUID] UUIDString]];
+    captureDescriptor.outputURL = [NSURL fileURLWithPath:filename];
+    captureDescriptor.destination = MTLCaptureDestinationGPUTraceDocument;
+    captureDescriptor.captureObject = device;
+
+    NSError *error;
+    if (![captureManager startCaptureWithDescriptor:captureDescriptor error:&error]) {
+        ITCriticalError(NO, @"Failed to start capture, error %@", error);
+        return nil;
+    }
+    return captureDescriptor;
+}
+
 - (BOOL)reallyDrawInMTKView:(nonnull MTKView *)view startToStartTime:(NSTimeInterval)startToStartTime {
     @synchronized (self) {
         [_inFlightHistogram addValue:_currentFrames.count];
@@ -384,6 +419,9 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
         DLog(@"  abort: uninitialized");
         [self scheduleDrawIfNeededInView:view];
         return NO;
+    }
+    if (@available(macOS 10.15, *)) {
+        self.mainThreadState->maximumExtendedDynamicRangeColorComponentValue = view.window.screen.maximumPotentialExtendedDynamicRangeColorComponentValue;
     }
 
 #if ENABLE_FLAKY_METAL
@@ -420,13 +458,16 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
             DLog(@"  abort: busy (dropped %@%%, number in flight: %d)", @((_dropped * 100)/_total), (int)framesInFlight);
             DLog(@"  current frames:\n%@", _currentFrames);
             _dropped++;
-            self.needsDraw = YES;
+            self.needsDrawAfterDuration = MIN(self.needsDrawAfterDuration, 1/60.0);
             return NO;
         }
     }
 
     if (self.captureDebugInfoForNextFrame) {
         frameData.debugInfo = [[iTermMetalDebugInfo alloc] init];
+        if (@available(macOS 10.15, *)) {
+            frameData.captureDescriptor = [self triggerProgrammaticCapture:frameData.device];
+        }
         self.captureDebugInfoForNextFrame = NO;
     }
     if (_total > 1) {
@@ -437,11 +478,24 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
     if (!frameData.deferCurrentDrawable) {
         if (frameData.destinationTexture == nil || frameData.renderPassDescriptor == nil) {
             DLog(@"  abort: failed to get drawable or RPD");
-            self.needsDraw = YES;
+            self.needsDrawAfterDuration = MIN(self.needsDrawAfterDuration, 1/60.0);
             return NO;
         }
     }
-#endif
+#if ENABLE_UNFAMILIAR_TEXTURE_WORKAROUND
+    if (!frameData.textureIsFamiliar) {
+        if (_mainThreadState.unfamiliarTextureCount < _maxFramesInFlight) {
+            DLog(@"Texture is unfamiliar for %@", frameData);
+            self.needsDrawAfterDuration = 0;
+        } else {
+            DLog(@"Avoid redrawing unfamiliar texture to break loop");
+        }
+        _mainThreadState.unfamiliarTextureCount += 1;
+    } else {
+        _mainThreadState.unfamiliarTextureCount = 0;
+    }
+#endif  // ENABLE_UNFAMILIAR_TEXTURE_WORKAROUND
+#endif  // ENABLE_PRIVATE_QUEUE
 
     @synchronized(self) {
         [_currentFrames addObject:frameData];
@@ -492,15 +546,24 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
         frameData.rows = [NSMutableArray array];
         frameData.gridSize = frameData.perFrameState.gridSize;
 
+        const CGFloat scale = self.mainThreadState->scale;
         CGSize (^rescale)(CGSize) = ^CGSize(CGSize size) {
-            return CGSizeMake(size.width * self.mainThreadState->scale, size.height * self.mainThreadState->scale);
+            return CGSizeMake(size.width * scale, size.height * scale);
         };
         frameData.cellSize = rescale(frameData.perFrameState.cellSize);
         frameData.cellSizeWithoutSpacing = rescale(frameData.perFrameState.cellSizeWithoutSpacing);
         frameData.glyphSize = self.mainThreadState->glyphSize;
         
-        frameData.scale = self.mainThreadState->scale;
+        frameData.scale = scale;
         frameData.hasBackgroundImage = frameData.perFrameState.hasBackgroundImage;
+        const NSEdgeInsets pointInsets = frameData.perFrameState.extraMargins;
+        frameData.extraMargins = NSEdgeInsetsMake(pointInsets.top * scale,
+                                                  pointInsets.left * scale,
+                                                  pointInsets.bottom * scale,
+                                                  pointInsets.right * scale);
+        if (@available(macOS 10.15, *)) {
+            frameData.maximumExtendedDynamicRangeColorComponentValue = self.mainThreadState->maximumExtendedDynamicRangeColorComponentValue;
+        }
     }];
     return frameData;
 }
@@ -527,14 +590,10 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
     // behind text and we need to use the fancy subpixel antialiasing algorithm, create it now.
     // This has to be done before updates so the copyBackgroundRenderer's `enabled` flag can be
     // set properly.
-    if ([self shouldCreateIntermediateRenderPassDescriptor:frameData]) {
+    if (!iTermTextIsMonochrome()) {
         [frameData createIntermediateRenderPassDescriptor];
-    }
-#if ENABLE_USE_TEMPORARY_TEXTURE
-    if (iTermTextIsMonochrome()) {} else {
         [frameData createTemporaryRenderPassDescriptor];
     }
-#endif
 
     // Set properties of the renderers for values that tend not to change very often and which
     // are used to create transient states. This must happen before creating transient states
@@ -567,7 +626,7 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
     if (!frameData.deferCurrentDrawable) {
         if (frameData.destinationTexture == nil || frameData.renderPassDescriptor == nil) {
             DLog(@"  abort: failed to get drawable or RPD");
-            self.needsDraw = YES;
+            self.needsDrawAfterDuration = MIN(self.needsDrawAfterDuration, 1/60.0);
             [self complete:frameData];
             return;
         }
@@ -584,7 +643,6 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
 }
 
 - (void)addRowDataToFrameData:(iTermMetalFrameData *)frameData {
-    NSUInteger sketch = 0;
     for (int y = 0; y < frameData.gridSize.height; y++) {
         const int columns = frameData.gridSize.width;
         iTermMetalRowData *rowData = [[iTermMetalRowData alloc] init];
@@ -608,8 +666,7 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
                                                row:y
                                              width:columns
                                     drawableGlyphs:&drawableGlyphs
-                                              date:&date
-                                            sketch:&sketch];
+                                              date:&date];
         rowData.backgroundColorRLEData.length = rles * sizeof(iTermMetalBackgroundColorRLE);
         rowData.date = date;
         rowData.numberOfBackgroundRLEs = rles;
@@ -625,34 +682,10 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
         [frameData.debugInfo addRowData:rowData];
         [rowData.lineData checkForOverrun];
     }
-
-    // On average, this will be true if there are more than 16 unique color combinations.
-    // See tests/sketch_monte_carlo.py
-    frameData.hasManyColorCombos = (__builtin_popcountll(sketch) > 14);
 }
 
 - (BOOL)shouldCreateIntermediateRenderPassDescriptor:(iTermMetalFrameData *)frameData {
-    if (iTermTextIsMonochrome()) {
-        return NO;
-    }
-    if (!_backgroundImageRenderer.rendererDisabled && [frameData.perFrameState metalBackgroundImageGetMode:NULL]) {
-        return YES;
-    }
-    if (!_badgeRenderer.rendererDisabled && [frameData.perFrameState badgeImage]) {
-        return YES;
-    }
-    if (!_broadcastStripesRenderer.rendererDisabled && frameData.perFrameState.showBroadcastStripes) {
-        return YES;
-    }
-    if (!_cursorGuideRenderer.rendererDisabled && frameData.perFrameState.cursorGuideEnabled) {
-        return YES;
-    }
-
-#if ENABLE_PRETTY_ASCII_OVERLAP
-    return YES;
-#endif
-    
-    return NO;
+    return !iTermTextIsMonochrome();
 }
 
 - (void)updateRenderersForNewFrameData:(iTermMetalFrameData *)frameData {
@@ -731,8 +764,14 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
 - (id<MTLTexture>)destinationTextureForFrameData:(iTermMetalFrameData *)frameData {
     if (frameData.debugInfo) {
         // Render to offscreen first
+        MTLPixelFormat pixelFormat;
+        if ([iTermAdvancedSettingsModel hdrCursor]) {
+            pixelFormat = MTLPixelFormatRGBA16Float;
+        } else {
+            pixelFormat = MTLPixelFormatBGRA8Unorm;
+        }
         MTLTextureDescriptor *textureDescriptor =
-            [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+            [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:pixelFormat
                                                                width:frameData.destinationDrawable.texture.width
                                                               height:frameData.destinationDrawable.texture.height
                                                            mipmapped:NO];
@@ -750,6 +789,22 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
         return texture;
     }
 }
+
+#if ENABLE_UNFAMILIAR_TEXTURE_WORKAROUND
+- (BOOL)textureIsFamiliar:(id<MTLTexture>)texture {
+    // -compact only does its job if you manually insert a nil pointer!
+    // https://stackoverflow.com/questions/31322290/nspointerarray-weird-compaction/40274426
+    [_familiarTextures addPointer:nil];
+    [_familiarTextures compact];
+
+    for (id candidate in _familiarTextures) {
+        if (candidate == texture) {
+            return YES;
+        }
+    }
+    return NO;
+}
+#endif
 
 // Main thread
 - (void)acquireScarceResources:(iTermMetalFrameData *)frameData view:(MTKView *)view {
@@ -776,6 +831,15 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
             NSTimeInterval duration = [frameData measureTimeForStat:iTermMetalFrameDataStatMtGetCurrentDrawable ofBlock:^{
                 frameData.destinationDrawable = view.currentDrawable;
                 frameData.destinationTexture = [self destinationTextureForFrameData:frameData];
+#if ENABLE_UNFAMILIAR_TEXTURE_WORKAROUND
+                frameData.textureIsFamiliar = [self textureIsFamiliar:frameData.destinationDrawable.texture];
+                if (!frameData.textureIsFamiliar) {
+                    [_familiarTextures addPointer:(__bridge void *)frameData.destinationDrawable.texture];
+                }
+                while (_familiarTextures.count > _maxFramesInFlight) {
+                    [_familiarTextures removePointerAtIndex:0];
+                }
+#endif
             }];
             [_currentDrawableTime addValue:duration];
             if (frameData.destinationDrawable == nil) {
@@ -918,7 +982,7 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
         return;
     }
     iTermBackgroundImageMode mode;
-    NSImage *backgroundImage = [frameData.perFrameState metalBackgroundImageGetMode:&mode];
+    iTermImageWrapper *backgroundImage = [frameData.perFrameState metalBackgroundImageGetMode:&mode];
     [_backgroundImageRenderer setImage:backgroundImage
                                   mode:mode
                                  frame:frameData.perFrameState.relativeFrame
@@ -932,11 +996,9 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
         return;
     }
     _copyBackgroundRenderer.enabled = (frameData.intermediateRenderPassDescriptor != nil);
-#if ENABLE_USE_TEMPORARY_TEXTURE
     if (iTermTextIsMonochrome()) {} else {
         _copyToDrawableRenderer.enabled = YES;
     }
-#endif
 }
 
 - (void)updateBadgeRendererForFrameData:(iTermMetalFrameData *)frameData {
@@ -985,7 +1047,7 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
 
 #pragma mark - Populate Transient States
 
-- (void)populateCopyBackgroundRendererTransientStateWithFrameData:(iTermMetalFrameData *)frameData NS_DEPRECATED_MAC(10_12, 10_14) {
+- (void)populateCopyBackgroundRendererTransientStateWithFrameData:(iTermMetalFrameData *)frameData {
     if (_copyBackgroundRenderer.rendererDisabled) {
         return;
     }
@@ -993,10 +1055,8 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
     iTermCopyBackgroundRendererTransientState *copyState = [frameData transientStateForRenderer:_copyBackgroundRenderer];
     copyState.sourceTexture = frameData.intermediateRenderPassDescriptor.colorAttachments[0].texture;
 
-#if ENABLE_USE_TEMPORARY_TEXTURE
     iTermCopyToDrawableRendererTransientState *dState = [frameData transientStateForRenderer:_copyToDrawableRenderer];
     dState.sourceTexture = frameData.temporaryRenderPassDescriptor.colorAttachments[0].texture;
-#endif
 }
 
 - (void)populateCursorRendererTransientStateWithFrameData:(iTermMetalFrameData *)frameData {
@@ -1096,7 +1156,6 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
 
     // Set the background texture if one is available.
     textState.backgroundTexture = frameData.intermediateRenderPassDescriptor.colorAttachments[0].texture;
-    textState.disableIndividualColorModels = frameData.hasManyColorCombos;
 
     // Configure underlines
     iTermMetalUnderlineDescriptor asciiUnderlineDescriptor;
@@ -1108,10 +1167,10 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
     textState.asciiUnderlineDescriptor = asciiUnderlineDescriptor;
     textState.nonAsciiUnderlineDescriptor = nonAsciiUnderlineDescriptor;
     textState.strikethroughUnderlineDescriptor = strikethroughUnderlineDescriptor;
-    textState.defaultBackgroundColor = frameData.perFrameState.defaultBackgroundColor;
 
     CGSize glyphSize = textState.cellConfiguration.glyphSize;
     iTermBackgroundColorRendererTransientState *backgroundState = [frameData transientStateForRenderer:_backgroundColorRenderer];
+    backgroundState.defaultBackgroundColor = frameData.perFrameState.processedDefaultBackgroundColor;
 
     iTermMetalIMEInfo *imeInfo = frameData.perFrameState.imeInfo;
 
@@ -1180,6 +1239,7 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
                 if (array1[i].color.x != array2[i].color.x ||
                     array1[i].color.y != array2[i].color.y ||
                     array1[i].color.z != array2[i].color.z ||
+                    array1[i].color.w != array2[i].color.w ||
                     array1[i].count != array2[i].count) {
                     return NO;
                 }
@@ -1238,6 +1298,8 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
 - (void)populateTimestampsRendererTransientStateWithFrameData:(iTermMetalFrameData *)frameData {
     iTermTimestampsRendererTransientState *tState = [frameData transientStateForRenderer:_timestampsRenderer];
     if (frameData.perFrameState.timestampsEnabled) {
+        tState.useThinStrokes = frameData.perFrameState.thinStrokesForTimestamps;
+        tState.antialiased = frameData.perFrameState.asciiAntiAliased;
         tState.backgroundColor = frameData.perFrameState.timestampsBackgroundColor;
         tState.textColor = frameData.perFrameState.timestampsTextColor;
 
@@ -1271,7 +1333,8 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
 - (void)populateBackgroundImageRendererTransientStateWithFrameData:(iTermMetalFrameData *)frameData {
     iTermBackgroundImageRendererTransientState *tState =
         [frameData transientStateForRenderer:_backgroundImageRenderer];
-    tState.transparencyAlpha = frameData.perFrameState.transparencyAlpha;
+    tState.computedAlpha = iTermAlphaValueForBottomView(1 - frameData.perFrameState.transparencyAlpha,
+                                                        frameData.perFrameState.blend);
     tState.edgeInsets = frameData.perFrameState.edgeInsets;
 }
 
@@ -1416,11 +1479,7 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
     if (iTermTextIsMonochrome()) {
         useTemporaryTexture = NO;
     } else {
-#if ENABLE_USE_TEMPORARY_TEXTURE
         useTemporaryTexture = YES;
-#else
-        useTemporaryTexture = NO;
-#endif
     }
     
     NSArray<MTLRenderPassDescriptor *> *descriptors;
@@ -1624,7 +1683,7 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
         }
         if (frameData.destinationTexture == nil) {
             DLog(@"  abort: failed to get drawable or RPD %@", frameData);
-            self.needsDraw = YES;
+            self.needsDrawAfterDuration = MIN(self.needsDrawAfterDuration, 1/60.0);
             [frameData.renderEncoder endEncoding];
             [commandBuffer commit];
             [self didComplete:NO withFrameData:frameData];
@@ -1638,11 +1697,8 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
 
 - (void)finishDrawingWithCommandBuffer:(id<MTLCommandBuffer>)commandBuffer
                              frameData:(iTermMetalFrameData *)frameData {
-#if ENABLE_USE_TEMPORARY_TEXTURE
+    DLog(@"Finish drawing frameData %@", frameData);
     BOOL shouldCopyToDrawable = YES;
-#else
-    BOOL shouldCopyToDrawable = NO;
-#endif
 
     if (@available(macOS 10.14, *)) {
         if (iTermTextIsMonochromeOnMojave()) {
@@ -1664,6 +1720,7 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
 
     if (shouldCopyToDrawable) {
         // Copy to the drawable
+        DLog(@"  Copy to drawable %@", frameData);
         frameData.currentPass = 2;
         [frameData.renderEncoder endEncoding];
 
@@ -1673,19 +1730,23 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
                       stat:iTermMetalFrameDataStatPqEnqueueCopyToDrawable];
     }
     [frameData measureTimeForStat:iTermMetalFrameDataStatPqEnqueueDrawEndEncodingToDrawable ofBlock:^{
+        DLog(@"  endEncoding %@", frameData);
         [frameData.renderEncoder endEncoding];
     }];
 
     if (frameData.debugInfo) {
+        DLog(@"  Copy offscreen texture to drawable %@", frameData);
         [self copyOffscreenTextureToDrawableInFrameData:frameData];
     }
     [frameData measureTimeForStat:iTermMetalFrameDataStatPqEnqueueDrawPresentAndCommit ofBlock:^{
 #if !ENABLE_SYNCHRONOUS_PRESENTATION
         if (frameData.destinationDrawable) {
+            DLog(@"  presentDrawable %@", frameData);
             [commandBuffer presentDrawable:frameData.destinationDrawable];
         }
 #endif
 
+#if ENABLE_STATS
         iTermPreciseTimerStatsStartTimer(&frameData.stats[iTermMetalFrameDataStatGpuScheduleWait]);
 
         iTermPreciseTimerStats *scheduleWaitStat = &frameData.stats[iTermMetalFrameDataStatGpuScheduleWait];
@@ -1699,7 +1760,7 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
         [commandBuffer addScheduledHandler:^(id<MTLCommandBuffer> _Nonnull commandBuffer) {
             dispatch_async(self->_queue, scheduledBlock);
         }];
-
+#endif
         __block BOOL completed = NO;
         void (^completedBlock)(void) = [^{
             completed = [self didComplete:completed withFrameData:frameData];
@@ -1709,10 +1770,11 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
 #if ENABLE_PRIVATE_QUEUE
             [frameData dispatchToQueue:self->_queue forCompletion:completedBlock];
 #else
-            [frameData dispatchToQueue:dispatch_get_main_queue() forCompletion:block];
+            [frameData dispatchToQueue:dispatch_get_main_queue() forCompletion:completedBlock];
 #endif
         }];
 
+        DLog(@"  commit %@", frameData);
         [commandBuffer commit];
 #if ENABLE_SYNCHRONOUS_PRESENTATION
         if (frameData.destinationDrawable) {
@@ -1728,7 +1790,16 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
 - (BOOL)didComplete:(BOOL)completed withFrameData:(iTermMetalFrameData *)frameData {
     DLog(@"did complete (completed=%@) %@", @(completed), frameData);
     if (!completed) {
+        DLog(@"first time completed %@", frameData);
         if (frameData.debugInfo) {
+            DLog(@"have debug info %@", frameData);
+            if (@available(macOS 10.15, *)) {
+                if (frameData.captureDescriptor) {
+                    MTLCaptureManager* captureManager = [MTLCaptureManager sharedCaptureManager];
+                    [captureManager stopCapture];
+                    [frameData.debugInfo addMetalCapture:frameData.captureDescriptor.outputURL];
+                }
+            }
             NSData *archive = [frameData.debugInfo newArchive];
             dispatch_async(dispatch_get_main_queue(), ^{
                 [self.dataSource metalDriverDidProduceDebugInfo:archive];
@@ -1765,9 +1836,15 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
     }
 
     DLog(@"  Recording final stats");
+#if ENABLE_STATS
     [frameData didCompleteWithAggregateStats:_stats
                                   histograms:_statHistograms
                                        owner:_identifier];
+#else
+    [frameData didCompleteWithAggregateStats:nil
+                                  histograms:nil
+                                       owner:_identifier];
+#endif
 
     @synchronized(self) {
         frameData.status = @"retired";
@@ -1815,11 +1892,7 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
     if (iTermTextIsMonochrome()) {
         useTemporaryTexture = NO;
     } else {
-#if ENABLE_USE_TEMPORARY_TEXTURE
         useTemporaryTexture = YES;
-#else
-        useTemporaryTexture = NO;
-#endif
     }
     
     if (useTemporaryTexture) {
@@ -1830,18 +1903,20 @@ cellSizeWithoutSpacing:(CGSize)cellSizeWithoutSpacing
 }
 
 - (void)scheduleDrawIfNeededInView:(MTKView *)view {
-    if (self.needsDraw) {
+    const NSTimeInterval duration = self.needsDrawAfterDuration;
+    if (duration < INFINITY) {
         void (^block)(void) = ^{
-            if (self.needsDraw) {
-                self.needsDraw = NO;
+            if (self.needsDrawAfterDuration < INFINITY) {
+                self.needsDrawAfterDuration = INFINITY;
+                DLog(@"Calling setNeedsDisplay because of needsDraw");
                 [view setNeedsDisplay:YES];
             }
         };
-#if ENABLE_PRIVATE_QUEUE
-        dispatch_async(dispatch_get_main_queue(), block);
-#else
-        block();
-#endif
+        DLog(@"Schedule redraw after %f ms", duration * 1000);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                     (int64_t)(duration * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(),
+                       block);
     }
 }
 

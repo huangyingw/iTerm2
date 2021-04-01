@@ -8,6 +8,7 @@
 
 #import "ProfilesAdvancedPreferencesViewController.h"
 
+#import "DebugLogging.h"
 #import "ITAddressBookMgr.h"
 #import "iTermProfilePreferences.h"
 #import "iTermSemanticHistoryPrefsController.h"
@@ -84,7 +85,7 @@
                    displayName:@"Semantic history"
                        phrases:@[ @"cmd click", @"open file", @"open url" ]
                            key:nil];
-    _enableAPSLogging.state = iTermUserDefaults.enableAutomaticProfileSwitchingLogging ? NSOnState : NSOffState;
+    _enableAPSLogging.state = iTermUserDefaults.enableAutomaticProfileSwitchingLogging ? NSControlStateValueOn : NSControlStateValueOff;
 }
 
 - (NSArray *)keysForBulkCopy {
@@ -115,7 +116,7 @@
 
 - (void)willReloadProfile {
     [self removeNamelessHosts];
-    [self closeTriggersSheet:nil];
+    [self closeTriggersSheet];
 }
 
 - (void)reloadProfile {
@@ -145,12 +146,16 @@
     }];
 }
 
-- (IBAction)closeTriggersSheet:(id)sender {
+- (IBAction)closeTriggersSheet {
     [[_triggerWindowController.window undoManager] removeAllActionsWithTarget:self];
     [self.view.window endSheet:_triggerWindowController.window];
 }
 
 #pragma mark - TriggerDelegate
+
+- (void)triggersCloseSheet {
+    [self closeTriggersSheet];
+}
 
 - (void)triggerChanged:(TriggerController *)triggerController newValue:(NSArray *)value {
     [[triggerController.window undoManager] registerUndoWithTarget:self
@@ -162,7 +167,7 @@
 
 - (void)setTriggersValue:(NSArray *)value {
     [self setObject:value forKey:KEY_TRIGGERS];
-    [_triggerWindowController.tableView reloadData];
+    [_triggerWindowController profileDidChange];
 }
 
 - (void)triggerSetUseInterpolatedStrings:(BOOL)useInterpolatedStrings {
@@ -246,11 +251,16 @@
 
 - (void)removeNamelessHosts {
     // Remove empty hosts
-    NSArray *hosts = [self boundHosts];
-    for (NSInteger i = hosts.count - 1; i >= 0; i--) {
-        if (![hosts[i] length]) {
-            [self removeBoundHostOnRow:i];
-            hosts = [self boundHosts];
+    BOOL done = NO;
+    while (!done) {
+        done = YES;
+        NSArray *hosts = [self boundHosts];
+        for (NSInteger i = 0; i < hosts.count; i++) {
+            if (![hosts[i] length]) {
+                [self removeBoundHostOnRow:i];
+                done = NO;
+                break;
+            }
         }
     }
 }
@@ -275,6 +285,7 @@
    forTableColumn:(NSTableColumn *)aTableColumn
               row:(NSInteger)rowIndex {
     if (![anObject length] || [[self boundHosts] containsObject:anObject]) {
+        DLog(@"Beep: Empty APS rule not allwoed");
         NSBeep();
         [self removeBoundHostOnRow:rowIndex];
         return;
@@ -368,7 +379,7 @@
 #pragma mark - Actions
 
 - (IBAction)didToggleAutomaticProfileSwitchingDebugLogging:(id)sender {
-    iTermUserDefaults.enableAutomaticProfileSwitchingLogging = (_enableAPSLogging.state == NSOnState);
+    iTermUserDefaults.enableAutomaticProfileSwitchingLogging = (_enableAPSLogging.state == NSControlStateValueOn);
 }
 
 @end

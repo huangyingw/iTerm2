@@ -113,6 +113,10 @@ typedef enum {
     ColorModeInvalid = 3
 } ColorMode;
 
+typedef NS_ENUM(unsigned int, VT100UnderlineStyle) {
+    VT100UnderlineStyleSingle,
+    VT100UnderlineStyleCurly
+};
 
 typedef struct screen_char_t
 {
@@ -134,9 +138,9 @@ typedef struct screen_char_t
     //       magenta, cyan, and white.
     //     Values between 8 and 15 are bright versions of 0-7.
     //     Values between 16 and 255 are used for 256 color mode:
-    //       16-232: rgb value given by 16 + r*36 + g*6 + b, with each color in
+    //       16-231: rgb value given by 16 + r*36 + g*6 + b, with each color in
     //         the range [0,5].
-    //       233-255: Grayscale values from dimmest gray 233 (which is not black)
+    //       232-255: Grayscale values from dimmest gray 233 (which is not black)
     //         to brightest 255 (not white).
     // With alternate background semantics:
     //   ALTSEM_xxx (see comments above)
@@ -177,10 +181,11 @@ typedef struct screen_char_t
     unsigned int image : 1;
 
     unsigned int strikethrough : 1;
+    VT100UnderlineStyle underlineStyle : 1;  // VT100UnderlineStyle
 
     // These bits aren't used but are defined here so that the entire memory
     // region can be initialized.
-    unsigned int unused : 4;
+    unsigned int unused : 3;
 
     // This comes after unused so it can be byte-aligned.
     // If the current text is part of a hypertext link, this gives an index into the URL store.
@@ -188,7 +193,7 @@ typedef struct screen_char_t
 } screen_char_t;
 
 // Typically used to store a single screen line.
-@interface ScreenCharArray : NSObject {
+@interface ScreenCharArray : NSObject<NSCopying> {
     screen_char_t *_line;  // Array of chars
     int _length;  // Number of chars in _line
     int _eol;  // EOL_SOFT, EOL_HARD, or EOL_DWC
@@ -203,6 +208,9 @@ typedef struct screen_char_t
                       length:(int)length
                 continuation:(screen_char_t)continuation;
 - (BOOL)isEqualToScreenCharArray:(ScreenCharArray *)other;
+- (ScreenCharArray *)screenCharArrayByAppendingScreenCharArray:(ScreenCharArray *)other;
+- (ScreenCharArray *)screenCharArrayByRemovingTrailingNullsAndHardNewline;
+
 @end
 
 // Standard unicode replacement string. Is a double-width character.
@@ -226,6 +234,7 @@ static inline BOOL ScreenCharacterAttributesEqual(screen_char_t *c1, screen_char
             c1->italic == c2->italic &&
             c1->blink == c2->blink &&
             c1->underline == c2->underline &&
+            c1->underlineStyle == c2->underlineStyle &&
             c1->strikethrough == c2->strikethrough &&
             !c1->urlCode == !c2->urlCode &&  // Only tests if urlCode is zero/nonzero in both
             c1->image == c2->image);
@@ -243,6 +252,7 @@ static inline void CopyForegroundColor(screen_char_t* to, const screen_char_t fr
     to->italic = from.italic;
     to->blink = from.blink;
     to->underline = from.underline;
+    to->underlineStyle = from.underlineStyle;
     to->strikethrough = from.strikethrough;
     to->urlCode = from.urlCode;
     to->image = from.image;
@@ -286,6 +296,7 @@ static inline BOOL ForegroundAttributesEqual(const screen_char_t a,
         a.italic != b.italic ||
         a.blink != b.blink ||
         a.underline != b.underline ||
+        a.underlineStyle != b.underlineStyle ||
         a.strikethrough != b.strikethrough ||
         !a.urlCode != !b.urlCode) {
         return NO;
@@ -317,6 +328,7 @@ static inline BOOL ScreenCharHasDefaultAttributesAndColors(const screen_char_t s
             !s.italic &&
             !s.blink &&
             !s.underline &&
+            s.underlineStyle == VT100UnderlineStyleSingle &&
             !s.strikethrough &&
             !s.urlCode);
 }
@@ -461,5 +473,10 @@ VT100GridCoord GetPositionOfImageInChar(screen_char_t c);
 
 // Returns a dictionary of restorable state
 NSDictionary *ScreenCharEncodedRestorableState(void);
+NSInteger ScreenCharGeneration(void);
 void ScreenCharDecodeRestorableState(NSDictionary *state);
+void ScreenCharGarbageCollectImages(void);
+void ScreenCharClearProvisionalFlagForImageWithCode(int code);
+
+NSString *ScreenCharDescription(screen_char_t c);
 

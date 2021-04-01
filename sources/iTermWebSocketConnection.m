@@ -147,6 +147,7 @@ typedef NS_ENUM(NSUInteger, iTermWebSocketConnectionState) {
         conn->_preauthorized = authenticated;
         NSString *key = headers[@"x-iterm2-key"] ?: [[NSUUID UUID] UUIDString];
         conn->_key = [[iTermAPIConnectionIdentifierController sharedInstance] identifierForKey:key];
+        conn->_advisoryName = headers[@"x-iterm2-advisory-name"];
     }
     return conn;
 }
@@ -175,7 +176,7 @@ typedef NS_ENUM(NSUInteger, iTermWebSocketConnectionState) {
 // queue
 - (void)reallyHandleRequest:(NSURLRequest *)request completion:(void (^)(void))completion {
     DLog(@"Handling websocket request %@", request);
-    NSAssert(_state == iTermWebSocketConnectionStateConnecting, @"Request already handled");
+    ITAssertWithMessage(_state == iTermWebSocketConnectionStateConnecting, @"Request already handled");
 
     [self sendUpgradeResponseWithKey:request.allHTTPHeaderFields[@"sec-websocket-key"]
                              version:[request.allHTTPHeaderFields[@"sec-websocket-version"] integerValue]
@@ -459,7 +460,7 @@ typedef NS_ENUM(NSUInteger, iTermWebSocketConnectionState) {
                @"Connection": @"Upgrade",
                @"Sec-WebSocket-Accept": [sha1 stringWithBase64EncodingWithLineBreak:@""],
                @"Sec-WebSocket-Protocol": kProtocolName,
-               @"X-iTerm2-Protocol-Version": @"1.3"
+               @"X-iTerm2-Protocol-Version": @"1.9"
              };
         if (version > kWebSocketVersion) {
             NSMutableDictionary *temp = [headers mutableCopy];

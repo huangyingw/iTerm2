@@ -205,7 +205,7 @@
             int n = (length + _currentStreamLength) / kDefaultStreamSize;
 
             _totalStreamLength += n * kDefaultStreamSize;
-            _stream = reallocf(_stream, _totalStreamLength);
+            _stream = iTermRealloc(_stream, _totalStreamLength, 1);
         }
 
         memcpy(_stream + _currentStreamLength, buffer, length);
@@ -245,9 +245,9 @@
     }
 }
 
-- (void)startTmuxRecoveryMode {
+- (void)startTmuxRecoveryModeWithID:(NSString *)dcsID {
     @synchronized(self) {
-        [_controlParser startTmuxRecoveryMode];
+        [_controlParser startTmuxRecoveryModeWithID:dcsID];
         _dcsHooked = YES;
     }
 }

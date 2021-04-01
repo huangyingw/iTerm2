@@ -4,15 +4,6 @@
 #import "NSImage+iTerm.h"
 
 @implementation iTermOpenQuicklyItem
-
-- (void)dealloc {
-    [_identifier release];
-    [_title release];
-    [_detail release];
-    [_view release];
-    [super dealloc];
-}
-
 @end
 
 @implementation iTermOpenQuicklySessionItem
@@ -23,11 +14,6 @@
         _logoGenerator = [[iTermLogoGenerator alloc] init];
     }
     return self;
-}
-
-- (void)dealloc {
-    [_logoGenerator release];
-    [super dealloc];
 }
 
 - (NSImage *)icon {
@@ -62,12 +48,6 @@
     return self;
 }
 
-- (void)dealloc {
-    [_logoGenerator release];
-    [_presetName release];
-    [super dealloc];
-}
-
 - (NSImage *)icon {
     return [_logoGenerator generatedImage];
 }
@@ -98,3 +78,23 @@
 
 @end
 
+@implementation iTermOpenQuicklyActionItem : iTermOpenQuicklyItem
+
+- (NSImage *)icon {
+    return [NSImage it_imageNamed:@"OpenQuicklyActionIcon" forClass:self.class];
+}
+
+@end
+
+@implementation iTermOpenQuicklySnippetItem : iTermOpenQuicklyItem
+
+- (NSImage *)icon {
+    return [NSImage it_imageNamed:@"OpenQuicklySnippetIcon" forClass:self.class];
+}
+
+// This can be the sender to -sendSnippet:
+- (id)representedObject {
+    return self.snippet;
+}
+
+@end

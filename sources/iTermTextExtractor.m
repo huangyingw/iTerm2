@@ -9,6 +9,7 @@
 #import "iTermTextExtractor.h"
 #import "DebugLogging.h"
 #import "iTermImageInfo.h"
+#import "iTermLocatedString.h"
 #import "iTermPreferences.h"
 #import "iTermSystemVersion.h"
 #import "iTermURLStore.h"
@@ -23,6 +24,7 @@ typedef NS_ENUM(NSUInteger, iTermAlphaNumericDefinition) {
     iTermAlphaNumericDefinitionNarrow,
     iTermAlphaNumericDefinitionUserDefined,
     iTermAlphaNumericDefinitionUnixCommands,
+    iTermAlphaNumericDefinitionBigWords
 };
 
 // Must find at least this many divider chars in a row for it to count as a divider.
@@ -239,6 +241,17 @@ const NSInteger kLongMaximumWordLength = 100000;
     return range;
 }
 
+- (int)startOfIndentationOnAbsLine:(long long)absLine {
+    const long long overflow = [_dataSource totalScrollbackOverflow];
+    if (absLine < overflow) {
+        return 0;
+    }
+    if (absLine - overflow > INT_MAX) {
+        return 0;
+    }
+    return [self startOfIndentationOnLine:absLine - overflow];
+}
+
 - (int)startOfIndentationOnLine:(int)line {
     if (line >= [_dataSource numberOfLines]) {
         return 0;
@@ -257,9 +270,60 @@ const NSInteger kLongMaximumWordLength = 100000;
     return result;
 }
 
-// The maximum length is a rough guideline. You might get a word up to twice as long.
+- (VT100GridAbsWindowedRange)rangeForWordAtAbsCoord:(VT100GridAbsCoord)absLocation
+                                      maximumLength:(NSInteger)maximumLength {
+    return VT100GridAbsWindowedRangeFromWindowedRange([self rangeForWordAt:[self coordFromAbsolute:absLocation]
+                                                             maximumLength:maximumLength],
+                                                      [_dataSource totalScrollbackOverflow]);
+}
+
 - (VT100GridWindowedRange)rangeForWordAt:(VT100GridCoord)location
                            maximumLength:(NSInteger)maximumLength {
+    return [self rangeForWordAt:location maximumLength:maximumLength big:NO];
+}
+
+- (VT100GridAbsWindowedRange)rangeForBigWordAtAbsCoord:(VT100GridAbsCoord)location
+                                         maximumLength:(NSInteger)maximumLength {
+    return VT100GridAbsWindowedRangeFromWindowedRange([self rangeForBigWordAt:[self coordFromAbsolute:location]
+                                                                maximumLength:maximumLength],
+                                                      [_dataSource totalScrollbackOverflow]);
+}
+
+- (VT100GridWindowedRange)rangeForBigWordAt:(VT100GridCoord)unsafeLocation
+                              maximumLength:(NSInteger)maximumLength {
+    if (unsafeLocation.y < 0) {
+        return VT100GridWindowedRangeMake(VT100GridCoordRangeMake(-1, -1, -1, -1),
+                                          _logicalWindow.location, _logicalWindow.length);
+    }
+    const VT100GridCoord location = [self successorOfCoord:[self coordLockedToWindow:unsafeLocation]];
+    const VT100GridCoord predecessor = [self predecessorOfCoord:location];
+
+    const iTermTextExtractorClass classAtLocation =
+        [self classForCharacter:[self characterAt:predecessor]
+                       bigWords:YES];
+
+    VT100GridWindowedRange wordRange = [self rangeForWordAt:predecessor
+                                              maximumLength:maximumLength
+                                                        big:YES];
+    if (classAtLocation == kTextExtractorClassWhitespace) {
+        VT100GridWindowedRange beforeRange = [self rangeForWordAt:[self predecessorOfCoord:wordRange.coordRange.start]
+                                                    maximumLength:maximumLength
+                                                              big:YES];
+        wordRange.coordRange.start = beforeRange.coordRange.start;
+    } else {
+        // wordRange is a half-open interval so end gives the successor
+        VT100GridWindowedRange afterRange = [self rangeForWordAt:wordRange.coordRange.end
+                                                   maximumLength:maximumLength
+                                                             big:NO];
+        wordRange.coordRange.end = afterRange.coordRange.end;
+    }
+    return wordRange;
+}
+
+// The maximum length is a rough guideline. You might get a word up to twice as long.
+- (VT100GridWindowedRange)rangeForWordAt:(VT100GridCoord)location
+                           maximumLength:(NSInteger)maximumLength
+                                     big:(BOOL)big {
     ITBetaAssert(location.y >= 0, @"Location has negative Y");
     if (location.y < 0) {
         return VT100GridWindowedRangeMake(VT100GridCoordRangeMake(-1, -1, -1, -1),
@@ -271,7 +335,7 @@ const NSInteger kLongMaximumWordLength = 100000;
 
     location = [self coordLockedToWindow:location];
     iTermTextExtractorClass theClass =
-        [self classForCharacter:[self characterAt:location]];
+        [self classForCharacter:[self characterAt:location] bigWords:big];
     DLog(@"Initial class for '%@' at %@ is %@",
          [self stringForCharacter:[self characterAt:location]], VT100GridCoordDescription(location), @(theClass));
     if (theClass == kTextExtractorClassDoubleWidthPlaceholder) {
@@ -329,7 +393,8 @@ const NSInteger kLongMaximumWordLength = 100000;
                               DLog(@"Max length hit when searching forwards");
                               return YES;
                           }
-                          iTermTextExtractorClass newClass = [self classForCharacter:theChar];
+                          iTermTextExtractorClass newClass = [self classForCharacter:theChar
+                                                                            bigWords:big];
                           DLog(@"Class is %@", @(newClass));
 
                           BOOL isInWord = (newClass == kTextExtractorClassDoubleWidthPlaceholder ||
@@ -374,7 +439,8 @@ const NSInteger kLongMaximumWordLength = 100000;
                                        DLog(@"Max length hit when searching backwards");
                                        return YES;
                                    }
-                                   iTermTextExtractorClass newClass = [self classForCharacter:theChar];
+                                   iTermTextExtractorClass newClass = [self classForCharacter:theChar
+                                                                                     bigWords:big];
                                    DLog(@"Class is %@", @(newClass));
                                    BOOL isInWord = (newClass == kTextExtractorClassDoubleWidthPlaceholder ||
                                                     newClass == theClass);
@@ -410,7 +476,7 @@ const NSInteger kLongMaximumWordLength = 100000;
                                                                     location.y)];
     }
 
-    if (theClass != kTextExtractorClassWord) {
+    if (theClass != kTextExtractorClassWord || big) {
         DLog(@"Not word class");
         VT100GridCoord start = [[coords firstObject] gridCoordValue];
         VT100GridCoord end = [[coords lastObject] gridCoordValue];
@@ -754,9 +820,14 @@ const NSInteger kLongMaximumWordLength = 100000;
     }
 }
 
-// Returns the class for a character.
 - (iTermTextExtractorClass)classForCharacter:(screen_char_t)theCharacter {
-    return [self classForCharacter:theCharacter definitionOfAlphanumeric:iTermAlphaNumericDefinitionUserDefined];
+    return [self classForCharacter:theCharacter bigWords:NO];
+}
+
+// Returns the class for a character.
+- (iTermTextExtractorClass)classForCharacter:(screen_char_t)theCharacter
+                                    bigWords:(BOOL)bigWords {
+    return [self classForCharacter:theCharacter definitionOfAlphanumeric:bigWords ? iTermAlphaNumericDefinitionBigWords : iTermAlphaNumericDefinitionUserDefined];
 }
 
 - (iTermTextExtractorClass)classForCharacter:(screen_char_t)theCharacter
@@ -808,6 +879,8 @@ const NSInteger kLongMaximumWordLength = 100000;
         case iTermAlphaNumericDefinitionNarrow:
             // The narrow definition only allows hyphen.
             return [characterAsString isEqualToString:@"-"];
+        case iTermAlphaNumericDefinitionBigWords:
+            return [characterAsString rangeOfCharacterFromSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].location == NSNotFound;
     }
 }
 
@@ -888,6 +961,27 @@ const NSInteger kLongMaximumWordLength = 100000;
     return coord;
 }
 
+- (VT100GridCoord)coordFromAbsolute:(VT100GridAbsCoord)absCoord {
+    const long long overflow = [_dataSource totalScrollbackOverflow];
+    if (absCoord.y < overflow) {
+        return VT100GridCoordMake(0, 0);
+    }
+    if (absCoord.y - overflow > INT_MAX) {
+        return VT100GridCoordMake(absCoord.x, [_dataSource numberOfLines]);
+    }
+    return VT100GridCoordMake(absCoord.x, absCoord.y - overflow);
+}
+
+- (VT100GridAbsCoord)coordToAbsolute:(VT100GridCoord)coord {
+    return VT100GridAbsCoordMake(coord.x, [_dataSource totalScrollbackOverflow] + coord.y);
+}
+
+- (VT100GridAbsCoord)successorOfAbsCoordSkippingContiguousNulls:(VT100GridAbsCoord)absCoord {
+    const VT100GridCoord coord = [self coordFromAbsolute:absCoord];
+    VT100GridCoord result = [self successorOfCoordSkippingContiguousNulls:coord];
+    return [self coordToAbsolute:result];
+}
+
 - (VT100GridCoord)successorOfCoordSkippingContiguousNulls:(VT100GridCoord)coord {
     do {
         coord.x++;
@@ -924,6 +1018,10 @@ const NSInteger kLongMaximumWordLength = 100000;
     }
 
     return coord;
+}
+
+- (VT100GridAbsCoord)predecessorOfAbsCoordSkippingContiguousNulls:(VT100GridAbsCoord)coord {
+    return [self coordToAbsolute:[self predecessorOfCoordSkippingContiguousNulls:[self coordFromAbsolute:coord]]];
 }
 
 - (VT100GridCoord)predecessorOfCoordSkippingContiguousNulls:(VT100GridCoord)coord {
@@ -1217,38 +1315,110 @@ const NSInteger kLongMaximumWordLength = 100000;
     return result;
 }
 
+- (NSAttributedString *)attributedStringForSnippetForRange:(VT100GridAbsCoordRange)range
+                                         regularAttributes:(NSDictionary *)regularAttributes
+                                           matchAttributes:(NSDictionary *)matchAttributes
+                                       maximumPrefixLength:(NSUInteger)maximumPrefixLength
+                                       maximumSuffixLength:(NSUInteger)maximumSuffixLength {
+    const VT100GridCoordRange relativeRange =
+        VT100GridCoordRangeFromAbsCoordRange(range, self.dataSource.totalScrollbackOverflow);
+    const NSInteger maxMatchLength = 1024;
+    NSString *match = [self contentInRange:VT100GridWindowedRangeMake(relativeRange, _logicalWindow.location, _logicalWindow.length)
+                         attributeProvider:nil
+                                nullPolicy:kiTermTextExtractorNullPolicyFromLastToEnd
+                                       pad:NO
+                        includeLastNewline:NO
+                    trimTrailingWhitespace:NO
+                              cappedAtSize:maxMatchLength
+                              truncateTail:YES
+                         continuationChars:nil
+                                    coords:nil];
+    NSAttributedString *matchString = [[[NSAttributedString alloc] initWithString:match
+                                                                       attributes:matchAttributes] autorelease];
+    if (match.length == maxMatchLength) {
+        return matchString;
+    }
+    NSString *prefix = [[self wrappedLocatedStringAt:relativeRange.start
+                                             forward:NO
+                                 respectHardNewlines:YES
+                                            maxChars:maximumPrefixLength
+                                   continuationChars:nil
+                                 convertNullsToSpace:NO].string stringByTrimmingLeadingWhitespace];
+    NSString *suffix = [[self wrappedLocatedStringAt:relativeRange.end
+                                             forward:YES
+                                 respectHardNewlines:YES
+                                            maxChars:maximumSuffixLength + 1
+                                   continuationChars:nil
+                                 convertNullsToSpace:NO].string stringByTrimmingTrailingWhitespace];
+    if (suffix.length > maximumSuffixLength) {
+        suffix = [[[suffix stringByDroppingLastCharacters:1] stringByTrimmingOrphanedSurrogates] stringByAppendingString:@"…"];
+    }
+    NSAttributedString *attributedPrefix = [[[NSAttributedString alloc] initWithString:prefix
+                                                                            attributes:regularAttributes] autorelease];
+    NSAttributedString *attributedSuffix = [[[NSAttributedString alloc] initWithString:suffix
+                                                                            attributes:regularAttributes] autorelease];
+    NSMutableAttributedString *result = [[[NSMutableAttributedString alloc] init] autorelease];
+    [result appendAttributedString:attributedPrefix];
+    [result appendAttributedString:matchString];
+    [result appendAttributedString:attributedSuffix];
+    return result;
+}
+
 - (id)contentInRange:(VT100GridWindowedRange)windowedRange
    attributeProvider:(NSDictionary *(^)(screen_char_t))attributeProvider
           nullPolicy:(iTermTextExtractorNullPolicy)nullPolicy
                  pad:(BOOL)pad
   includeLastNewline:(BOOL)includeLastNewline
+trimTrailingWhitespace:(BOOL)trimSelectionTrailingSpaces
+        cappedAtSize:(int)maxBytes
+        truncateTail:(BOOL)truncateTail
+   continuationChars:(NSMutableIndexSet *)continuationChars
+              coords:(NSMutableArray *)coordsOut {
+    __kindof iTermLocatedString *locatedString =
+    [self locatedStringInRange:windowedRange
+             attributeProvider:attributeProvider
+                    nullPolicy:nullPolicy
+                           pad:pad
+            includeLastNewline:includeLastNewline
+        trimTrailingWhitespace:trimSelectionTrailingSpaces
+                  cappedAtSize:maxBytes
+                  truncateTail:truncateTail
+             continuationChars:continuationChars];
+    [coordsOut addObjectsFromArray:locatedString.coords];
+    return attributeProvider ? ((iTermLocatedAttributedString *)locatedString).attributedString : locatedString.string;
+}
+
+- (id)locatedStringInRange:(VT100GridWindowedRange)windowedRange
+         attributeProvider:(NSDictionary *(^)(screen_char_t))attributeProvider
+                nullPolicy:(iTermTextExtractorNullPolicy)nullPolicy
+                       pad:(BOOL)pad
+        includeLastNewline:(BOOL)includeLastNewline
     trimTrailingWhitespace:(BOOL)trimSelectionTrailingSpaces
               cappedAtSize:(int)maxBytes
               truncateTail:(BOOL)truncateTail
-         continuationChars:(NSMutableIndexSet *)continuationChars
-              coords:(NSMutableArray *)coords {
+         continuationChars:(NSMutableIndexSet *)continuationChars {
     DLog(@"Find selected text in range %@ pad=%d, includeLastNewline=%d, trim=%d",
          VT100GridWindowedRangeDescription(windowedRange), (int)pad, (int)includeLastNewline,
          (int)trimSelectionTrailingSpaces);
-    __block id result;
+    __block iTermLocatedString *locatedString;
+    __block iTermLocatedAttributedString *locatedAttributedString;
     // Appends a string to |result|, either attributed or not, as appropriate.
     void (^appendString)(NSString *, screen_char_t, VT100GridCoord) =
-        ^void(NSString *string, screen_char_t theChar, VT100GridCoord coord) {
-            if (attributeProvider) {
-                [result iterm_appendString:string
-                            withAttributes:attributeProvider(theChar)];
-            } else {
-                [result appendString:string];
-            }
-            for (NSInteger i = 0; i < string.length; i++) {
-                [coords addObject:[NSValue valueWithGridCoord:coord]];
-            }
-        };
+    ^void(NSString *string, screen_char_t theChar, VT100GridCoord coord) {
+        if (attributeProvider) {
+            [locatedAttributedString appendString:string
+                                   withAttributes:attributeProvider(theChar)
+                                               at:coord];
+        } else {
+            [locatedString appendString:string at:coord];
+        }
+    };
 
     if (attributeProvider) {
-        result = [[[NSMutableAttributedString alloc] init] autorelease];
+        locatedAttributedString = [[[iTermLocatedAttributedString alloc] init] autorelease];
+        locatedString = locatedAttributedString;
     } else {
-        result = [NSMutableString string];
+        locatedString = [[[iTermLocatedString alloc] init] autorelease];
     }
 
     if (maxBytes < 0) {
@@ -1275,8 +1445,8 @@ const NSInteger kLongMaximumWordLength = 100000;
                                       NSTextAttachment *textAttachment = [[[NSTextAttachment alloc] init] autorelease];
                                       textAttachment.image = imageInfo.image.images.firstObject;
                                       NSAttributedString *attributedStringWithAttachment = [NSAttributedString attributedStringWithAttachment:textAttachment];
-                                      [result appendAttributedString:attributedStringWithAttachment];
-                                      [coords addObject:[NSValue valueWithGridCoord:coord]];
+                                      [locatedAttributedString appendAttributedString:attributedStringWithAttachment
+                                                                                   at:coord];
                                   }
                               }
                           } else if (theChar.code == TAB_FILLER && !theChar.complexChar) {
@@ -1290,8 +1460,7 @@ const NSInteger kLongMaximumWordLength = 100000;
                               // line end up in eolBlock.
                               switch (nullPolicy) {
                                   case kiTermTextExtractorNullPolicyFromLastToEnd:
-                                      [result deleteCharactersInRange:NSMakeRange(0, [result length])];
-                                      [coords removeAllObjects];
+                                      [locatedString erase];
                                       break;
                                   case kiTermTextExtractorNullPolicyFromStartToFirst:
                                       return YES;
@@ -1317,14 +1486,14 @@ const NSInteger kLongMaximumWordLength = 100000;
                               }
                           }
                           if (truncateTail) {
-                              return [result length] >= maxBytes;
-                          } else if ([result length] > maxBytes + kMaximumOversizeAmountWhenTruncatingHead) {
+                              return [locatedString length] >= maxBytes;
+                          } else if ([locatedString length] > maxBytes + kMaximumOversizeAmountWhenTruncatingHead) {
                               // Truncate from head when significantly oversize.
                               //
                               // Removing byte from the beginning of the string is slow. The only reason to do it is to save
                               // memory. Remove a big chunk periodically. After enumeration is done we'll cut it to the
                               // exact size it needs to be.
-                              [result replaceCharactersInRange:NSMakeRange(0, [result length] - maxBytes) withString:@""];
+                              [locatedString dropFirst:locatedString.length - maxBytes];
                           }
                           return NO;
                       }
@@ -1351,8 +1520,7 @@ const NSInteger kLongMaximumWordLength = 100000;
                            } else if (numPrecedingNulls > 0) {
                                switch (nullPolicy) {
                                    case kiTermTextExtractorNullPolicyFromLastToEnd:
-                                       [result deleteCharactersInRange:NSMakeRange(0, [result length])];
-                                       [coords removeAllObjects];
+                                       [locatedString erase];
                                        shouldAppendNewline = NO;
                                        break;
                                    case kiTermTextExtractorNullPolicyFromStartToFirst:
@@ -1370,40 +1538,34 @@ const NSInteger kLongMaximumWordLength = 100000;
                                shouldAppendNewline &&
                                (includeLastNewline || line < windowedRange.coordRange.end.y)) {
                                if (trimSelectionTrailingSpaces) {
-                                   NSInteger lengthBeforeTrimming = [result length];
-                                   [result trimTrailingWhitespace];
-                                   [coords removeObjectsInRange:NSMakeRange([result length],
-                                                                            lengthBeforeTrimming - [result length])];
+                                   [locatedString trimTrailingWhitespace];
                                }
                                appendString(@"\n",
                                             [self defaultChar],
                                             VT100GridCoordMake(right, line));
                            }
                            if (truncateTail) {
-                               return [result length] >= maxBytes;
-                           } else if ([result length] > maxBytes + kMaximumOversizeAmountWhenTruncatingHead) {
+                               return locatedString.length >= maxBytes;
+                           } else if (locatedString.length > maxBytes + kMaximumOversizeAmountWhenTruncatingHead) {
                                // Truncate from head when significantly oversize.
                                //
                                // Removing byte from the beginning of the string is slow. The only reason to do it is to save
                                // memory. Remove a big chunk periodically. After enumeration is done we'll cut it to the
                                // exact size it needs to be.
-                               [result replaceCharactersInRange:NSMakeRange(0, [result length] - maxBytes) withString:@""];
+                               [locatedString dropFirst:locatedString.length - maxBytes];
                            }
                            return NO;
                        }];
 
-    if (!truncateTail && [result length] > maxBytes) {
+    if (!truncateTail && locatedString.length > maxBytes) {
         // Truncate the head to the exact size.
-        [result replaceCharactersInRange:NSMakeRange(0, [result length] - maxBytes) withString:@""];
+        [locatedString dropFirst:locatedString.length - maxBytes];
     }
 
     if (trimSelectionTrailingSpaces) {
-        NSInteger lengthBeforeTrimming = [result length];
-        [result trimTrailingWhitespace];
-        [coords removeObjectsInRange:NSMakeRange([result length],
-                                                 lengthBeforeTrimming - [result length])];
+        [locatedString trimTrailingWhitespace];
     }
-    return result;
+    return locatedString;
 }
 
 
@@ -1606,13 +1768,30 @@ const NSInteger kLongMaximumWordLength = 100000;
     return YES;
 }
 
-- (NSString *)wrappedStringAt:(VT100GridCoord)coord
-                      forward:(BOOL)forward
-          respectHardNewlines:(BOOL)respectHardNewlines
-                     maxChars:(int)maxChars
-            continuationChars:(NSMutableIndexSet *)continuationChars
-          convertNullsToSpace:(BOOL)convertNullsToSpace
-                       coords:(NSMutableArray *)coords {
+- (ScreenCharArray *)screenCharArrayAtLine:(int)line {
+    screen_char_t *theLine = [_dataSource getLineAtIndex:line];
+    const int width = [_dataSource width];
+    return [[[ScreenCharArray alloc] initWithLine:theLine
+                                           length:width
+                                     continuation:theLine[width]] autorelease];
+}
+
+- (ScreenCharArray *)combinedLinesInRange:(NSRange)range {
+    ScreenCharArray *result = [[[ScreenCharArray alloc] init] autorelease];
+    for (NSInteger i = range.location;
+         i < NSMaxRange(range);
+         i++) {
+        result = [result screenCharArrayByAppendingScreenCharArray:[self screenCharArrayAtLine:i]];
+    }
+    return result;
+}
+
+- (iTermLocatedString *)wrappedLocatedStringAt:(VT100GridCoord)coord
+                                       forward:(BOOL)forward
+                           respectHardNewlines:(BOOL)respectHardNewlines
+                                      maxChars:(int)maxChars
+                             continuationChars:(NSMutableIndexSet *)continuationChars
+                           convertNullsToSpace:(BOOL)convertNullsToSpace {
     if ([self hasLogicalWindow]) {
         respectHardNewlines = NO;
     }
@@ -1633,7 +1812,7 @@ const NSInteger kLongMaximumWordLength = 100000;
         range.coordRange.start = coord;
         if (VT100GridCoordOrder(range.coordRange.start,
                                 range.coordRange.end) != NSOrderedAscending) {
-            return @"";
+            return [[[iTermLocatedString alloc] init] autorelease];
         }
     } else {
         nullPolicy = kiTermTextExtractorNullPolicyFromLastToEnd;
@@ -1642,37 +1821,27 @@ const NSInteger kLongMaximumWordLength = 100000;
         range.coordRange.end = coord;
         if (VT100GridCoordOrder(range.coordRange.start,
                                 range.coordRange.end) != NSOrderedAscending) {
-            return @"";
+            return [[[iTermLocatedString alloc] init] autorelease];
         }
     }
     if (convertNullsToSpace) {
         nullPolicy = kiTermTextExtractorNullPolicyTreatAsSpace;
     }
 
-    NSString *content =
-            [self contentInRange:range
-               attributeProvider:nil
-                      nullPolicy:nullPolicy
-                             pad:NO
-              includeLastNewline:NO
-          trimTrailingWhitespace:NO
-                    cappedAtSize:maxChars
-                    truncateTail:forward
-               continuationChars:continuationChars
-                          coords:coords];
+    iTermLocatedString *locatedString =
+        [self locatedStringInRange:range
+                 attributeProvider:nil
+                        nullPolicy:nullPolicy
+                               pad:NO
+                includeLastNewline:NO
+            trimTrailingWhitespace:NO
+                      cappedAtSize:maxChars
+                      truncateTail:forward
+                 continuationChars:continuationChars];
     if (!respectHardNewlines) {
-        if (coords == nil) {
-            content = [content stringByReplacingOccurrencesOfString:@"\n" withString:@""];
-        } else {
-            NSMutableString *mutableContent = [[content mutableCopy] autorelease];
-            [content reverseEnumerateSubstringsEqualTo:@"\n" block:^(NSRange range) {
-                [mutableContent replaceCharactersInRange:range withString:@""];
-                [coords removeObjectsInRange:range];
-            }];
-            content = mutableContent;
-        }
+        [locatedString removeOcurrencesOfString:@"\n"];
     }
-    return content;
+    return locatedString;
 }
 
 - (void)enumerateCharsInRange:(VT100GridWindowedRange)range
@@ -1696,8 +1865,8 @@ const NSInteger kLongMaximumWordLength = 100000;
     for (int y = MAX(0, range.coordRange.start.y); y <= MIN(bound, range.coordRange.end.y); y++) {
         if (y == range.coordRange.end.y) {
             // Reduce endx for last line.
-            endx = range.columnWindow.length ? VT100GridWindowedRangeEnd(range).x
-                                             : range.coordRange.end.x;
+            const int reducedEndX = range.columnWindow.length ? VT100GridWindowedRangeEnd(range).x : range.coordRange.end.x;
+            endx = MAX(0, MIN(endx, reducedEndX));
         }
         screen_char_t *theLine = [_dataSource getLineAtIndex:y];
 
@@ -1804,6 +1973,17 @@ const NSInteger kLongMaximumWordLength = 100000;
     }
 }
 
+- (int)lengthOfAbsLine:(long long)absLine {
+    const long long overflow = [_dataSource totalScrollbackOverflow];
+    if (absLine < overflow) {
+        return 0;
+    }
+    if (absLine - overflow > INT_MAX) {
+        return 0;
+    }
+    return [self lengthOfLine:absLine - overflow];
+}
+
 - (int)lengthOfLine:(int)line {
     screen_char_t *theLine = [_dataSource getLineAtIndex:line];
     int x;
@@ -1837,7 +2017,7 @@ const NSInteger kLongMaximumWordLength = 100000;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         charSet = [[NSMutableCharacterSet alloc] init];
-        [charSet addCharactersInString:@"|\u2502"];
+        [charSet addCharactersInString:@"|\u2502\u251c\u2524"];
     });
     return charSet;
 }
@@ -1915,6 +2095,15 @@ const NSInteger kLongMaximumWordLength = 100000;
     coord.x = MIN(MAX(coord.x, _logicalWindow.location),
                   _logicalWindow.location + _logicalWindow.length - 1);
     return coord;
+}
+
+- (screen_char_t)characterAtAbsCoord:(VT100GridAbsCoord)coord {
+    const long long overflow = [_dataSource totalScrollbackOverflow];
+    if (coord.y < overflow || coord.y - overflow > INT_MAX) {
+        screen_char_t zero = { 0 };
+        return zero;
+    }
+    return [self characterAt:[self coordFromAbsolute:coord]];
 }
 
 - (screen_char_t)characterAt:(VT100GridCoord)coord {

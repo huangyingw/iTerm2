@@ -9,15 +9,19 @@
 #import "DebugLogging.h"
 #import "iTermAdvancedSettingsModel.h"
 #import "iTermApplication.h"
+#import "NSData+iTerm.h"
 #import "NSFileManager+iTerm.h"
 #import "NSView+RecursiveDescription.h"
 #import <Cocoa/Cocoa.h>
 
 #include <sys/time.h>
+#include <sys/types.h>
+#include <sys/sysctl.h>
 
 static NSString *const kDebugLogFilename = @"/tmp/debuglog.txt";
 static NSString* gDebugLogHeader = nil;
 static NSMutableString* gDebugLogStr = nil;
+NSString *iTermDebugLoggingDidBeginNotification = @"iTermDebugLoggingDidBeginNotification";
 
 static NSMutableDictionary *gPinnedMessages;
 BOOL gDebugLogging = NO;
@@ -37,6 +41,33 @@ static void AppendWindowDescription(NSWindow *window, NSMutableString *windows) 
      [window.contentView iterm_recursiveDescription]];
 }
 
+static NSString *iTermMachineInfo(void) {
+    char temp[1000];
+    size_t tempLen = sizeof(temp) - 1;
+    if (sysctlbyname("hw.model", temp, &tempLen, 0, 0)) {
+        return @"(unknown)";
+    }
+    return [NSString stringWithUTF8String:temp];
+}
+
+static NSString *iTermScreensInfo(void) {
+    NSMutableArray<NSString *> *infos = [NSMutableArray array];
+    for (NSScreen *screen in [NSScreen screens]) {
+        [infos addObject:NSStringFromRect(screen.frame)];
+    }
+    return [infos componentsJoinedByString:@"     "];
+}
+
+static NSString *iTermOSVersionInfo(void) {
+    static NSString *value;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:@"/System/Library/CoreServices/SystemVersion.plist"];
+        value = [dict[@"ProductVersion"] copy];
+    });
+    return value ?: @"(nil)";
+}
+
 static void WriteDebugLogHeader() {
     NSMutableString *windows = [NSMutableString string];
     for (NSWindow *window in [[NSApplication sharedApplication] windows]) {
@@ -49,6 +80,9 @@ static void WriteDebugLogHeader() {
     NSString *header = [NSString stringWithFormat:
                         @"iTerm2 version: %@\n"
                         @"Date: %@ (%lld)\n"
+                        @"Machine: %@\n"
+                        @"Screens: %@\n"
+                        @"OS version: %@\n"
                         @"Key window: %@\n"
                         @"Windows: %@\n"
                         @"Ordered windows: %@\n"
@@ -57,6 +91,9 @@ static void WriteDebugLogHeader() {
                         [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleVersion"],
                         [NSDate date],
                         (long long)[[NSDate date] timeIntervalSince1970],
+                        iTermMachineInfo(),
+                        iTermScreensInfo(),
+                        iTermOSVersionInfo(),
                         [[NSApplication sharedApplication] keyWindow],
                         windows,
                         [(iTermApplication *)NSApp orderedWindowsPlusAllHotkeyPanels],
@@ -72,8 +109,10 @@ static void WriteDebugLogFooter() {
   }
   NSString *footer = [NSString stringWithFormat:
                       @"------ BEGIN FOOTER -----\n"
+                      @"Screens: %@\n"
                       @"Windows: %@\n"
                       @"Ordered windows: %@\n",
+                      iTermScreensInfo(),
                       windows,
                       [(iTermApplication *)NSApp orderedWindowsPlusAllHotkeyPanels]];
   [gDebugLogStr appendString:footer];
@@ -147,6 +186,17 @@ void SetPinnedDebugLogMessage(NSString *key, NSString *value, ...) {
     };
     gPinnedMessages[key] = log;
     [GetDebugLogLock() unlock];
+}
+
+int CDebugLogImpl(const char *file, int line, const char *function, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    char *stringValue = "";
+    vasprintf(&stringValue, format, args);
+    NSString *value = [NSString stringWithUTF8String:stringValue] ?: @"utf8 encoding problem in C string";
+    free(stringValue);
+    va_end(args);
+    return DebugLogImpl(file, line, function, value);
 }
 
 int DebugLogImpl(const char *file, int line, const char *function, NSString* value)
@@ -233,6 +283,8 @@ static void StartDebugLogging() {
         gDebugLogStr = [[NSMutableString alloc] init];
         gDebugLogging = !gDebugLogging;
         WriteDebugLogHeader();
+        [[NSNotificationCenter defaultCenter] postNotificationName:iTermDebugLoggingDidBeginNotification
+                                                            object:nil];
     }
     [GetDebugLogLock() unlock];
 }
@@ -278,3 +330,42 @@ void ToggleDebugLogging(void) {
         [alert runModal];
     }
 }
+
+void DLogC(const char *format, va_list args) {
+    char *temp = NULL;
+    vasprintf(&temp, format, args);
+    DLog(@"%@", [NSString stringWithUTF8String:temp]);
+    free(temp);
+}
+
+@implementation NSException(iTerm)
+
+- (NSException *)it_rethrowWithMessage:(NSString *)format, ... {
+    va_list arguments;
+    va_start(arguments, format);
+    NSString *string = [[NSString alloc] initWithFormat:format arguments:arguments];
+    va_end(arguments);
+
+    NSDictionary *userInfo = self.userInfo;
+    NSString *const stackKey = @"original stack";
+    if (!userInfo[stackKey]) {
+        NSMutableDictionary *temp = [[userInfo mutableCopy] autorelease];
+        temp[stackKey] = self.callStackSymbols;
+        userInfo = temp;
+    }
+    @throw [NSException exceptionWithName:self.name
+                                   reason:[NSString stringWithFormat:@"%@:\n%@", string, self.reason]
+                                 userInfo:userInfo];
+}
+
+- (NSArray<NSString *> *)it_originalCallStackSymbols {
+    return self.userInfo[@"original stack"];
+}
+
+- (NSString *)it_compressedDescription {
+    NSString *uncompressed = [NSString stringWithFormat:@"%@:\n%@\n%@", self.name, self.reason, [self.it_originalCallStackSymbols componentsJoinedByString:@"\n"]];
+    return [[[uncompressed dataUsingEncoding:NSUTF8StringEncoding] it_compressedData] stringWithBase64EncodingWithLineBreak:@""];
+}
+
+@end
+

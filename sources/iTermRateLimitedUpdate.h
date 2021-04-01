@@ -12,6 +12,7 @@
 
 @property (nonatomic) NSTimeInterval minimumInterval;
 @property (nonatomic) BOOL debug;
+@property (nonatomic, readonly) NSTimeInterval deferCount;
 
 // Do not perform a pending action.
 - (void)invalidate;
@@ -26,6 +27,10 @@
 
 // If there is a pending block, do it now (synchronously) and cancel the delayed perform.
 - (void)force;
+
+// Forces a pending update to occur within `duration` seconds. Does nothing if
+// there is no pending update.
+- (void)performWithinDuration:(NSTimeInterval)duration;
 
 @end
 

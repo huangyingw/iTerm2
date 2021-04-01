@@ -15,6 +15,8 @@
 #import "iTermSearchField.h"
 #import "iTermToolbeltView.h"
 #import "iTermToolWrapper.h"
+#import "NSFont+iTerm.h"
+#import "NSImage+iTerm.h"
 #import "NSTableColumn+iTerm.h"
 #import "NSTextField+iTerm.h"
 #import "PseudoTerminal.h"
@@ -39,10 +41,12 @@ static NSString *const iTermCapturedOutputToolTableViewCellIdentifier = @"ToolCa
     NSArray *allCapturedOutput_;
     NSTableCellView *_measuringCellView;
     VT100ScreenMark *mark_;  // Mark from which captured output came
+    NSInteger _clearCount;
     iTermSearchField *searchField_;
     NSButton *help_;
     NSButton *_clearButton;
     NSArray *filteredEntries_;
+    BOOL _ignoreClick;
 }
 
 @synthesize tableView = tableView_;
@@ -51,9 +55,12 @@ static NSString *const iTermCapturedOutputToolTableViewCellIdentifier = @"ToolCa
     self = [super initWithFrame:frame];
     if (self) {
         help_ = [[NSButton alloc] initWithFrame:CGRectZero];
-        [help_ setBezelStyle:NSHelpButtonBezelStyle];
-        [help_ setButtonType:NSMomentaryPushInButton];
+        [help_ setBezelStyle:NSBezelStyleHelpButton];
+        [help_ setButtonType:NSButtonTypeMomentaryPushIn];
         [help_ setBordered:YES];
+        if (@available(macOS 10.16, *)) {
+            help_.controlSize = NSControlSizeSmall;
+        }
         [help_ sizeToFit];
         help_.target = self;
         help_.action = @selector(help:);
@@ -62,13 +69,21 @@ static NSString *const iTermCapturedOutputToolTableViewCellIdentifier = @"ToolCa
         [self addSubview:help_];
 
         _clearButton = [[NSButton alloc] initWithFrame:NSMakeRect(0, frame.size.height - kButtonHeight, frame.size.width, kButtonHeight)];
-        [_clearButton setButtonType:NSMomentaryPushInButton];
-        [_clearButton setTitle:@"Clear"];
         [_clearButton setTarget:self];
         [_clearButton setAction:@selector(clear:)];
-        [_clearButton setBezelStyle:NSSmallSquareBezelStyle];
-        [_clearButton sizeToFit];
         [_clearButton setAutoresizingMask:NSViewMinYMargin];
+        if (@available(macOS 10.16, *)) {
+            _clearButton.bezelStyle = NSBezelStyleRegularSquare;
+            _clearButton.bordered = NO;
+            _clearButton.image = [NSImage it_imageForSymbolName:@"trash" accessibilityDescription:@"Clear"];
+            _clearButton.imagePosition = NSImageOnly;
+            _clearButton.frame = NSMakeRect(0, 0, 22, 22);
+        } else {
+            [_clearButton setTitle:@"Clear"];
+            [_clearButton setButtonType:NSButtonTypeMomentaryPushIn];
+            [_clearButton setBezelStyle:NSBezelStyleSmallSquare];
+            [_clearButton sizeToFit];
+        }
         [self addSubview:_clearButton];
 
         searchField_ = [[iTermSearchField alloc] initWithFrame:CGRectZero];
@@ -83,31 +98,43 @@ static NSString *const iTermCapturedOutputToolTableViewCellIdentifier = @"ToolCa
         scrollView_ = [[NSScrollView alloc] initWithFrame:CGRectZero];
         [scrollView_ setHasVerticalScroller:YES];
         [scrollView_ setHasHorizontalScroller:NO];
-        [scrollView_ setBorderType:NSBezelBorder];
+        if (@available(macOS 10.16, *)) {
+            [scrollView_ setBorderType:NSLineBorder];
+            scrollView_.scrollerStyle = NSScrollerStyleOverlay;
+        } else {
+            [scrollView_ setBorderType:NSBezelBorder];
+        }
         NSSize contentSize = [scrollView_ contentSize];
         [scrollView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-        if (@available(macOS 10.14, *)) { } else {
-            scrollView_.drawsBackground = NO;
-        }
-        
+        scrollView_.drawsBackground = NO;
+
         tableView_ = [[NSTableView alloc] initWithFrame:NSMakeRect(0, 0, contentSize.width, contentSize.height)];
+#ifdef MAC_OS_X_VERSION_10_16
+        if (@available(macOS 10.16, *)) {
+            tableView_.style = NSTableViewStyleInset;
+        }
+#endif
         NSTableColumn *col;
         col = [[NSTableColumn alloc] initWithIdentifier:@"contents"];
         [col setEditable:NO];
         [tableView_ addTableColumn:col];
         [[col headerCell] setStringValue:@"Contents"];
-        NSFont *theFont = [NSFont fontWithName:@"Menlo" size:11];
+        NSFont *theFont = [NSFont it_toolbeltFont];
         [[col dataCell] setFont:theFont];
         tableView_.rowHeight = col.suggestedRowHeight;
         [tableView_ setHeaderView:nil];
         [tableView_ setDataSource:self];
         [tableView_ setDelegate:self];
-        NSSize spacing = tableView_.intercellSpacing;
-        spacing.height += 5;
-        tableView_.intercellSpacing = spacing;
+        if (@available(macOS 10.16, *)) { } else {
+            NSSize spacing = tableView_.intercellSpacing;
+            spacing.height += 5;
+            tableView_.intercellSpacing = spacing;
+        }
 
         [tableView_ setDoubleAction:@selector(doubleClickOnTableView:)];
         [tableView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+        tableView_.target = self;
+        tableView_.action = @selector(didClick:);
 
         tableView_.menu = [[NSMenu alloc] init];
         tableView_.menu.delegate = self;
@@ -116,6 +143,9 @@ static NSString *const iTermCapturedOutputToolTableViewCellIdentifier = @"ToolCa
                                           action:@selector(toggleCheckmark:)
                                    keyEquivalent:@""];
         [tableView_.menu addItem:item];
+        if (@available(macOS 10.14, *)) {
+            tableView_.backgroundColor = [NSColor clearColor];
+        }
 
         [searchField_ setArrowHandler:tableView_];
 
@@ -156,6 +186,10 @@ static NSString *const iTermCapturedOutputToolTableViewCellIdentifier = @"ToolCa
     if (mark != mark_) {
         [tableView_ selectRowIndexes:[NSIndexSet indexSet] byExtendingSelection:NO];
         mark_ = mark;
+        _clearCount = mark.clearCount;
+    } else if (mark.clearCount > _clearCount) {
+        _clearCount = mark.clearCount;
+        theArray = @[];
     }
 
     allCapturedOutput_ = [theArray copy];
@@ -182,6 +216,11 @@ static NSString *const iTermCapturedOutputToolTableViewCellIdentifier = @"ToolCa
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
+- (void)resizeSubviewsWithOldSize:(NSSize)oldSize {
+    [super resizeSubviewsWithOldSize:oldSize];
+    [self relayout];
+}
+
 - (void)relayout {
     NSRect frame = self.frame;
 
@@ -193,27 +232,44 @@ static NSString *const iTermCapturedOutputToolTableViewCellIdentifier = @"ToolCa
     searchField_.frame = searchFieldFrame;
 
     // Help button
-    help_.frame = NSMakeRect(frame.size.width - help_.frame.size.width,
-                             1,
-                             help_.frame.size.width,
-                             help_.frame.size.height);
+    {
+        CGFloat fudgeFactor = 1;
+        if (@available(macOS 10.16, *)) {
+            fudgeFactor = 2;
+        }
+        help_.frame = NSMakeRect(frame.size.width - help_.frame.size.width,
+                                 fudgeFactor,
+                                 help_.frame.size.width,
+                                 help_.frame.size.height);
+    }
 
-    _clearButton.frame = NSMakeRect(help_.frame.origin.x - _clearButton.frame.size.width - kMargin,
-                                    1,
-                                    _clearButton.frame.size.width,
-                                    _clearButton.frame.size.height);
-
+    // Clear button
+    {
+        CGFloat fudgeFactor = 1;
+        if (@available(macOS 10.15, *)) {
+            fudgeFactor = 0;
+        }
+        _clearButton.frame = NSMakeRect(help_.frame.origin.x - _clearButton.frame.size.width - kMargin,
+                                        fudgeFactor,
+                                        _clearButton.frame.size.width,
+                                        _clearButton.frame.size.height);
+    }
+    
     // Scroll view
     [scrollView_ setFrame:NSMakeRect(0,
                                      searchFieldFrame.size.height + kMargin,
                                      frame.size.width,
-                                     frame.size.height - 2 * kMargin)];
+                                     frame.size.height - kMargin - (searchFieldFrame.size.height + kMargin))];
 
     // Table view
     NSSize contentSize = [scrollView_ contentSize];
     NSTableColumn *column = tableView_.tableColumns[0];
-    column.minWidth = contentSize.width;
-    column.maxWidth = contentSize.width;
+    CGFloat fudgeFactor = 0;
+    if (@available(macOS 10.16, *)) {
+        fudgeFactor = 32;
+    }
+    column.minWidth = contentSize.width - fudgeFactor;
+    column.maxWidth = contentSize.width - fudgeFactor;
     [tableView_ sizeToFit];
     [tableView_ reloadData];
 }
@@ -243,7 +299,7 @@ static NSString *const iTermCapturedOutputToolTableViewCellIdentifier = @"ToolCa
     textField.maximumNumberOfLines = 0;
     textField.lineBreakMode = NSLineBreakByCharWrapping;
     textField.usesSingleLineMode = NO;
-    textField.font = [NSFont fontWithName:@"Menlo" size:11];
+    textField.font = [NSFont it_toolbeltFont];
     cellView.textField = textField;
     [cellView addSubview:textField];
     textField.translatesAutoresizingMaskIntoConstraints = NO;
@@ -276,9 +332,9 @@ static NSString *const iTermCapturedOutputToolTableViewCellIdentifier = @"ToolCa
 - (NSString *)labelForCapturedOutput:(CapturedOutput *)capturedOutput {
     NSString *label = capturedOutput.line;
     if (capturedOutput.state) {
-        label = [@"✔ " stringByAppendingString:label];
+        label = [@"✔" stringByAppendingString:label];
     } else {
-        label = [@"🔹 " stringByAppendingString:label];
+        label = [@"-" stringByAppendingString:label];
     }
     return label;
 }
@@ -313,6 +369,14 @@ static NSString *const iTermCapturedOutputToolTableViewCellIdentifier = @"ToolCa
 }
 
 - (void)tableViewSelectionDidChange:(NSNotification *)notification {
+    _ignoreClick = YES;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self->_ignoreClick = NO;
+    });
+    [self revealSelection];
+}
+
+- (void)revealSelection {
     NSInteger selectedIndex = [tableView_ selectedRow];
     if (selectedIndex < 0) {
         return;
@@ -358,6 +422,13 @@ static NSString *const iTermCapturedOutputToolTableViewCellIdentifier = @"ToolCa
         capturedOutput.state = !capturedOutput.state;
     }
     [tableView_ reloadData];
+}
+
+- (void)didClick:(id)sender {
+    if (_ignoreClick) {
+        return;
+    }
+    [self revealSelection];
 }
 
 #pragma mark - NSMenuDelegate

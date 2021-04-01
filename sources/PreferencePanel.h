@@ -44,7 +44,7 @@ extern NSString *const kPreferencePanelWillCloseNotification;
 // All profiles should be reloaded.
 extern NSString *const kReloadAllProfiles;
 
-extern CGFloat iTermSharedPreferencePanelWindowMinimumWidth;
+CGFloat iTermPreferencePanelGetWindowMinimumWidth(BOOL session);
 
 // Constants for KEY_PROMPT_CLOSE
 // Never prompt on close
@@ -115,5 +115,10 @@ void LoadPrefsFromCustomFolder(void);
 andEditComponentWithIdentifier:(NSString *)identifier
                          tmux:(BOOL)tmux
                         scope:(iTermVariableScope<iTermSessionScope> *)scope;
+
+- (void)openToProfileWithGuid:(NSString *)guid
+                          key:(NSString *)key;
+
+- (void)openToPreferenceWithKey:(NSString *)key;
 
 @end

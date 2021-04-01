@@ -3,6 +3,7 @@
 
 #import <Cocoa/Cocoa.h>
 #import "FutureMethods.h"
+#import "iTermEncoderAdapter.h"
 #import "PSMTabBarControl.h"
 #import "PTYSession.h"
 #import "PTYSplitView.h"
@@ -29,6 +30,7 @@ extern NSString *const PTYTabVariableTitleOverride;
 @interface PTYTab : NSObject <
   NSCopying,
   NSSplitViewDelegate,
+  iTermUniquelyIdentifiable,
   PTYSessionDelegate,
   PTYSplitViewDelegate,
   PSMTabBarControlRepresentedObjectIdentifierProtocol>
@@ -64,6 +66,10 @@ extern NSString *const PTYTabVariableTitleOverride;
 @property (nonatomic, readonly) iTermVariables *variables;
 @property (nonatomic, readonly) iTermVariables *userVariables;
 
+// NOTE: This isn't actually the root view for tmux integration settings.
+@property (nonatomic, readonly) NSView *rootView;
+@property (nonatomic, readonly) NSView *realRootView;
+
 // If non-nil, this session may not change size. This is useful when you want
 // to change a session's size. You can resize it, lock it, and then
 // adjustSubviews of the splitview (ordinarily done by a call to -[PTYTab
@@ -78,6 +84,12 @@ extern NSString *const PTYTabVariableTitleOverride;
 @property(nonatomic, readonly) iTermMetalUnavailableReason metalUnavailableReason;
 @property(nonatomic) BOOL deferFontChanges;
 
+// If true, report that the tab's ideal size is its currentSize.
+@property(nonatomic) BOOL reportIdeal;
+@property(nonatomic, readonly) NSArray<PTYSession *> *sessionsAtTop;
+@property(nonatomic, readonly) NSArray<PTYSession *> *sessionsAtLeft;
+@property(nonatomic, readonly) NSArray<PTYSession *> *sessionsAtBottom;
+
 + (NSSize)sizeForTmuxWindowWithAffinity:(NSString *)affinity
                              controller:(TmuxController *)controller;
 
@@ -89,18 +101,15 @@ extern NSString *const PTYTabVariableTitleOverride;
 
 + (void)drawArrangementPreview:(NSDictionary*)arrangement frame:(NSRect)frame;
 
-+ (PTYTab *)openTabWithArrangement:(NSDictionary*)arrangement
-                        inTerminal:(NSWindowController<iTermWindowController> *)term
-                   hasFlexibleView:(BOOL)hasFlexible
-                           viewMap:(NSDictionary<NSNumber *, SessionView *> *)viewMap
-                        sessionMap:(NSDictionary<NSString *, PTYSession *> *)sessionMap;
-
 + (PTYTab *)tabWithArrangement:(NSDictionary*)arrangement
+                         named:(NSString *)arrangementName
                     inTerminal:(NSWindowController<iTermWindowController> *)term
                hasFlexibleView:(BOOL)hasFlexible
                        viewMap:(NSDictionary<NSNumber *, SessionView *> *)viewMap
                     sessionMap:(NSDictionary<NSString *, PTYSession *> *)sessionMap
-                tmuxController:(TmuxController *)tmuxController;
+                tmuxController:(TmuxController *)tmuxController
+            partialAttachments:(NSDictionary *)partialAttachments
+              reservedTabGUIDs:(NSSet<NSString *> *)reservedTabGUIDs;
 
 + (NSDictionary<NSString *, PTYSession *> *)sessionMapWithArrangement:(NSDictionary *)arrangement
                                                              sessions:(NSArray *)sessions;
@@ -113,6 +122,16 @@ extern NSString *const PTYTabVariableTitleOverride;
 + (NSDictionary *)repairedArrangement:(NSDictionary *)arrangement
              replacingProfileWithGUID:(NSString *)badGuid
                           withProfile:(Profile *)goodProfile;
+
++ (NSDictionary *)repairedArrangement:(NSDictionary *)arrangement
+     replacingOldCWDOfSessionWithGUID:(NSString *)guid
+                           withOldCWD:(NSString *)replacementOldCWD;
+
++ (NSDictionary *)arrangementForSessionWithGUID:(NSString *)sessionGUID
+                                  inArrangement:(NSDictionary *)arrangement;
+
++ (void)openPartialAttachmentsForArrangement:(NSDictionary *)arrangement
+                                  completion:(void (^)(NSDictionary *))completion;
 
 // init/dealloc
 - (instancetype)initWithSession:(PTYSession *)session
@@ -183,10 +202,13 @@ extern NSString *const PTYTabVariableTitleOverride;
 // arrangement with matching session unique IDs will be assigned those
 // SessionView's.
 - (void)updateFlexibleViewColors;
-- (NSDictionary*)arrangement;
+- (NSDictionary *)arrangement;
+- (NSDictionary *)arrangementWithNewGUID;
 
 - (void)notifyWindowChanged;
+// NOTE: Do not call this directly. It doesn't handle tmux correctly.
 - (void)maximize;
+- (void)toggleMaximizeSession:(PTYSession *)session;
 // Does any session in this tab require prompt on close?
 - (iTermPromptOnCloseReason *)promptOnCloseReason;
 
@@ -204,7 +226,7 @@ extern NSString *const PTYTabVariableTitleOverride;
        tmuxController:(TmuxController *)tmuxController
                zoomed:(NSNumber *)zoomed;
 // Returns true if the tmux layout is too large for the window to accommodate.
-- (BOOL)layoutIsTooLarge;
+- (BOOL)updatedTmuxLayoutRequiresAdjustment;
 - (TmuxController *)tmuxController;
 
 - (void)setTmuxFont:(NSFont *)font
@@ -223,6 +245,8 @@ extern NSString *const PTYTabVariableTitleOverride;
 - (void)replaceWithContentsOfTab:(PTYTab *)tabToGut;
 
 - (NSDictionary*)arrangementWithContents:(BOOL)contents;
+- (BOOL)encodeWithContents:(BOOL)contents
+                   encoder:(id<iTermEncoderAdapter>)encoder;
 
 // Update the tab's title from the active session's name. Needed for initializing the tab's title
 // after setting up tmux tabs.

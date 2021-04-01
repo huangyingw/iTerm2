@@ -59,11 +59,13 @@ NSString *const iTermProcessTypeDidChangeNotification = @"iTermProcessTypeDidCha
 
     // Exclude from dock and cmd-tab (LSUIElement)
     IBOutlet NSButton *_uiElement;
+    IBOutlet NSButton *_uiElementRequiresHotkeyWindows;
 
     IBOutlet NSButton *_flashTabBarInFullscreenWhenSwitchingTabs;
     IBOutlet NSButton *_showTabBarInFullscreen;
 
     IBOutlet NSButton *_stretchTabsToFillBar;
+    IBOutlet NSButton *_htmlTabTitles;
 
     // Show window number in title bar.
     IBOutlet NSButton *_windowNumber;
@@ -97,6 +99,14 @@ NSString *const iTermProcessTypeDidChangeNotification = @"iTermProcessTypeDidCha
 
     IBOutlet NSTabView *_tabView;
     NSRect _desiredFrame;
+
+    IBOutlet NSTextField *_sideMarginsLabel;
+    IBOutlet NSTextField *_sideMargins;
+    IBOutlet NSStepper *_sideMarginsStepper;
+
+    IBOutlet NSTextField *_topBottomMarginsLabel;
+    IBOutlet NSTextField *_topBottomMargins;
+    IBOutlet NSStepper *_topBottomMarginsStepper;
 }
 
 - (void)awakeFromNib {
@@ -139,6 +149,23 @@ NSString *const iTermProcessTypeDidChangeNotification = @"iTermProcessTypeDidCha
         [weakSelf updateProxyIconEnabled];
     };
 
+    info = [self defineControl:_sideMargins
+                           key:kPreferenceKeySideMargins
+                   relatedView:_sideMarginsLabel
+                          type:kPreferenceInfoTypeIntegerTextField];
+    [self associateStepper:_sideMarginsStepper withPreference:info];
+    info.onChange = ^{
+        [weakSelf postRefreshNotification];
+    };
+
+    info = [self defineControl:_topBottomMargins
+                           key:kPreferenceKeyTopBottomMargins
+                   relatedView:_topBottomMarginsLabel
+                          type:kPreferenceInfoTypeIntegerTextField];
+    info.onChange = ^{
+        [weakSelf postRefreshNotification];
+    };
+    [self associateStepper:_topBottomMarginsStepper withPreference:info];
 
     info = [self defineControl:_hideTab
                            key:kPreferenceKeyHideTabBar
@@ -149,10 +176,10 @@ NSString *const iTermProcessTypeDidChangeNotification = @"iTermProcessTypeDidCha
         [weakSelf updateHiddenAndEnabled];
     };
 
-    info = [self defineControl:_preserveWindowSizeWhenTabBarVisibilityChanges
-                           key:kPreferenceKeyPreserveWindowSizeWhenTabBarVisibilityChanges
-                   relatedView:nil
-                          type:kPreferenceInfoTypeCheckbox];
+    [self defineControl:_preserveWindowSizeWhenTabBarVisibilityChanges
+                    key:kPreferenceKeyPreserveWindowSizeWhenTabBarVisibilityChanges
+            relatedView:nil
+                   type:kPreferenceInfoTypeCheckbox];
 
     info = [self defineControl:_hideTabNumber
                            key:kPreferenceKeyHideTabNumber
@@ -201,7 +228,7 @@ NSString *const iTermProcessTypeDidChangeNotification = @"iTermProcessTypeDidCha
                    relatedView:nil
                           type:kPreferenceInfoTypeCheckbox];
     info.customSettingChangedHandler = ^(id sender) {
-        BOOL isOn = [sender state] == NSOnState;
+        BOOL isOn = [sender state] == NSControlStateValueOn;
         BOOL didChange = NO;
         if (isOn) {
             iTermWarningSelection selection =
@@ -226,18 +253,36 @@ NSString *const iTermProcessTypeDidChangeNotification = @"iTermProcessTypeDidCha
             __strong __typeof(self) strongSelf = weakSelf;
             if (strongSelf) {
                 if (isOn) {
-                    strongSelf->_hideMenuBarInFullscreen.state = NSOffState;
+                    strongSelf->_hideMenuBarInFullscreen.state = NSControlStateValueOff;
                 }
             }
         }
         [[NSNotificationCenter defaultCenter] postNotificationName:iTermProcessTypeDidChangeNotification
                                                             object:nil];
+        [weakSelf updateHiddenAndEnabled];
     };
 
-    [self defineControl:_flashTabBarInFullscreenWhenSwitchingTabs
+    info = [self defineControl:_uiElementRequiresHotkeyWindows
+                           key:kPreferenceKeyUIElementRequiresHotkeys
+                   relatedView:nil
+                          type:kPreferenceInfoTypeCheckbox];
+    info.shouldBeEnabled = ^BOOL{
+        return [weakSelf boolForKey:kPreferenceKeyUIElement];
+    };
+    info.observer = ^{
+        [[NSNotificationCenter defaultCenter] postNotificationName:iTermProcessTypeDidChangeNotification
+                                                            object:nil];
+        [weakSelf updateHiddenAndEnabled];
+    };
+
+    info = [self defineControl:_flashTabBarInFullscreenWhenSwitchingTabs
                     key:kPreferenceKeyFlashTabBarInFullscreen
             relatedView:nil
                    type:kPreferenceInfoTypeCheckbox];
+    info.onChange = ^{
+        [[NSNotificationCenter defaultCenter] postNotificationName:kRefreshTerminalNotification object:nil];
+    };
+
     [self updateHiddenAndEnabled];
 
     info = [self defineControl:_showTabBarInFullscreen
@@ -257,6 +302,12 @@ NSString *const iTermProcessTypeDidChangeNotification = @"iTermProcessTypeDidCha
 
     info = [self defineControl:_stretchTabsToFillBar
                            key:kPreferenceKeyStretchTabsToFillBar
+                   relatedView:nil
+                          type:kPreferenceInfoTypeCheckbox];
+    info.onChange = ^() { [weakSelf postRefreshNotification]; };
+
+    info = [self defineControl:_htmlTabTitles
+                           key:kPreferenceKeyHTMLTabTitles
                    relatedView:nil
                           type:kPreferenceInfoTypeCheckbox];
     info.onChange = ^() { [weakSelf postRefreshNotification]; };
@@ -296,7 +347,6 @@ NSString *const iTermProcessTypeDidChangeNotification = @"iTermProcessTypeDidCha
                    relatedView:nil
                           type:kPreferenceInfoTypeCheckbox];
     info.onChange = ^() { [weakSelf postRefreshNotification]; };
-
     info = [self defineControl:_hideScrollbar
                            key:kPreferenceKeyHideScrollbar
                    relatedView:nil
@@ -340,7 +390,7 @@ NSString *const iTermProcessTypeDidChangeNotification = @"iTermProcessTypeDidCha
 
 - (void)showFullscreenTabsSettingDidChange:(NSNotification *)notification {
     _showTabBarInFullscreen.state =
-        [iTermPreferences boolForKey:kPreferenceKeyShowFullscreenTabBar] ? NSOnState : NSOffState;
+        [iTermPreferences boolForKey:kPreferenceKeyShowFullscreenTabBar] ? NSControlStateValueOn : NSControlStateValueOff;
     [self updateHiddenAndEnabled];
 }
 
@@ -353,7 +403,11 @@ NSString *const iTermProcessTypeDidChangeNotification = @"iTermProcessTypeDidCha
          [iTermPreferences boolForKey:kPreferenceKeyHideTabBar]);
 
     // Can't preserve size if you can't hide the tab bar.
-    _preserveWindowSizeWhenTabBarVisibilityChanges.enabled = (_hideTab.state != NSOnState);
+    _preserveWindowSizeWhenTabBarVisibilityChanges.enabled = (_hideTab.state != NSControlStateValueOn);
+    [self updateEnabledState];
+
+    _hideMenuBarInFullscreen.enabled = (![self boolForKey:kPreferenceKeyUIElement] ||
+                                        [self boolForKey:kPreferenceKeyUIElementRequiresHotkeys]);
 }
 
 - (NSTabView *)tabView {

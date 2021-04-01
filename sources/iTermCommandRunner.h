@@ -7,13 +7,20 @@
 
 #import <Foundation/Foundation.h>
 
-@interface iTermCommandRunner : NSObject
+@protocol iTermCommandRunner<NSObject>
+@property (nonatomic, copy) void (^completion)(int);
+- (void)run;
+@end
+
+@interface iTermCommandRunner : NSObject<iTermCommandRunner>
 
 @property (nonatomic, copy) NSString *command;
 @property (nonatomic, copy) NSArray<NSString *> *arguments;
 @property (nonatomic, copy) NSString *currentDirectoryPath;
 @property (nonatomic, copy) void (^completion)(int);
-@property (nonatomic, copy) void (^outputHandler)(NSData *);
+// Call the completion block after you're completely done processing the input.
+// This gives backpressure to the background process.
+@property (nonatomic, copy) void (^outputHandler)(NSData *, void (^)(void));
 @property (nonatomic, copy) NSDictionary<NSString *, NSString *> *environment;
 
 + (void)unzipURL:(NSURL *)zipURL
@@ -29,8 +36,8 @@
 
 - (instancetype)initWithCommand:(NSString *)command
                   withArguments:(NSArray<NSString *> *)arguments
-                           path:(NSString *)currentDirectoryPath NS_DESIGNATED_INITIALIZER;
-- (instancetype)init NS_UNAVAILABLE;
+                           path:(NSString *)currentDirectoryPath;
+- (instancetype)init NS_DESIGNATED_INITIALIZER;
 
 - (void)run;
 - (void)runWithTimeout:(NSTimeInterval)timeout;

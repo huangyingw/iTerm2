@@ -7,6 +7,7 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "iTermLocatedString.h"
 #import "ScreenChar.h"
 #import "SmartMatch.h"
 #import "PTYTextViewDataSource.h"
@@ -59,6 +60,14 @@ extern const NSInteger kLongMaximumWordLength;
 // bounds. The maximum length is only approximate. See the suggested constants above.
 - (VT100GridWindowedRange)rangeForWordAt:(VT100GridCoord)location
                            maximumLength:(NSInteger)maximumLength;
+- (VT100GridAbsWindowedRange)rangeForWordAtAbsCoord:(VT100GridAbsCoord)absLocation
+                                      maximumLength:(NSInteger)maximumLength;
+
+// A big word is delimited by whitespace.
+- (VT100GridWindowedRange)rangeForBigWordAt:(VT100GridCoord)location
+                              maximumLength:(NSInteger)maximumLength;
+- (VT100GridAbsWindowedRange)rangeForBigWordAtAbsCoord:(VT100GridAbsCoord)location
+                                         maximumLength:(NSInteger)maximumLength;
 
 // Returns the string for the character at a screen location.
 - (NSString *)stringForCharacterAt:(VT100GridCoord)location;
@@ -91,10 +100,12 @@ extern const NSInteger kLongMaximumWordLength;
 - (VT100GridCoord)successorOfCoord:(VT100GridCoord)coord;
 // Won't go past the end of the line while skipping nulls.
 - (VT100GridCoord)successorOfCoordSkippingContiguousNulls:(VT100GridCoord)coord;
+- (VT100GridAbsCoord)successorOfAbsCoordSkippingContiguousNulls:(VT100GridAbsCoord)coord;
 
 - (VT100GridCoord)predecessorOfCoord:(VT100GridCoord)coord;
 // Won't go past the start of the line while skipping nulls.
 - (VT100GridCoord)predecessorOfCoordSkippingContiguousNulls:(VT100GridCoord)coord;
+- (VT100GridAbsCoord)predecessorOfAbsCoordSkippingContiguousNulls:(VT100GridAbsCoord)coord;
 
 // Advances coord by a positive or negative delta, staying within the column window, if any. Any
 // indices in |coordsToSkip| will not count against delta.
@@ -110,6 +121,12 @@ extern const NSInteger kLongMaximumWordLength;
       forCharacterMatchingFilter:(BOOL (^)(screen_char_t, VT100GridCoord))block;
 
 - (BOOL)haveNonWhitespaceInFirstLineOfRange:(VT100GridWindowedRange)windowedRange;
+
+- (NSAttributedString *)attributedStringForSnippetForRange:(VT100GridAbsCoordRange)range
+                                         regularAttributes:(NSDictionary *)regularAttributes
+                                           matchAttributes:(NSDictionary *)matchAttributes
+                                       maximumPrefixLength:(NSUInteger)maximumPrefixLength
+                                       maximumSuffixLength:(NSUInteger)maximumSuffixLength;
 
 // Returns content in the specified range, ignoring hard newlines. If |forward| is set then content
 // is captured up to the first null; otherwise, content after the last null in the range is returned.
@@ -135,9 +152,21 @@ extern const NSInteger kLongMaximumWordLength;
          continuationChars:(NSMutableIndexSet *)continuationChars
               coords:(NSMutableArray *)coords;
 
+// Returns an iTermLocated[Attributed]String
+- (id)locatedStringInRange:(VT100GridWindowedRange)range
+         attributeProvider:(NSDictionary *(^)(screen_char_t))attributeProvider
+                nullPolicy:(iTermTextExtractorNullPolicy)nullPolicy
+                       pad:(BOOL)pad
+        includeLastNewline:(BOOL)includeLastNewline
+    trimTrailingWhitespace:(BOOL)trimSelectionTrailingSpaces
+              cappedAtSize:(int)maxBytes
+              truncateTail:(BOOL)truncateTail
+         continuationChars:(NSMutableIndexSet *)continuationChars;
+
 - (NSIndexSet *)indexesOnLine:(int)line containingCharacter:(unichar)c inRange:(NSRange)range;
 
 - (int)lengthOfLine:(int)line;
+- (int)lengthOfAbsLine:(long long)absLine;
 
 - (void)enumerateCharsInRange:(VT100GridWindowedRange)range
                     charBlock:(BOOL (^)(screen_char_t *currentLine, screen_char_t theChar, VT100GridCoord coord))charBlock
@@ -152,15 +181,17 @@ extern const NSInteger kLongMaximumWordLength;
 //
 // If |coords| is non-nil it will be filled with NSValue*s in 1:1 correspondence with characters in
 // the return value, giving VT100GridCoord's with their provenance.
-- (NSString *)wrappedStringAt:(VT100GridCoord)coord
-                      forward:(BOOL)forward
-          respectHardNewlines:(BOOL)respectHardNewlines
-                     maxChars:(int)maxChars
-            continuationChars:(NSMutableIndexSet *)continuationChars
-          convertNullsToSpace:(BOOL)convertNullsToSpace
-                       coords:(NSMutableArray *)coords;
+- (iTermLocatedString *)wrappedLocatedStringAt:(VT100GridCoord)coord
+                                       forward:(BOOL)forward
+                           respectHardNewlines:(BOOL)respectHardNewlines
+                                      maxChars:(int)maxChars
+                             continuationChars:(NSMutableIndexSet *)continuationChars
+                           convertNullsToSpace:(BOOL)convertNullsToSpace;
+
+- (ScreenCharArray *)combinedLinesInRange:(NSRange)range;
 
 - (screen_char_t)characterAt:(VT100GridCoord)coord;
+- (screen_char_t)characterAtAbsCoord:(VT100GridAbsCoord)coord;
 
 // Returns a subset of `range` by removing leading and trailing whitespace.
 - (VT100GridAbsCoordRange)rangeByTrimmingWhitespaceFromRange:(VT100GridAbsCoordRange)range;
@@ -197,6 +228,7 @@ typedef NS_ENUM(NSUInteger, iTermTextExtractorTrimTrailingWhitespace) {
                                        passingTest:(BOOL(^)(screen_char_t *c, VT100GridCoord coord))block;
 
 - (int)startOfIndentationOnLine:(int)line;
+- (int)startOfIndentationOnAbsLine:(long long)absLine;
 
 #pragma mark - For tests
 

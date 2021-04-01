@@ -16,3 +16,6 @@ upload: force
 
 mypy: force
 	mypy --ignore-missing-imports ./test.py
+
+pylint: force
+	pylint --load-plugins=pylint_protobuf iterm2

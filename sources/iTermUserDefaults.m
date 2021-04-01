@@ -19,31 +19,73 @@ static NSString *const iTermUserDefaultsKeySearchHistory = @"NoSyncSearchHistory
 
 static NSString *const iTermUserDefaultsKeyEnableAutomaticProfileSwitchingLogging = @"NoSyncEnableAutomaticProfileSwitchingLogging";
 
+static NSString *const iTermUserDefaultsKeyRequireAuthenticationAfterScreenLocks = @"RequireAuthenticationAfterScreenLocks";
+static NSString *const iTermUserDefaultsKeyOpenTmuxDashboardIfHiddenWindows = @"OpenTmuxDashboardIfHiddenWindows";
+static NSString *const iTermUserDefaultsKeyHaveExplainedHowToAddTouchbarControls = @"NoSyncHaveExplainedHowToAddTouchbarControls";
+static NSString *const iTermUserDefaultsKeyIgnoreSystemWindowRestoration = @"NoSyncIgnoreSystemWindowRestoration";
+static NSString *const iTermUserDefaultsKeyGlobalSearchMode = @"NoSyncGlobalSearchMode";
+static NSString *const iTermUserDefaultsKeyAddTriggerInstant = @"NoSyncAddTriggerInstant";
+static NSString *const iTermUserDefaultsKeyAddTriggerUpdateProfile = @"NoSyncAddTriggerUpdateProfile";
+static NSString *const iTermUserDefaultsKeyLastSystemPythonVersionRequirement = @"NoSyncLastSystemPythonVersionRequirement";
+
 @implementation iTermUserDefaults
 
-static NSArray *iTermUserDefaultsGetTypedArray(Class objectClass, NSString *key) {
-    return [[NSArray castFrom:[[NSUserDefaults standardUserDefaults] objectForKey:iTermUserDefaultsKeySearchHistory]] mapWithBlock:^id(id anObject) {
+static NSArray *iTermUserDefaultsGetTypedArray(NSUserDefaults *userDefaults, Class objectClass, NSString *key) {
+    return [[NSArray castFrom:[userDefaults objectForKey:iTermUserDefaultsKeySearchHistory]] mapWithBlock:^id(id anObject) {
         return [objectClass castFrom:anObject];
     }];
 }
 
-static void iTermUserDefaultsSetTypedArray(Class objectClass, NSString *key, id value) {
+static void iTermUserDefaultsSetTypedArray(NSUserDefaults *userDefaults, Class objectClass, NSString *key, id value) {
     NSArray *array = [[NSArray castFrom:value] mapWithBlock:^id(id anObject) {
         return [objectClass castFrom:anObject];
     }];
-    [[NSUserDefaults standardUserDefaults] setObject:array forKey:key];
+    [userDefaults setObject:array forKey:key];
+}
+
+static NSUserDefaults *iTermPrivateUserDefaults(void) {
+    static dispatch_once_t onceToken;
+    static NSUserDefaults *privateUserDefaults;
+    dispatch_once(&onceToken, ^{
+        privateUserDefaults = [[NSUserDefaults alloc] initWithSuiteName:@"com.googlecode.iterm2.private"];
+    });
+    return privateUserDefaults;
+}
+
++ (NSUserDefaults *)userDefaults {
+    static NSUserDefaults *userDefaults;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        userDefaults = [NSUserDefaults standardUserDefaults];
+        [userDefaults registerDefaults:@{ iTermUserDefaultsKeyOpenTmuxDashboardIfHiddenWindows: @YES }];
+    });
+    return userDefaults;
+}
+
++ (void)performMigrations {
+    id obj = [self.userDefaults objectForKey:iTermUserDefaultsKeySearchHistory];
+    if (!obj) {
+        return;
+    }
+    [self setSearchHistory:obj];
+    [self.userDefaults removeObjectForKey:iTermUserDefaultsKeySearchHistory];
+
+    id maybeSearchHistory = [self.userDefaults objectForKey:iTermUserDefaultsKeyBuggySecureKeyboardEntry];
+    if (maybeSearchHistory && ![maybeSearchHistory isKindOfClass:[NSNumber class]]) {
+        [self.userDefaults removeObjectForKey:iTermUserDefaultsKeyBuggySecureKeyboardEntry];
+    }
 }
 
 + (NSArray<NSString *> *)searchHistory {
-    return iTermUserDefaultsGetTypedArray([NSString class], iTermUserDefaultsKeySearchHistory) ?: @[];
+    return iTermUserDefaultsGetTypedArray(iTermPrivateUserDefaults(), [NSString class], iTermUserDefaultsKeySearchHistory) ?: @[];
 }
 
 + (void)setSearchHistory:(NSArray<NSString *> *)objects {
-    iTermUserDefaultsSetTypedArray([NSString class], iTermUserDefaultsKeySearchHistory, objects);
+    iTermUserDefaultsSetTypedArray(iTermPrivateUserDefaults(), [NSString class], iTermUserDefaultsKeySearchHistory, objects);
 }
 
 + (BOOL)secureKeyboardEntry {
-    NSNumber *buggy = [NSNumber castFrom:[[NSUserDefaults standardUserDefaults] objectForKey:iTermUserDefaultsKeyBuggySecureKeyboardEntry]];
+    NSNumber *buggy = [NSNumber castFrom:[self.userDefaults objectForKey:iTermUserDefaultsKeyBuggySecureKeyboardEntry]];
     if (buggy) {
         // If the buggy one exists and is a number, then it was your secure keyboard setting as
         // written by version 3.3.0 or 3.3.1. Prefer it because updating the secure keyboard entry
@@ -52,14 +94,14 @@ static void iTermUserDefaultsSetTypedArray(Class objectClass, NSString *key, id 
         // (non-buggy) version.
         return [buggy boolValue];
     }
-    return [[NSUserDefaults standardUserDefaults] boolForKey:iTermSecureKeyboardEntryEnabledUserDefaultsKey];
+    return [self.userDefaults boolForKey:iTermSecureKeyboardEntryEnabledUserDefaultsKey];
 }
 
 + (void)setSecureKeyboardEntry:(BOOL)secureKeyboardEntry {
     // See comment in +secureKeyboardEntry.
-    [[NSUserDefaults standardUserDefaults] removeObjectForKey:iTermUserDefaultsKeyBuggySecureKeyboardEntry];
-    [[NSUserDefaults standardUserDefaults] setBool:secureKeyboardEntry
-                                            forKey:iTermSecureKeyboardEntryEnabledUserDefaultsKey];
+    [self.userDefaults removeObjectForKey:iTermUserDefaultsKeyBuggySecureKeyboardEntry];
+    [self.userDefaults setBool:secureKeyboardEntry
+                        forKey:iTermSecureKeyboardEntryEnabledUserDefaultsKey];
 }
 
 + (iTermAppleWindowTabbingMode)appleWindowTabbingMode {
@@ -83,20 +125,86 @@ static void iTermUserDefaultsSetTypedArray(Class objectClass, NSString *key, id 
 }
 
 + (BOOL)haveBeenWarnedAboutTabDockSetting {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:kPreferenceKeyHaveBeenWarnedAboutTabDockSetting];
+    return [self.userDefaults boolForKey:kPreferenceKeyHaveBeenWarnedAboutTabDockSetting];
 }
 
 + (void)setHaveBeenWarnedAboutTabDockSetting:(BOOL)haveBeenWarnedAboutTabDockSetting {
-    [[NSUserDefaults standardUserDefaults] setBool:haveBeenWarnedAboutTabDockSetting forKey:kPreferenceKeyHaveBeenWarnedAboutTabDockSetting];
+    [self.userDefaults setBool:haveBeenWarnedAboutTabDockSetting forKey:kPreferenceKeyHaveBeenWarnedAboutTabDockSetting];
 }
 
 + (BOOL)enableAutomaticProfileSwitchingLogging {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:iTermUserDefaultsKeyEnableAutomaticProfileSwitchingLogging];
+    return [self.userDefaults boolForKey:iTermUserDefaultsKeyEnableAutomaticProfileSwitchingLogging];
 }
 
 + (void)setEnableAutomaticProfileSwitchingLogging:(BOOL)enableAutomaticProfileSwitchingLogging {
-    [[NSUserDefaults standardUserDefaults] setBool:enableAutomaticProfileSwitchingLogging
-                                            forKey:iTermUserDefaultsKeyEnableAutomaticProfileSwitchingLogging];
+    [self.userDefaults setBool:enableAutomaticProfileSwitchingLogging
+                        forKey:iTermUserDefaultsKeyEnableAutomaticProfileSwitchingLogging];
 }
 
++ (BOOL)requireAuthenticationAfterScreenLocks {
+    return [self.userDefaults boolForKey:iTermUserDefaultsKeyRequireAuthenticationAfterScreenLocks];
+}
+
++ (void)setRequireAuthenticationAfterScreenLocks:(BOOL)requireAuthenticationAfterScreenLocks {
+    [self.userDefaults setBool:requireAuthenticationAfterScreenLocks
+                        forKey:iTermUserDefaultsKeyRequireAuthenticationAfterScreenLocks];
+}
++ (BOOL)openTmuxDashboardIfHiddenWindows {
+    return [self.userDefaults boolForKey:iTermUserDefaultsKeyOpenTmuxDashboardIfHiddenWindows];
+}
+
++ (void)setOpenTmuxDashboardIfHiddenWindows:(BOOL)openTmuxDashboardIfHiddenWindows {
+    [self.userDefaults setBool:openTmuxDashboardIfHiddenWindows
+                        forKey:iTermUserDefaultsKeyOpenTmuxDashboardIfHiddenWindows];
+}
+
++ (BOOL)haveExplainedHowToAddTouchbarControls {
+    return [self.userDefaults boolForKey:iTermUserDefaultsKeyHaveExplainedHowToAddTouchbarControls];
+}
+
++ (void)setHaveExplainedHowToAddTouchbarControls:(BOOL)haveExplainedHowToAddTouchbarControls {
+    [self.userDefaults setBool:haveExplainedHowToAddTouchbarControls
+                        forKey:iTermUserDefaultsKeyHaveExplainedHowToAddTouchbarControls];
+}
+
++ (BOOL)ignoreSystemWindowRestoration {
+    return [self.userDefaults boolForKey:iTermUserDefaultsKeyIgnoreSystemWindowRestoration];
+}
+
++ (void)setIgnoreSystemWindowRestoration:(BOOL)ignoreSystemWindowRestoration {
+    [self.userDefaults setBool:ignoreSystemWindowRestoration
+                        forKey:iTermUserDefaultsKeyIgnoreSystemWindowRestoration];
+}
+
++ (NSUInteger)globalSearchMode {
+    return [[self.userDefaults objectForKey:iTermUserDefaultsKeyGlobalSearchMode] unsignedIntegerValue];
+}
+
++ (void)setGlobalSearchMode:(NSUInteger)globalSearchMode {
+    [self.userDefaults setObject:@(globalSearchMode) forKey:iTermUserDefaultsKeyGlobalSearchMode];
+}
+
++ (BOOL)addTriggerInstant {
+    return [[self.userDefaults objectForKey:iTermUserDefaultsKeyAddTriggerInstant] boolValue];
+}
+
++ (void)setAddTriggerInstant:(BOOL)addTriggerInstant {
+    [self.userDefaults setObject:@(addTriggerInstant) forKey:iTermUserDefaultsKeyAddTriggerInstant];
+}
+
++ (BOOL)addTriggerUpdateProfile {
+    return [[self.userDefaults objectForKey:iTermUserDefaultsKeyAddTriggerUpdateProfile] boolValue];
+}
+
++ (void)setAddTriggerUpdateProfile:(BOOL)addTriggerUpdateProfile {
+    [self.userDefaults setObject:@(addTriggerUpdateProfile) forKey:iTermUserDefaultsKeyAddTriggerUpdateProfile];
+}
+
++ (NSString *)lastSystemPythonVersionRequirement {
+    return [self.userDefaults objectForKey:iTermUserDefaultsKeyLastSystemPythonVersionRequirement];
+}
+
++ (void)setLastSystemPythonVersionRequirement:(NSString *)lastSystemPythonVersionRequirement {
+    [self.userDefaults setObject:lastSystemPythonVersionRequirement forKey:iTermUserDefaultsKeyLastSystemPythonVersionRequirement];
+}
 @end

@@ -7,7 +7,10 @@
 //
 
 #import "iTermSelectionScrollHelper.h"
+
+#import "DebugLogging.h"
 #import "iTermAdvancedSettingsModel.h"
+#import "iTermPreferences.h"
 #import "DebugLogging.h"
 #import "PTYTextView.h"
 
@@ -30,6 +33,7 @@ typedef NS_ENUM(NSInteger, iTermSelectionScrollDirection) {
     double _prevScrollDelay;
     VT100GridCoord _scrollingCoord;
     NSPoint _scrollingLocation;
+    BOOL _disabled;
 }
 
 - (void)scheduleSelectionScroll {
@@ -66,7 +70,7 @@ typedef NS_ENUM(NSInteger, iTermSelectionScrollDirection) {
             visibleRect.origin.y -= lineHeight * numLines;
             // Allow the origin to go as far as y=-VMARGIN so the top border is shown when the first
             // line is on screen.
-            if (visibleRect.origin.y >= -[iTermAdvancedSettingsModel terminalVMargin]) {
+            if (visibleRect.origin.y >= -[iTermPreferences intForKey:kPreferenceKeyTopBottomMargins]) {
                 [_delegate scrollRectToVisible:visibleRect];
             }
             y = visibleRect.origin.y / lineHeight;
@@ -91,9 +95,14 @@ typedef NS_ENUM(NSInteger, iTermSelectionScrollDirection) {
 
 - (void)mouseUp {
     _selectionScrollDirection = 0;
+    _disabled = NO;
 }
 
 - (void)mouseDraggedTo:(NSPoint)locationInTextView coord:(VT100GridCoord)coord {
+    if (_disabled) {
+        DLog(@"Ignore: disabled until mouse up");
+        return;
+    }
     iTermSelectionScrollDirection previousDirection = _selectionScrollDirection;
     NSRect visibleRect = [_delegate visibleRect];
     if (locationInTextView.y <= visibleRect.origin.y) {
@@ -117,5 +126,9 @@ typedef NS_ENUM(NSInteger, iTermSelectionScrollDirection) {
     }
 }
 
+- (void)disableUntilMouseUp {
+    DLog(@"Disable selection scroll until mouse-up");
+    _disabled = YES;
+}
 
 @end

@@ -21,6 +21,7 @@
 
 @property(nonatomic, assign) BOOL isPrompt;
 @property(nonatomic, copy) NSString *guid;
+@property(nonatomic, readonly) NSInteger clearCount;
 
 // Array of CapturedOutput objects.
 @property(nonatomic, readonly) NSArray *capturedOutput;
@@ -29,6 +30,7 @@
 
 // Return code of command on the line for this mark.
 @property(nonatomic, assign) int code;
+@property(nonatomic, readonly) BOOL hasCode;
 
 // Command for this mark.
 @property(nonatomic, copy) NSString *command;
@@ -51,5 +53,6 @@
 
 // Add an object to self.capturedOutput.
 - (void)addCapturedOutput:(CapturedOutput *)capturedOutput;
+- (void)incrementClearCount;
 
 @end

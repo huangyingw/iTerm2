@@ -17,6 +17,7 @@ typedef struct {
     BOOL bold;
     BOOL blink;
     BOOL underline;
+    VT100UnderlineStyle underlineStyle;
     BOOL strikethrough;
     BOOL reversed;
     BOOL faint;
@@ -34,6 +35,14 @@ typedef struct {
     ColorMode bgColorMode;
 } VT100GraphicRendition;
 
+typedef NS_OPTIONS(int, VT100TerminalKeyReportingFlags) {
+    VT100TerminalKeyReportingFlagsNone = 0,
+    VT100TerminalKeyReportingFlagsDisambiguateEscape = (1 << 0),
+    VT100TerminalKeyReportingFlagsReportAllEventTypes = (1 << 1),  // TODO
+    VT100TerminalKeyReportingFlagsReportAlternateKeys = (1 << 2),  // TODO
+    VT100TerminalKeyReportingFlagsReportAllKeysAsEscapeCodes = (1 << 3),  // TODO
+    VT100TerminalKeyReportingFlagsReportAssociatedText = (1 << 4)  // TODO
+};
 
 @interface VT100Terminal : NSObject
 
@@ -63,6 +72,10 @@ typedef struct {
 @property(nonatomic, readonly) MouseMode previousMouseMode;  // will never equal NONE
 @property(nonatomic, assign) MouseFormat mouseFormat;
 @property(nonatomic, assign) BOOL reportKeyUp;
+// -1: not set (fall back to profile settings)
+// Only index 4 is used to control CSI u (1=on, 0=off, -1=use profile setting)
+// Will always have at least 5 values.
+@property(nonatomic, readonly) NSMutableArray<NSNumber *> *sendModifiers;
 
 // The current foreground/background color to display (they're swapped when reverseVideo is on).
 @property(nonatomic, readonly) screen_char_t foregroundColorCode;
@@ -100,6 +113,11 @@ typedef struct {
 // If YES, overrides the delegate's -terminalTmuxMode.
 @property(nonatomic) BOOL tmuxMode;
 
+// DECSET 1036. This can be overridden by modifyOtherKeys, CSI u mode, and raw key reporting.
+@property(nonatomic) BOOL metaSendsEscape;
+
+@property(nonatomic, readonly) VT100TerminalKeyReportingFlags keyReportingFlags;
+
 - (void)setStateFromDictionary:(NSDictionary *)dict;
 
 - (void)setForegroundColor:(int)fgColorCode alternateSemantics:(BOOL)altsem;
@@ -109,7 +127,11 @@ typedef struct {
 
 - (void)resetCharset;
 - (void)resetByUserRequest:(BOOL)preservePrompt;
-
+- (void)resetForTmuxUnpause;
+// Use this when restarting the login shell. Some features like paste bracketing should be turned
+// off for a newly launched program. It differs from resetByUserRequest: by not modifying screen
+// contents.
+- (void)resetForRelaunch;
 
 - (void)setDisableSmcupRmcup:(BOOL)value;
 
@@ -140,5 +162,8 @@ typedef struct {
 - (void)resetGraphicRendition;
 
 - (void)gentleReset;
+
+- (NSSet<NSString *> *)sgrCodesForCharacter:(screen_char_t)c;
+- (void)resetSendModifiersWithSideEffects:(BOOL)sideEffects;
 
 @end

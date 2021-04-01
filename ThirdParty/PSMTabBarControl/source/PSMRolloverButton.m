@@ -82,7 +82,7 @@ static const CGFloat PSMRolloverButtonMaxAlpha = 0.25;
     [self setTargetAlpha:PSMRolloverButtonMaxAlpha];
     // set rollover image
     [self setImage:_rolloverImage];
-    [self setNeedsDisplay];
+    [self setNeedsDisplay:YES];
     [[self superview] setNeedsDisplay:YES]; // eliminates a drawing artifact
 }
 
@@ -90,7 +90,7 @@ static const CGFloat PSMRolloverButtonMaxAlpha = 0.25;
     // restore usual image
     [self setTargetAlpha:0];
     [self setImage:_usualImage];
-    [self setNeedsDisplay];
+    [self setNeedsDisplay:YES];
     [[self superview] setNeedsDisplay:YES]; // eliminates a drawing artifact
 }
 
@@ -128,10 +128,24 @@ static const CGFloat PSMRolloverButtonMaxAlpha = 0.25;
     self.layer.backgroundColor = [[NSColor colorWithWhite:0.5 alpha:_alpha] CGColor];
 }
 
+// Must override mouseDown and mouseUp and not call super for mouseDragged: to work.
 - (void)mouseDown:(NSEvent *)theEvent {
     // eliminates drawing artifact
-    [[NSRunLoop currentRunLoop] performSelector:@selector(display) target:[self superview] argument:nil order:1 modes:[NSArray arrayWithObjects:@"NSEventTrackingRunLoopMode", @"NSDefaultRunLoopMode", nil]];
-    [super mouseDown:theEvent];
+    [[NSRunLoop currentRunLoop] performSelector:@selector(display)
+                                         target:[self superview]
+                                       argument:nil
+                                          order:1
+                                          modes:@[ NSEventTrackingRunLoopMode, NSDefaultRunLoopMode ]];
+}
+
+- (void)mouseUp:(NSEvent *)event {
+    if (event.clickCount == 1) {
+        [self performClick:self];
+    }
+}
+
+- (void)mouseDragged:(NSEvent *)event {
+    [self.window performWindowDragWithEvent:event];
 }
 
 - (void)resetCursorRects {

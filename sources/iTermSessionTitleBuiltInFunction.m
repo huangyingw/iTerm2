@@ -40,7 +40,7 @@ static NSString *const iTermSessionTitleSession = @"session";
     NSDictionary<NSString *, NSString *> *defaults =
     @{ iTermSessionTitleArgName: iTermVariableKeySessionAutoName,
        iTermSessionTitleArgProfile: iTermVariableKeySessionProfileName,
-       iTermSessionTitleArgJob: iTermVariableKeySessionJob,
+       iTermSessionTitleArgJob: iTermVariableKeySessionProcessTitle,
        iTermSessionTitleArgCommandLine: iTermVariableKeySessionCommandLine,
        iTermSessionTitleArgPath: iTermVariableKeySessionPath,
        iTermSessionTitleArgTTY: iTermVariableKeySessionTTY,
@@ -156,7 +156,7 @@ static NSString *const iTermSessionTitleSession = @"session";
 //
 // no  yes     yes         ProfileName       ProfileName: IconTitle -or- SessionName
 // yes yes     yes         ProfileName (job) ProfileName: IconTitle -or- SessionName (job)
-+ (NSString *)titleForSessionName:(NSString *)sessionName
++ (NSString *)titleForSessionName:(NSString *)rawSessionName
                       profileName:(NSString *)profileName
                               job:(NSString *)jobVariable
                       commandLine:(NSString *)commandLineVariable
@@ -171,6 +171,7 @@ static NSString *const iTermSessionTitleSession = @"session";
                   tmuxWindowTitle:(NSString *)tmuxWindowTitle
                        components:(iTermTitleComponents)titleComponents
                     isWindowTitle:(BOOL)isWindowTitle {
+    NSString *sessionName = isWindowTitle ? rawSessionName.removingHTMLFromTabTitleIfNeeded : rawSessionName;
     DLog(@"sessionName=%@ profileName=%@ job=%@ commandLine=%@ pwd=%@ tty=%@ user=%@ host=%@ tmuxPane=%@ iconName=%@ windowName=%@ tmuxWindowName=%@ tmuxWindowTitle=%@ isWindowTitle=%@",
          sessionName, profileName, jobVariable, commandLineVariable, pwdVariable, ttyVariable,
          userVariable, hostVariable, tmuxPaneVariable, iconName, windowName, tmuxWindowName,
@@ -191,12 +192,10 @@ static NSString *const iTermSessionTitleSession = @"session";
         } else {
             effectiveSessionName = tmuxPaneVariable;
         }
+    } else if (isWindowTitle && windowName) {
+        return windowName;
     } else {
-        if (isWindowTitle) {
-            effectiveSessionName = windowName ?: sessionName;
-        } else {
-            effectiveSessionName = sessionName;
-        }
+        effectiveSessionName = sessionName;
     }
     if (titleComponents == 0) {
         if (isWindowTitle) {

@@ -27,17 +27,25 @@
 #import "iTermAdvancedSettingsModel.h"
 #import "iTermApplicationDelegate.h"
 #import "iTermController.h"
+#import "iTermSelectorSwizzler.h"
 #import "iTermWindowOcclusionChangeMonitor.h"
 #import "iTermPreferences.h"
+#import "iTermSessionLauncher.h"
 #import "NSArray+iTerm.h"
 #import "PTYWindow.h"
 #import "objc/runtime.h"
 
 NSString *const kTerminalWindowStateRestorationWindowArrangementKey = @"ptyarrangement";
+NSString *const iTermWindowDocumentedEditedDidChange = @"iTermWindowDocumentedEditedDidChange";
+
 const NSTimeInterval iTermWindowTitleChangeMinimumInterval = 0.1;
 
 @interface NSView (PrivateTitleBarMethods)
 - (NSView *)titlebarContainerView;
+@end
+
+@interface NSObject(PrivateNSTitlebarContainerView)
+- (void)_updateDividerLayerForController:(id)controller animated:(BOOL)animated;
 @end
 
 // Insane hacks inspired by Chrome.
@@ -47,6 +55,7 @@ const NSTimeInterval iTermWindowTitleChangeMinimumInterval = 0.1;
 
 @interface NSWindow (PrivateAPI)
 + (Class)frameViewClassForStyleMask:(NSUInteger)windowStyle;
+- (void)_moveToScreen:(id)sender;
 @end
 
 @interface NSFrameView : NSView

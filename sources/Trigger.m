@@ -20,6 +20,7 @@ NSString * const kTriggerRegexKey = @"regex";
 NSString * const kTriggerActionKey = @"action";
 NSString * const kTriggerParameterKey = @"parameter";
 NSString * const kTriggerPartialLineKey = @"partial";
+NSString * const kTriggerDisabledKey = @"disabled";
 
 @interface Trigger()<iTermObject>
 @end
@@ -36,6 +37,10 @@ NSString * const kTriggerPartialLineKey = @"partial";
 @synthesize regex = regex_;
 @synthesize param = param_;
 
++ (NSSet<NSString *> *)synonyms {
+    return [NSSet set];
+}
+
 + (Trigger *)triggerFromDict:(NSDictionary *)dict
 {
     NSString *className = [dict objectForKey:kTriggerActionKey];
@@ -44,6 +49,7 @@ NSString * const kTriggerPartialLineKey = @"partial";
     trigger.regex = dict[kTriggerRegexKey];
     trigger.param = dict[kTriggerParameterKey];
     trigger.partialLine = [dict[kTriggerPartialLineKey] boolValue];
+    trigger.disabled = [dict[kTriggerDisabledKey] boolValue];
     return trigger;
 }
 
@@ -109,7 +115,7 @@ NSString * const kTriggerPartialLineKey = @"partial";
   }
 }
 
-- (id<NSTextFieldDelegate>)newParameterDelegateWithPassthrough:(id<NSTextFieldDelegate>)passthrough {
+- (id<iTermFocusReportingTextFieldDelegate>)newParameterDelegateWithPassthrough:(id<NSTextFieldDelegate>)passthrough {
     return nil;
 }
 
@@ -134,6 +140,9 @@ NSString * const kTriggerPartialLineKey = @"partial";
       partialLine:(BOOL)partialLine
        lineNumber:(long long)lineNumber
  useInterpolation:(BOOL)useInterpolation {
+    if (self.disabled) {
+        return NO;
+    }
     if (_partialLine &&
         !self.instantTriggerCanFireMultipleTimesPerLine &&
         _lastLineNumber == lineNumber) {
@@ -195,14 +204,14 @@ NSString * const kTriggerPartialLineKey = @"partial";
                                             scope:(iTermVariableScope *)scope
                                  useInterpolation:(BOOL)useInterpolation
                                        completion:(void (^)(NSString *))completion {
+    NSString *p = [NSString castFrom:self.param] ?: @"";
     if (useInterpolation) {
-        [self evaluateSwiftyStringParameter:self.param
+        [self evaluateSwiftyStringParameter:p
                              backreferences:[[NSArray alloc] initWithObjects:strings count:count]
                                       scope:scope
                                  completion:completion];
         return;
     }
-    NSString *p = self.param;
 
     for (int i = 0; i < 9; i++) {
         NSString *rep = @"";
@@ -289,7 +298,8 @@ NSString * const kTriggerPartialLineKey = @"partial";
     NSDictionary *triggerDictionary = @{ kTriggerActionKey: NSStringFromClass(self.class),
                                          kTriggerRegexKey: self.regex ?: @"",
                                          kTriggerParameterKey: self.param ?: @"",
-                                         kTriggerPartialLineKey: @(self.partialLine) };
+                                         kTriggerPartialLineKey: @(self.partialLine),
+                                         kTriggerDisabledKey: @(self.disabled) };
 
     // Glom all the data together as key=value\nkey=value\n...
     NSMutableString *temp = [NSMutableString string];

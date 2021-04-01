@@ -7,6 +7,7 @@
 
 #import "iTermStatusBarKnobActionViewController.h"
 
+#import "DebugLogging.h"
 #import "iTermActionsModel.h"
 #import "iTermEditKeyActionWindowController.h"
 
@@ -29,11 +30,11 @@
 
 - (void)viewDidLoad {
     _button = [[NSButton alloc] init];
-    [_button setButtonType:NSMomentaryPushInButton];
+    [_button setButtonType:NSButtonTypeMomentaryPushIn];
     [_button setTarget:self];
     [_button setAction:@selector(buttonPressed:)];
     [_button setTitle:@"Configure Action…"];
-    [_button setBezelStyle:NSTexturedRoundedBezelStyle];
+    [_button setBezelStyle:NSBezelStyleTexturedRounded];
     [_button sizeToFit];
     [self.view addSubview:_button];
     [self sizeToFit];
@@ -59,8 +60,11 @@
 }
 
 - (iTermEditKeyActionWindowController *)newEditKeyActionWindowControllerForAction:(iTermAction *)action {
-    iTermEditKeyActionWindowController *windowController = [[iTermEditKeyActionWindowController alloc] initWithContext:iTermVariablesSuggestionContextSession];
+    iTermEditKeyActionWindowController *windowController =
+    [[iTermEditKeyActionWindowController alloc] initWithContext:iTermVariablesSuggestionContextSession
+                                                           mode:iTermEditKeyActionWindowControllerModeUnbound];
     windowController.titleIsInterpolated = YES;
+    windowController.useCompatibilityEscaping = action.useCompatibilityEscaping;
     if (action) {
         windowController.label = action.title;
         windowController.isNewMapping = NO;
@@ -69,7 +73,6 @@
     }
     windowController.parameterValue = action.parameter;
     windowController.action = action.action;
-    windowController.mode = iTermEditKeyActionWindowControllerModeUnbound;
     [self.view.window beginSheet:windowController.window completionHandler:^(NSModalResponse returnCode) {
         [self editActionDidComplete:action];
     }];
@@ -85,7 +88,7 @@
 }
 
 - (void)setHelpURL:(NSURL *)url {
-    NSAssert(NO, @"Not supported");
+    ITAssertWithMessage(NO, @"Not supported");
 }
 
 @end

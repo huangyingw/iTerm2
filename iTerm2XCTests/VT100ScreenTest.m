@@ -9,6 +9,7 @@
 #import <XCTest/XCTest.h>
 #import "DVR.h"
 #import "DVRDecoder.h"
+#import "iTermAdvancedSettingsModel.h"
 #import "LineBuffer.h"
 #import "PTYNoteViewController.h"
 #import "SearchResult.h"
@@ -251,6 +252,25 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
 // rst..!
 // .....!
 // Cursor at first col of last row
+
+- (VT100Screen *)fiveByNineScreenWithEmptyLineAtTop {
+    VT100Screen *screen;
+    screen = [self screenWithWidth:5 height:9];
+    screen.maxScrollbackLines = 10;
+    [self appendLines:@[@"", @"abcdefgh", @"", @"ijkl"] toScreen:screen];
+    XCTAssert([[screen compactLineDumpWithHistory] isEqualToString:
+               @".....\n"
+               @"abcde\n"
+               @"fgh..\n"
+               @".....\n"
+               @"ijkl.\n"
+               @".....\n"
+               @".....\n"
+               @".....\n"
+               @"....."]);
+    return screen;
+}
+
 
 - (VT100Screen *)fiveByFourScreenWithFourLinesOneWrappedAndOneInLineBuffer {
     VT100Screen *screen;
@@ -564,10 +584,6 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
     return @"Default";
 }
 
-- (void)screenLogWorkingDirectoryAtLine:(int)line withDirectory:(NSString *)directory pushed:(BOOL)pushed {
-    [dirlog_ addObject:@[ @(line), directory ? directory : [NSNull null] ]];
-}
-
 - (NSRect)screenWindowFrame {
     return NSMakeRect(10, 20, 100, 200);
 }
@@ -578,10 +594,6 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
 
 - (BOOL)screenAllowTitleSetting {
     return YES;
-}
-
-- (NSString *)screenCurrentWorkingDirectory {
-    return nil;
 }
 
 - (void)screenClearHighlights {
@@ -600,7 +612,7 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
     return printingAllowed_;
 }
 
-- (void)screenDidAppendStringToCurrentLine:(NSString *)string {
+- (void)screenDidAppendStringToCurrentLine:(NSString *)string isPlainText:(BOOL)plainText {
     [triggerLine_ appendString:string];
 }
 
@@ -608,10 +620,11 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
     [self screenDidAppendStringToCurrentLine:[[[NSString alloc] initWithBytes:asciiData->buffer
                                                                        length:asciiData->length
                                                                      encoding:NSASCIIStringEncoding]
-                                              autorelease]];
+                                              autorelease]
+                                 isPlainText:YES];
 }
 
-- (void)screenDidReset {
+- (void)screenDidResetAllowingContentModification:(BOOL)modifyContent {
 }
 
 - (void)screenPrintString:(NSString *)s {
@@ -755,7 +768,7 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
     return nil;
 }
 
-- (void)screenActivateWindow {
+- (void)screenStealFocus {
 }
 
 - (void)screenSetProfileToProfileNamed:(NSString *)value {
@@ -884,10 +897,11 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
 - (void)screenDidReceiveLineFeed {
 }
 
-
 - (void)screenReportFocusWillChangeTo:(BOOL)reportFocus {
 }
 
+- (void)screenReportPasteBracketingWillChangeTo:(BOOL)bracket {
+}
 
 - (void)screenSoftAlternateScreenModeDidChange {
 }
@@ -899,11 +913,74 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
 - (void)screenReportKeyUpDidChange:(BOOL)reportKeyUp {
 }
 
-
 - (void)screenSetPreferredProxyIcon:(NSString *)value {
 }
 
 - (void)screenDidDetectShell:(NSString *)shell {
+}
+
+- (void)screenCommandDidExitWithCode:(int)code {
+}
+
+- (BOOL)screenConfirmDownloadNamed:(NSString *)name canExceedSize:(NSInteger)limit {
+    return YES;
+}
+
+- (void)screenWillReceiveFileNamed:(NSString *)name ofSize:(NSInteger)size preconfirmed:(BOOL)preconfirmed {
+}
+
+- (void)screenCommandDidExitWithCode:(int)code mark:(VT100ScreenMark *)maybeMark {
+}
+
+
+- (BOOL)screenConfirmDownloadAllowed:(NSString *)name size:(NSInteger)size promptIfBig:(BOOL *)promptIfBig {
+    return YES;
+}
+
+
+- (void)screenDidTryToUseDECRQCRA {
+}
+
+
+- (void)screenGetWorkingDirectoryWithCompletion:(void (^)(NSString *))completion {
+    completion(@"/");
+}
+
+
+- (void)screenLogWorkingDirectoryAtLine:(int)line withDirectory:(NSString *)directory pushed:(BOOL)pushed timely:(BOOL)timely {
+    [dirlog_ addObject:@[ @(line), directory ? directory : [NSNull null] ]];
+}
+
+
+- (BOOL)screenShouldSendReportForVariable:(NSString *)name {
+    return YES;
+}
+
+- (BOOL)screenConfirmDownloadAllowed:(NSString *)name size:(NSInteger)size displayInline:(BOOL)displayInline promptIfBig:(BOOL *)promptIfBig {
+    return NO;
+}
+
+- (void)screenGetCursorType:(ITermCursorType *)cursorTypeOut blinking:(BOOL *)blinking {
+    *cursorTypeOut = CURSOR_BOX;
+    *blinking = NO;
+}
+
+- (void)screenRefreshFindOnPageView {
+}
+
+- (void)screenResetCursorTypeAndBlink {
+}
+
+- (BOOL)screenShouldClearScrollbackBuffer {
+    return YES;
+}
+
+- (VT100GridRange)screenRangeOfVisibleLines {
+    return VT100GridRangeMake(0, 1);
+}
+
+
+- (void)screenSizeDidChangeWithNewTopLineAt:(int)newTop {
 }
 
 
@@ -1205,7 +1282,7 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
                @"..."]);
     XCTAssert(screen.cursorX == 1);
     XCTAssert(screen.cursorY == 3);
-    XCTAssert([[self selectedStringInScreen:screen] isEqualToString:@"abcd"]);
+    XCTAssertEqualObjects([self selectedStringInScreen:screen], @"abcd");
     XCTAssert(needsRedraw_ > 0);
     XCTAssert(sizeDidChange_ > 0);
     needsRedraw_ = 0;
@@ -1428,8 +1505,9 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
     screen.delegate = (id<VT100ScreenDelegate>)self;
     // select "efgh.."
     [self setSelectionRange:VT100GridCoordRangeMake(4, 0, 5, 1) width:screen.width];
+    XCTAssertEqualObjects([self selectedStringInScreen:screen], @"efgh\n");
     [screen setSize:VT100GridSizeMake(3, 3)];
-    XCTAssert([[self selectedStringInScreen:screen] isEqualToString:@"efgh\n"]);
+    XCTAssertEqualObjects([self selectedStringInScreen:screen], @"efgh\n");
     needsRedraw_ = 0;
     sizeDidChange_ = 0;
 
@@ -1448,8 +1526,7 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
     // TODO
     // This is kind of questionable. We strip nulls in -convertCurrentSelectionToWidth..., while it
     // would be better to preserve the selection.
-    ITERM_TEST_KNOWN_BUG([[self selectedStringInScreen:screen] isEqualToString:@"\nabcdef"],
-                         [[self selectedStringInScreen:screen] isEqualToString:@"abcdef"]);
+    XCTAssertTrue([[self selectedStringInScreen:screen] isEqualToString:@"\nabcdef"]);
 
     // In alt screen with selection that begins in history and ends in history just above the visible
     // screen. The screen grows, moving lines from history into the primary screen. The end of the
@@ -1605,23 +1682,25 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
     XCTAssert(trimmed.origin.y == 0);
     XCTAssert(trimmed.length == 12);
 
-    // Test wrapping nulls around
+    // Test wrapping nulls around.
     screen = [self screenFromCompactLines:
               @"......\n"
               @".12345\n"
               @"67....\n"
               @"......\n"];
-    run = VT100GridRunMake(0, 0, 24);
+    run = VT100GridRunMake(1, 0, 24);
     trimmed = [screen runByTrimmingNullsFromRun:run];
-    XCTAssert(trimmed.origin.x == 1);
-    XCTAssert(trimmed.origin.y == 1);
-    XCTAssert(trimmed.length == 7);
+    XCTAssertEqual(trimmed.origin.x, 0);
+    XCTAssertEqual(trimmed.origin.y, 1);
+    XCTAssertEqual(trimmed.length, 18);
 
-    // Test all nulls
+    // Test all nulls, end-to-end line
     screen = [self screenWithWidth:4 height:4];
     run = VT100GridRunMake(0, 0, 4);
     trimmed = [screen runByTrimmingNullsFromRun:run];
-    XCTAssert(trimmed.length == 0);
+    XCTAssertEqual(trimmed.origin.x, 0);
+    XCTAssertEqual(trimmed.origin.y, 0);
+    XCTAssertEqual(trimmed.length, 4);
 
     // Test no nulls
     screen = [self screenFromCompactLines:
@@ -1829,7 +1908,7 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
         BOOL doubleWidth;
     } tests[] = {
         {
-            @[ @'a', @0x301 ],  // a + accent
+            @[ @('a'), @0x301 ],  // a + accent
             [NSString stringWithCharacters:aaccent length:2],
             NO
         },
@@ -1874,6 +1953,27 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
             XCTAssertEqual(line[1].code, 0);
         }
     }
+}
+
+- (void)testUnicode12Emoji {
+    int32_t codePoints[] = {
+        0x1F468,
+        0x1F3FF,
+        0x200D,
+        0x1F91D,
+        0x200D,
+        0x1F468,
+        0x1F3FB };
+    NSData *expectedData = [NSData dataWithBytes:codePoints length:sizeof(codePoints)];
+    NSString *expectedString = [[NSString alloc] initWithData:expectedData encoding:NSUTF32LittleEndianStringEncoding];
+    VT100Screen *screen = [self screenWithWidth:20 height:2];
+    screen.delegate = (id<VT100ScreenDelegate>)self;
+    [screen appendStringAtCursor:expectedString];
+    screen_char_t *line = [screen getLineAtScreenIndex:0];
+    NSString *actualString = [ScreenCharToStr(line) decomposedStringWithCompatibilityMapping];
+    XCTAssertEqualObjects(expectedString, actualString);
+    NSData *actualData = [actualString dataUsingEncoding:NSUTF32LittleEndianStringEncoding];
+    XCTAssertEqualObjects(expectedData, actualData);
 }
 
 - (void)testAppendStringAtCursorNonAscii {
@@ -1953,7 +2053,13 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
     XCTAssert([ScreenCharToStr(line + i++) isEqualToString:@"ł"]);
 
     XCTAssert([ScreenCharToStr(line + i++) isEqualToString:@"🖕🏾"]);
+    BOOL lettersHaveSkin = NO;
     if (@available(macOS 10.14, *)) {
+        if (@available(macOS 10.15, *)) { } else {
+            lettersHaveSkin = YES;
+        }
+    }
+    if (lettersHaveSkin) {
         XCTAssert([ScreenCharToStr(line + i++) isEqualToString:@"g\U0001F3FE"]);  // macOS 10.14 does a silly thing
     } else {
         XCTAssert([ScreenCharToStr(line + i++) isEqualToString:@"g"]);
@@ -2658,7 +2764,7 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
                @"dc\n"
                @"dd"]);
     [screen resetScrollbackOverflow];
-    XCTAssert([selection_ firstRange].coordRange.start.x == 1);
+    XCTAssert([selection_ firstAbsRange].coordRange.start.x == 1);
 
     screen.saveToScrollbackInAlternateScreen = NO;
     // scrollback overflow should be 0 and selection shouldn't be insane
@@ -2676,7 +2782,7 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
                @"dd\n"
                @"dd\n"
                @"dd"]);
-    VT100GridWindowedRange selectionRange = [selection_ firstRange];
+    VT100GridAbsWindowedRange selectionRange = [selection_ firstAbsRange];
     ITERM_TEST_KNOWN_BUG(selectionRange.coordRange.start.y == 4,
                          selectionRange.coordRange.start.y == -1);
     // See comment in -linefeed about why this happens
@@ -2740,10 +2846,10 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
     VT100Screen *screen = [self screenWithWidth:20 height:3];
     screen.delegate = (id<VT100ScreenDelegate>)self;
     [self appendLines:@[ @"Line 1", @"Line 2"] toScreen:screen];
-    [screen saveToDvr];
+    [screen saveToDvr:nil];
 
     [self appendLines:@[ @"Line 3"] toScreen:screen];
-    [screen saveToDvr];
+    [screen saveToDvr:nil];
 
     DVRDecoder *decoder = [screen.dvr getDecoder];
     [decoder seek:0];
@@ -3436,7 +3542,7 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
     XCTAssert(dirlog_.count == 1);
     NSArray *entry = dirlog_[0];
     XCTAssert([entry[0] intValue] == 4);
-    XCTAssert([entry[1] isKindOfClass:[NSNull class]]);
+    XCTAssertEqualObjects(entry[1], @"/");
 
     // Add some scrollback
     for (int i = 0; i < 10; i++) {
@@ -3447,7 +3553,7 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
     XCTAssert(dirlog_.count == 1);
     entry = dirlog_[0];
     XCTAssert([entry[0] intValue] == 14);
-    XCTAssert([entry[1] isKindOfClass:[NSNull class]]);
+    XCTAssertEqualObjects(entry[1], @"/");
 
     // Make sure scrollback overflow is included.
     for (int i = 0; i < 100; i++) {
@@ -3458,7 +3564,7 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
     XCTAssert(dirlog_.count == 1);
     entry = dirlog_[0];
     XCTAssert([entry[0] intValue] == 29);  // 20 lines of scrollback + 10th line of display
-    XCTAssert([entry[1] isKindOfClass:[NSNull class]]);
+    XCTAssertEqualObjects(entry[1], @"/");
 
 //    // Test icon title, which is the same, but does not log the pwd.
     [screen terminalSetIconTitle:@"test3"];
@@ -3883,7 +3989,7 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
     XCTAssert(range.end.y == 1);
 }
 
-- (void)testResizeWithNoteOnLineOfNulls {
+- (void)testRestoreWithNoteOnEmptyLineAtTop {
     VT100Screen *screen = [self fiveByFourScreenWithThreeLinesOneWrapped];
     XCTAssert([[screen compactLineDump] isEqualToString:
                @"abcde\n"
@@ -3892,9 +3998,7 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
                @"....."]);
     PTYNoteViewController *note = [[[PTYNoteViewController alloc] init] autorelease];
     [screen addNote:note inRange:VT100GridCoordRangeMake(0, 3, 2, 3)];  // First two chars on last line
-    [screen setSize:VT100GridSizeMake(4, 4)];
-    NSArray *notes = [screen notesInRange:VT100GridCoordRangeMake(0, 0, 5, 3)];
-    XCTAssert(notes.count == 0);
+
 }
 
 - (void)testResizeWithSelectionOfJustNullsInAltScreen {
@@ -3944,10 +4048,10 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
     XCTAssert(notes.count == 1);
     XCTAssert(notes[0] == note);
     VT100GridCoordRange range = [screen coordRangeOfNote:note];
-    XCTAssert(range.start.x == 0);
-    XCTAssert(range.start.y == 2);
-    XCTAssert(range.end.x == 2);
-    XCTAssert(range.end.y == 2);
+    XCTAssertEqual(range.start.x, 0);
+    XCTAssertEqual(range.start.y, 2);
+    XCTAssertEqual(range.end.x, 2);
+    XCTAssertEqual(range.end.y, 2);
 }
 
 - (void)testResizeNoteInPrimaryWhileInAltAndPushingSomePrimaryIncludingWholeNoteIntoHistory {
@@ -3979,10 +4083,10 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
     XCTAssert(notes.count == 1);
     XCTAssert(notes[0] == note);
     VT100GridCoordRange range = [screen coordRangeOfNote:note];
-    XCTAssert(range.start.x == 0);
-    XCTAssert(range.start.y == 3);
-    XCTAssert(range.end.x == 2);
-    XCTAssert(range.end.y == 3);
+    XCTAssertEqual(range.start.x, 0);
+    XCTAssertEqual(range.start.y, 3);
+    XCTAssertEqual(range.end.x, 2);
+    XCTAssertEqual(range.end.y, 3);
 }
 
 - (void)testResizeNoteInPrimaryWhileInAltAndPushingSomePrimaryIncludingPartOfNoteIntoHistory {
@@ -4077,6 +4181,179 @@ NSLog(@"Known bug: %s should be true, but %s is.", #expressionThatShouldBeTrue, 
     XCTAssert(range.start.y == 1);
     XCTAssert(range.end.x == 2);
     XCTAssert(range.end.y == 6);
+}
+
+- (void)commonAnnotationRestorationWithRange:(VT100GridCoordRange)range {
+    VT100Screen *screen = [self fiveByNineScreenWithEmptyLineAtTop];
+    XCTAssert([[screen compactLineDumpWithHistory] isEqualToString:
+               @".....\n"
+               @"abcde\n"
+               @"fgh..\n"
+               @".....\n"
+               @"ijkl.\n"
+               @".....\n"
+               @".....\n"
+               @".....\n"
+               @"....."]);
+    PTYNoteViewController *note = [[[PTYNoteViewController alloc] init] autorelease];
+    [screen addNote:note inRange:range];
+    iTermMutableDictionaryEncoderAdapter *encoder = [iTermMutableDictionaryEncoderAdapter encoder];
+    int linesDropped = 0;
+    [screen encodeContents:encoder linesDropped:&linesDropped];
+    NSDictionary *state = encoder.mutableDictionary;
+
+    screen = [self screenWithWidth:3 height:4];
+    [screen restoreFromDictionary:state includeRestorationBanner:NO knownTriggers:@[] reattached:NO];
+    XCTAssert([[screen compactLineDumpWithHistory] isEqualToString:
+               @".....\n"
+               @"abcde\n"
+               @"fgh..\n"
+               @".....\n"
+               @"ijkl.\n"
+               @".....\n"
+               @".....\n"
+               @".....\n"
+               @"....."]);
+
+    NSArray *notes = [screen notesInRange:VT100GridCoordRangeMake(0, 0, 5, 8)];
+    XCTAssertEqual(notes.count, 1);
+    note = notes[0];
+    VT100GridCoordRange rangeAfterResize = [screen coordRangeForInterval:note.entry.interval];
+    XCTAssertTrue(VT100GridCoordRangeEqualsCoordRange(rangeAfterResize, range));
+}
+
+/*
+ *    01234
+ *  0 .....
+ *  1 abcde +
+ *  2 fgh..
+ *  3 .....
+ *  4 ijkl.
+ *  5 .....
+ *  6 .....
+ *  7 .....
+ *  8 .....
+ */
+- (void)testResizeWithNoteFirstLine {
+    [self commonAnnotationRestorationWithRange:VT100GridCoordRangeMake(0, 0, 5, 0)];
+}
+- (void)testResizeWithNoteFirstLinePlusFirstCharacterOfSecondLine {
+    [self commonAnnotationRestorationWithRange:VT100GridCoordRangeMake(0, 0, 2, 1)];
+}
+- (void)testResizeWithNoteFirstTwoCharactersOfSecondLine {
+    [self commonAnnotationRestorationWithRange:VT100GridCoordRangeMake(0, 1, 3, 1)];
+}
+- (void)testResizeWithNoteSecondLine {
+    [self commonAnnotationRestorationWithRange:VT100GridCoordRangeMake(0, 1, 5, 1)];
+}
+- (void)testResizeWithNoteLastFourCharactersOfSecondLine {
+    [self commonAnnotationRestorationWithRange:VT100GridCoordRangeMake(2, 1, 5, 1)];
+}
+- (void)testResizeWithNoteSecondCharacterOfSecondLineToSecondCharacterOfThirdLine {
+    [self commonAnnotationRestorationWithRange:VT100GridCoordRangeMake(2, 1, 2, 2)];
+}
+- (void)testResizeWithNoteSecondAndThirdLines {
+    [self commonAnnotationRestorationWithRange:VT100GridCoordRangeMake(0, 1, 5, 2)];
+}
+- (void)testResizeWithNoteSecondThroughFourthLines {
+    [self commonAnnotationRestorationWithRange:VT100GridCoordRangeMake(0, 1, 5, 3)];
+}
+- (void)testResizeWithNoteSecondThroughFifthLines {
+    [self commonAnnotationRestorationWithRange:VT100GridCoordRangeMake(0, 1, 5, 4)];
+}
+- (void)testResizeWithNoteSecondCharacterOfSecondLineThroughFirstCharacterOfFifthLine {
+    [self commonAnnotationRestorationWithRange:VT100GridCoordRangeMake(2, 1, 2, 4)];
+}
+- (void)testResizeWithNoteThirdLineThroughFifthLine {
+    [self commonAnnotationRestorationWithRange:VT100GridCoordRangeMake(0, 3, 5, 4)];
+}
+- (void)testResizeWithNoteThirdLineThroughMiddleOfFifthLine {
+    [self commonAnnotationRestorationWithRange:VT100GridCoordRangeMake(0, 3, 3, 4)];
+}
+- (void)testResizeWithNoteFifthLine {
+    [self commonAnnotationRestorationWithRange:VT100GridCoordRangeMake(0, 4, 5, 4)];
+}
+- (void)testResizeWithNoteAllLines {
+    [self commonAnnotationRestorationWithRange:VT100GridCoordRangeMake(0, 0, 5, 4)];
+}
+
+- (void)testResizeWithBlanksBeforeAnnotation {
+    const VT100GridCoordRange range1 = VT100GridCoordRangeMake(0, 4, 10, 4);
+    const VT100GridCoordRange expected = range1;
+    VT100Screen *screen = [self screenWithWidth:142 height:8];
+    screen.maxScrollbackLines = 1000;
+    [self appendLines:@[
+        @"Last login: Mon Dec  9 23:22:07 on ttys011",
+        @"You have mail.",
+        @"Georges-iMac:/Users/gnachman% echo;echo xxxxxxxxxx",
+        @"",
+        @"xxxxxxxxxx",
+        @"Georges-iMac:/Users/gnachman%"
+    ] toScreen:screen];
+    PTYNoteViewController *note = [[[PTYNoteViewController alloc] init] autorelease];
+    [screen addNote:note inRange:range1];
+    [screen setSize:VT100GridSizeMake(141, 8)];
+    NSArray *notes = [screen notesInRange:VT100GridCoordRangeMake(0, 0, 80, 8)];
+    note = notes[0];
+    VT100GridCoordRange rangeAfterResize = [screen coordRangeForInterval:note.entry.interval];
+    XCTAssertTrue(VT100GridCoordRangeEqualsCoordRange(rangeAfterResize, expected));
+}
+
+- (void)commonNoteResizeRegressionTestWithInitialRange:(VT100GridCoordRange)range1
+                                     intermediateRange:(VT100GridCoordRange)range2 {
+    VT100Screen *screen = [self screenWithWidth:80 height:25];
+    screen.maxScrollbackLines = 1000;
+    [self appendLines:@[@"", @"", @"", @"Georges-iMac:/Users/gnachman% xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"] toScreen:screen];
+    PTYNoteViewController *note = [[[PTYNoteViewController alloc] init] autorelease];
+    [screen addNote:note inRange:range1];
+    iTermMutableDictionaryEncoderAdapter *encoder = [iTermMutableDictionaryEncoderAdapter encoder];
+    int linesDropped = 0;
+    [screen encodeContents:encoder linesDropped:&linesDropped];
+    NSDictionary *state = encoder.mutableDictionary;
+
+    screen = [self screenWithWidth:80 height:25];
+    [screen restoreFromDictionary:state includeRestorationBanner:NO knownTriggers:@[] reattached:YES];
+    [screen setSize:VT100GridSizeMake(77, 25)];
+    {
+        NSArray *notes = [screen notesInRange:VT100GridCoordRangeMake(0, 0, 80, 25)];
+        VT100GridCoordRange expected = range2;
+        PTYNoteViewController *note = notes[0];
+        VT100GridCoordRange rangeAfterResize = [screen coordRangeForInterval:note.entry.interval];
+        XCTAssertTrue(VT100GridCoordRangeEqualsCoordRange(rangeAfterResize, expected));
+    }
+
+    [screen setSize:VT100GridSizeMake(80, 25)];
+    {
+        NSArray *notes = [screen notesInRange:VT100GridCoordRangeMake(0, 0, 80, 25)];
+        PTYNoteViewController *note = notes[0];
+        VT100GridCoordRange rangeAfterResize = [screen coordRangeForInterval:note.entry.interval];
+        XCTAssertTrue(VT100GridCoordRangeEqualsCoordRange(rangeAfterResize, range1));
+    }
+}
+
+- (void)testNoteResizeRegression1 {
+    [self commonNoteResizeRegressionTestWithInitialRange:VT100GridCoordRangeMake(0, 0, 80, 0)
+                                       intermediateRange:VT100GridCoordRangeMake(0, 0, 77, 0)];
+}
+
+- (void)testNoteResizeRegression2 {
+    [self commonNoteResizeRegressionTestWithInitialRange:VT100GridCoordRangeMake(0, 1, 80, 1)
+                                       intermediateRange:VT100GridCoordRangeMake(0, 1, 77, 1)];
+}
+
+- (void)testNoteResizeRegression3 {
+    [self commonNoteResizeRegressionTestWithInitialRange:VT100GridCoordRangeMake(0, 2, 80, 2)
+                                       intermediateRange:VT100GridCoordRangeMake(0, 2, 77, 2)];
+}
+
+- (void)testNoteResizeRegression4 {
+    [self commonNoteResizeRegressionTestWithInitialRange:VT100GridCoordRangeMake(20, 4, 80, 6)
+                                       intermediateRange:VT100GridCoordRangeMake(23, 4, 77, 6)];
+}
+
+- (void)testNoteResizeRegression5 {
+    [self commonNoteResizeRegressionTestWithInitialRange:VT100GridCoordRangeMake(0, 12, 80, 12)
+                                       intermediateRange:VT100GridCoordRangeMake(0, 12, 77, 12)];
 }
 
 - (void)testEmptyLineRestoresBackgroundColor {

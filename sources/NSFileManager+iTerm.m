@@ -28,6 +28,8 @@
 #import "DebugLogging.h"
 #import "iTermAdvancedSettingsModel.h"
 #import "iTermAutoMasterParser.h"
+#import "iTermWarning.h"
+#import "RegexKitLite.h"
 #include <sys/param.h>
 #include <sys/mount.h>
 
@@ -59,8 +61,9 @@ NSString * const DirectoryLocationDomain = @"DirectoryLocationDomain";
     NSArray *paths = NSSearchPathForDirectoriesInDomains(searchPathDirectory,
                                                          domainMask,
                                                          YES);
+    DLog(@"Search paths are %@", paths);
     if (!paths.count) {
-        if (errorOut)         {
+        if (errorOut) {
             NSDictionary *userInfo = @{ NSLocalizedDescriptionKey: @"No path found for directory in domain.",
                                         @"NSSearchPathDirectory": @(searchPathDirectory),
                                         @"NSSearchPathDomainMask": @(domainMask) };
@@ -68,6 +71,7 @@ NSString * const DirectoryLocationDomain = @"DirectoryLocationDomain";
                                             code:DirectoryLocationErrorNoPathFound
                                         userInfo:userInfo];
         }
+        DLog(@"Fail, no paths");
         return nil;
     }
 
@@ -75,6 +79,7 @@ NSString * const DirectoryLocationDomain = @"DirectoryLocationDomain";
     NSString *resolvedPath = paths[0];
     if (appendComponent) {
         resolvedPath = [resolvedPath stringByAppendingPathComponent:appendComponent];
+        DLog(@"After appending %@, have %@", appendComponent, resolvedPath);
     }
 
     // Create if needed.
@@ -87,12 +92,14 @@ NSString * const DirectoryLocationDomain = @"DirectoryLocationDomain";
         if (errorOut) {
             *errorOut = error;
         }
+        DLog(@"Create dir of %@ failed with %@, return nil", resolvedPath, error);
         return nil;
     }
 
     if (errorOut) {
         *errorOut = nil;
     }
+    DLog(@"Return %@", resolvedPath);
     return resolvedPath;
 }
 
@@ -106,27 +113,30 @@ NSString * const DirectoryLocationDomain = @"DirectoryLocationDomain";
     NSString *executableName =
         [[[NSBundle mainBundle] infoDictionary] objectForKey:(id)kCFBundleExecutableKey];
     NSError *error;
+    DLog(@"Want app support directory");
     NSString *result = [self findOrCreateDirectory:NSApplicationSupportDirectory
                                           inDomain:NSUserDomainMask
                                appendPathComponent:executableName
                                              error:&error];
-    if (!result) {
-        ELog(@"Unable to find or create application support directory:\n%@", error);
+    if (result == nil) {
+        static dispatch_once_t onceToken;
+        dispatch_once(&onceToken, ^{
+            [iTermWarning showWarningWithTitle:[NSString stringWithFormat:@"There was a problem finding or creating your application support directory. iTerm2 won't work very well until this problem is fixed.\n\nIt should be at ~/Library/Application Support/iTerm2.\n\nThe error was:\n%@", error.localizedDescription]
+                                       actions:@[ @"OK" ]
+                                     accessory:nil
+                                    identifier:@"NoSyncAppSupportFail"
+                                   silenceable:kiTermWarningTypePersistent
+                                       heading:@"Problem with Application Support Directory"
+                                        window:nil];
+        });
     }
+
     return result;
 }
 
-- (NSString *)applicationSupportDirectoryWithoutSpacesWithoutCreatingSymlink {
-    NSError *error;
-    NSString *realAppSupport = [self findOrCreateDirectory:NSApplicationSupportDirectory
-                                                  inDomain:NSUserDomainMask
-                                       appendPathComponent:nil
-                                                     error:&error];
-    NSString *nospaces = [realAppSupport stringByReplacingOccurrencesOfString:@"Application Support"
-                                                                   withString:[iTermAdvancedSettingsModel spacelessApplicationSupport]];
-    NSString *executableName =
-        [[[NSBundle mainBundle] infoDictionary] objectForKey:(id)kCFBundleExecutableKey];
-    return [nospaces stringByAppendingPathComponent:executableName];
+- (NSString *)spacelessAppSupportWithoutCreatingLink {
+    NSString *dotdir = [self homeDirectoryDotDir];
+    NSString *nospaces = [dotdir stringByAppendingPathComponent:@"AppSupport"];
     return nospaces;
 }
 
@@ -142,24 +152,23 @@ NSString * const DirectoryLocationDomain = @"DirectoryLocationDomain";
     return result;
 }
 
-- (NSString *)applicationSupportDirectoryWithoutSpaces {
+- (NSString *)spacelessAppSupportCreatingLink {
     NSError *error;
     NSString *realAppSupport = [self findOrCreateDirectory:NSApplicationSupportDirectory
                                                   inDomain:NSUserDomainMask
                                        appendPathComponent:nil
                                                      error:&error];
-    NSString *linkName = [iTermAdvancedSettingsModel spacelessApplicationSupport];
-    NSString *nospaces = [realAppSupport stringByReplacingOccurrencesOfString:@"Application Support"
-                                                                   withString:linkName];
-    if (linkName.length) {
-        [[NSFileManager defaultManager] createSymbolicLinkAtPath:nospaces withDestinationPath:realAppSupport error:nil];
-    } else {
-        linkName = @"_ApplicationSupport";
-    }
+    NSString *linkName = [self spacelessAppSupportWithoutCreatingLink];
 
     NSString *executableName =
         [[[NSBundle mainBundle] infoDictionary] objectForKey:(id)kCFBundleExecutableKey];
-    return [nospaces stringByAppendingPathComponent:executableName];
+    NSString *realFolder = [realAppSupport stringByAppendingPathComponent:executableName];
+
+    [[NSFileManager defaultManager] createSymbolicLinkAtPath:linkName
+                                         withDestinationPath:realFolder
+                                                       error:nil];
+
+    return linkName;
 }
 
 - (NSString *)legacyApplicationSupportDirectory {
@@ -183,7 +192,12 @@ NSString * const DirectoryLocationDomain = @"DirectoryLocationDomain";
 }
 
 - (NSString *)scriptsPathWithoutSpaces {
-    NSString *modernPath = [[self applicationSupportDirectoryWithoutSpaces] stringByAppendingPathComponent:@"Scripts"];
+    NSString *modernPath = [[self spacelessAppSupportWithoutCreatingLink] stringByAppendingPathComponent:@"Scripts"];
+    return modernPath;
+}
+
+- (NSString *)scriptsPathWithoutSpacesCreatingLink {
+    NSString *modernPath = [[self spacelessAppSupportCreatingLink] stringByAppendingPathComponent:@"Scripts"];
     return modernPath;
 }
 
@@ -193,6 +207,10 @@ NSString * const DirectoryLocationDomain = @"DirectoryLocationDomain";
 
 - (NSString *)autolaunchScriptPath {
     return [[self scriptsPathWithoutSpaces] stringByAppendingPathComponent:@"AutoLaunch"];
+}
+
+- (NSString *)autolaunchScriptPathCreatingLink {
+    return [[self scriptsPathWithoutSpacesCreatingLink] stringByAppendingPathComponent:@"AutoLaunch"];
 }
 
 - (NSString *)quietFilePath {
@@ -230,6 +248,73 @@ NSString * const DirectoryLocationDomain = @"DirectoryLocationDomain";
 - (NSString *)desktopDirectory {
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDesktopDirectory, NSUserDomainMask, YES);
     return [paths firstObject];
+}
+
+- (NSString *)pathToExistingDirectoryCreatingIfNeeded:(NSString *)dotdir error:(out NSError **)errorPtr {
+    BOOL isdir = NO;
+
+    // Try to create ~/.config/iterm2 if needed
+    if (![self fileExistsAtPath:dotdir isDirectory:&isdir]) {
+        NSError *error = nil;
+        [self createDirectoryAtPath:dotdir withIntermediateDirectories:YES attributes:nil error:&error];
+        if (error) {
+            DLog(@"Couldn't create %@: %@", dotdir, error);
+            if (errorPtr) {
+                *errorPtr = error;
+            }
+            return nil;
+        }
+    } else if (!isdir) {
+        if (errorPtr) {
+            *errorPtr = [NSError errorWithDomain:@"com.iterm2.createDir" code:1 userInfo:@{ NSLocalizedDescriptionKey: @"File exists but is not a directory." }];
+        }
+        return nil;
+    }
+    return dotdir;
+}
+
+- (NSString *)pathToFirstDirectoryCreatingIfNeeded:(NSArray<NSString *> *)options error:(NSError **)errorPtr {
+    NSMutableArray<NSString *> *errors = [NSMutableArray array];
+    for (NSString *option in options) {
+        NSError *error = nil;
+        NSString *result = [self pathToExistingDirectoryCreatingIfNeeded:option error:&error];
+        if (result) {
+            return result;
+        }
+        [errors addObject:[NSString stringWithFormat:@"%@: %@", option, error.localizedDescription]];
+    }
+    if (errorPtr) {
+        *errorPtr = [NSError errorWithDomain:@"com.iterm2.createDir" code:2 userInfo:@{ NSLocalizedDescriptionKey: [errors componentsJoinedByString:@"\n"] }];
+    }
+    return nil;
+}
+
+- (NSString *)homeDirectoryDotDir {
+    NSString *homedir = NSHomeDirectory();
+    NSString *dotConfigIterm2 = [[homedir stringByAppendingPathComponent:@".config"] stringByAppendingPathComponent:@"iterm2"];
+    NSString *dotIterm2 = [homedir stringByAppendingPathComponent:@".iterm2"];
+    NSArray<NSString *> *options = @[ dotConfigIterm2, dotIterm2, @".iterm2-1" ];
+    NSString *preferred = [iTermAdvancedSettingsModel preferredBaseDir];
+    if (preferred.length > 0) {
+        options = [@[preferred.stringByExpandingTildeInPath] arrayByAddingObjectsFromArray:options];
+    }
+    NSError *error = nil;
+    NSString *result = [self pathToFirstDirectoryCreatingIfNeeded:options error:&error];
+
+    if (!result && error) {
+        static dispatch_once_t onceToken;
+        dispatch_once(&onceToken, ^{
+            DLog(@"Failed to create the config directory: %@", error);
+            [iTermWarning showWarningWithTitle:[NSString stringWithFormat:@"There was a problem finding or creating the config directory. Some features will be disabled.\n%@", error.localizedDescription]
+                                       actions:@[ @"OK" ]
+                                     accessory:nil
+                                    identifier:@"NoSyncErrorCreatingConfigFolder"
+                                   silenceable:kiTermWarningTypePersistent
+                                       heading:@"Problem Creating Config Folder"
+                                        window:nil];
+        });
+    }
+    return result;
 }
 
 - (BOOL)directoryIsWritable:(NSString *)dir
@@ -345,6 +430,42 @@ additionalNetworkPaths:(NSArray<NSString *> *)additionalNetworkPaths {
         ++retries;
     } while ([[NSFileManager defaultManager] fileExistsAtPath:finalDestination]);
     return finalDestination;
+}
+
+- (id)monitorFile:(NSString *)path block:(void (^)(long))block {
+    DLog(@"monitor %@", path);
+    const int fileDescriptor = open(path.UTF8String, O_EVTONLY);
+    if (fileDescriptor < 0) {
+        DLog(@"Failed to open %@", path);
+        return nil;
+    }
+
+    dispatch_queue_t queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
+    const unsigned long mask = (DISPATCH_VNODE_DELETE | DISPATCH_VNODE_WRITE | DISPATCH_VNODE_EXTEND |
+                                DISPATCH_VNODE_ATTRIB | DISPATCH_VNODE_LINK | DISPATCH_VNODE_RENAME |
+                                DISPATCH_VNODE_REVOKE);
+    __block dispatch_source_t source =
+    dispatch_source_create(DISPATCH_SOURCE_TYPE_VNODE, fileDescriptor, mask, queue);
+    dispatch_source_set_event_handler(source, ^{
+        unsigned long flags = dispatch_source_get_data(source);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            block(flags);
+        });
+    });
+    dispatch_source_set_cancel_handler(source, ^(void) {
+        close(fileDescriptor);
+    });
+    dispatch_resume(source);
+
+    return source;
+}
+
+- (void)stopMonitoringFileWithToken:(id)token {
+    if (!token) {
+        return;
+    }
+    dispatch_source_t source = token;
+    dispatch_source_cancel(source);
 }
 
 @end

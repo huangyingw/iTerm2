@@ -13,6 +13,7 @@
 // and the view controller may customize how its control's appearance changes dynamically.
 
 #import "iTermNotificationCenter.h"
+#import "iTermPreferenceDidChangeNotification.h"
 #import "iTermPreferences.h"
 #import "iTermRemotePreferences.h"
 #import "iTermUserDefaultsObserver.h"
@@ -38,7 +39,7 @@ NSString *const kPreferenceKeyLoadPrefsFromCustomFolder = @"LoadPrefsFromCustomF
 // This pref was originally a suppressable warning plus a user default, which is why it's in two
 // parts.
 
-// 0 = Save, 1 = Lose changes
+// 0 = on quit, 1 = never, 2 = always
 NSString *const kPreferenceKeyNeverRemindPrefsChangesLostForFileSelection = @"NoSyncNeverRemindPrefsChangesLostForFile_selection";
 
 // YES = apply preference from above key, NO = ask on exit if changes exist
@@ -55,22 +56,29 @@ NSString *const kPreferenceKeySmartWindowPlacement = @"SmartPlacement";
 NSString *const kPreferenceKeyAdjustWindowForFontSizeChange = @"AdjustWindowForFontSizeChange";
 NSString *const kPreferenceKeyMaximizeVerticallyOnly = @"MaxVertically";
 NSString *const kPreferenceKeyLionStyleFullscreen = @"UseLionStyleFullscreen";
+NSString *const kPreferenceKeySeparateWindowTitlePerTab = @"SeparateWindowTitlePerTab";
 NSString *const kPreferenceKeyOpenTmuxWindowsIn = @"OpenTmuxWindowsIn";
 NSString *const kPreferenceKeyTmuxDashboardLimit = @"TmuxDashboardLimit";
 NSString *const kPreferenceKeyAutoHideTmuxClientSession = @"AutoHideTmuxClientSession";
 NSString *const kPreferenceKeyUseTmuxProfile = @"TmuxUsesDedicatedProfile";
 NSString *const kPreferenceKeyUseTmuxStatusBar = @"UseTmuxStatusBar";
+NSString *const kPreferenceKeyTmuxPauseModeAgeLimit = @"TmuxPauseModeAgeLimit";
+NSString *const kPreferenceKeyTmuxUnpauseAutomatically = @"TmuxUnpauseAutomatically";
+NSString *const kPreferenceKeyTmuxWarnBeforePausing = @"TmuxWarnBeforePausing";
 
 NSString *const kPreferenceKeyUseMetal = @"UseMetal";
 NSString *const kPreferenceKeyDisableMetalWhenUnplugged = @"disableMetalWhenUnplugged";
 NSString *const kPreferenceKeyPreferIntegratedGPU = @"preferIntegratedGPU";
 NSString *const kPreferenceKeyMetalMaximizeThroughput = @"metalMaximizeThroughput";
 NSString *const kPreferenceKeyEnableAPIServer = @"EnableAPIServer";
+NSString *const kPreferenceKeyAPIAuthentication = @"API Authentication Method";
 
 NSString *const kPreferenceKeyTabStyle_Deprecated = @"TabStyle";  // Pre-10.14
 NSString *const kPreferenceKeyTabStyle = @"TabStyleWithAutomaticOption";  // Pre-10.14
 NSString *const kPreferenceKeyTabPosition = @"TabViewType";
 NSString *const kPreferenceKeyStatusBarPosition = @"StatusBarPosition";
+NSString *const kPreferenceKeySideMargins = @"TerminalMargin";
+NSString *const kPreferenceKeyTopBottomMargins = @"TerminalVMargin";
 NSString *const kPreferenceKeyHideTabBar = @"HideTab";
 NSString *const kPreferenceKeyHideTabNumber = @"HideTabNumber";
 NSString *const kPreferenceKeyPreserveWindowSizeWhenTabBarVisibilityChanges = @"PreserveWindowSizeWhenTabBarVisibilityChanges";
@@ -83,6 +91,7 @@ NSString *const kPreferenceKeyPerPaneBackgroundImage = @"PerPaneBackgroundImage"
 NSString *const kPreferenceKeyStretchTabsToFillBar = @"StretchTabsToFillBar";
 NSString *const kPreferenceKeyHideMenuBarInFullscreen = @"HideMenuBarInFullscreen";
 NSString *const kPreferenceKeyUIElement = @"HideFromDockAndAppSwitcher";
+NSString *const kPreferenceKeyUIElementRequiresHotkeys = @"UIElementRequiresHotkeys";
 NSString *const kPreferenceKeyFlashTabBarInFullscreen = @"FlashTabBarInFullscreen";
 NSString *const kPreferenceKeyShowWindowNumber = @"WindowNumber";
 NSString *const kPreferenceKeyShowJobName_Deprecated = @"JobName";
@@ -127,10 +136,13 @@ NSString *const kPreferenceKeyThreeFingerEmulatesMiddle = @"ThreeFingerEmulates"
 NSString *const kPreferenceKeyFocusFollowsMouse = @"FocusFollowsMouse";
 NSString *const kPreferenceKeyTripleClickSelectsFullWrappedLines = @"TripleClickSelectsFullWrappedLines";
 NSString *const kPreferenceKeyDoubleClickPerformsSmartSelection = @"DoubleClickPerformsSmartSelection";
+NSString *const kPreferenceKeyEnterCopyModeAutomatically = @"EnterCopyModeAutomatically";
+NSString *const kPreferenceKeyFocusOnRightOrMiddleClick = @"FocusOnRightOrMiddleClick";
 
 NSString *const kPreferenceKeyAppVersion = @"iTerm Version";  // Excluded from syncing
 NSString *const kPreferenceKeyAllAppVersions = @"NoSyncAllAppVersions";  // Array of known iTerm2 versions this user has used on this machine.
 NSString *const kPreferenceAutoCommandHistory = @"AutoCommandHistory";
+NSString *const kPreferenceKeyOSVersion = @"NoSyncLastOSVersion";
 
 NSString *const kPreferenceKeyPasteSpecialChunkSize = @"PasteSpecialChunkSize";
 NSString *const kPreferenceKeyPasteSpecialChunkDelay = @"PasteSpecialChunkDelay";
@@ -152,6 +164,9 @@ NSString *const kPreferenceKeyShowFullscreenTabBar = @"ShowFullScreenTabBar";
 NSString *const kPreferenceKeyHotkeyMigratedFromSingleToMulti = @"HotkeyMigratedFromSingleToMulti";
 NSString *const kPreferenceKeyDefaultToolbeltWidth = @"Default Toolbelt Width";
 NSString *const kPreferenceKeySizeChangesAffectProfile = @"Size Changes Affect Profile";
+NSString *const kPreferenceKeyActions = @"Actions";
+NSString *const kPreferenceKeySnippets = @"Snippets";
+NSString *const kPreferenceKeyHTMLTabTitles = @"HTMLTabTitles";
 // NOTE: If you update this list, also update preferences.py.
 
 static NSMutableDictionary *gObservers;
@@ -182,6 +197,9 @@ static NSString *sPreviousVersion;
     [self appVersionBeforeThisLaunch];
     // Then overwrite it with the current version
     [[NSUserDefaults standardUserDefaults] setObject:thisVersion forKey:kPreferenceKeyAppVersion];
+    NSProcessInfo *processInfo = [NSProcessInfo processInfo];
+    [[NSUserDefaults standardUserDefaults] setObject:processInfo.operatingSystemVersionString
+                                              forKey:kPreferenceKeyOSVersion];
 }
 
 + (void)initializeAllAppVersionsUsedOnThisMachine:(NSString *)thisVersion {
@@ -198,61 +216,86 @@ static NSString *sPreviousVersion;
     [[NSUserDefaults standardUserDefaults] setObject:allVersions.allObjects forKey:kPreferenceKeyAllAppVersions];
 }
 
++ (NSDictionary *)systemPreferenceOverrides {
+    return @{
+        // Force antialiasing to be allowed on small font sizes
+        @"AppleAntiAliasingThreshold": @1,
+        @"AppleSmoothFixedFontsSizeThreshold": @1,
+
+        // Turn off high sierra's native tabs
+        @"AppleWindowTabbingMode": @"manual",
+
+        // Turn off scroll animations because they screw up the terminal scrolling.
+        @"AppleScrollAnimationEnabled": @0,
+
+        // Turn off accent menu
+        @"ApplePressAndHoldEnabled": @NO,
+
+        // Override smooth scrolling, which breaks various things (such as the
+        // assumption, when detectUserScroll is called, that scrolls happen
+        // immediately), and generally sucks with a terminal.
+        @"NSScrollAnimationEnabled": @NO,
+
+        // Disable under-titlebar mirror view.
+
+        // OS 10.10 has a spiffy feature where it finds a scrollview that is
+        // adjacent to the title bar and then does some magic to makes the
+        // scrollview's content show up with "vibrancy" (i.e., blur) under the
+        // title bar. The way it does this is to create an "NSScrollViewMirrorView"
+        // in the title bar's view hierarchy, under a view whose class is
+        // NSTitlebarContainerView. Unfortunately there is no way to turn
+        // this off. You can move the scroll view at least two points away from the
+        // title bar, but that looks terrible. Terminal.app went so far as to stop
+        // using scroll views! Trying to replace NSScrollView with my custom
+        // implementation seems fraught with peril. Trying to hide the mirror view
+        // doesn't work because it only becomes visible once the scroll view is
+        // taller than the window's content view (I think that is new in 10.10.3).
+        // I tried swizzling addSubview: in NSTitlebarContainerView to hide
+        // mirror views when they get added, but it caused some performance problems
+        // I can't reproduce (see issue 3499).
+        //
+        // Another option, which seems more fragile, is to override
+        // -[PTYScrollView _makeUnderTitlebarView] and have it return nil. That works
+        // in testing but could break things pretty badly.
+        //
+        // I found this undocumented setting while disassembling the caller to _makeUnderTitlebarView,
+        // and it seems to work.
+        //
+        // See issue 3244 for details.
+        @"NSScrollViewShouldScrollUnderTitlebar": @NO,
+
+        // macOS does an insane thing and looks for views that might possibly be trying to do something
+        // clever with scrollers and then if it finds them changes to legacy scrollers. Quothe the
+        // mailing list https://lists.apple.com/archives/cocoa-dev/2012/Mar/msg00939.html
+        //  NSScrollView does various checks to see if the App is trying to put placards in the
+        //  scroller area. If NSScrollView thinks there are placards, then it reverts back to legacy
+        //  scrollers for compatibility. Some apps have been known to do this via a sibling view
+        //  instead of a subview. This is why it intermittently happens during your animation as
+        //  your sibling views momentarily overlap
+        //
+        // In addition to being a bad idea, it is poorly implemented and the scrollers randomly
+        // have the wrong light/dark appearance, in addition to other visual glitches that words
+        // can't describe.
+        //
+        // Well, I am trying to do something clever and I damn well want it to work. With a bit of
+        // the old disassembler, I found this user default which seems to turn off the stupid.
+        @"NSOverlayScrollersFallBackForAccessoryViews": @NO,
+    };
+}
+
 + (void)initializeUserDefaults {
     NSUserDefaults *userDefaults = [NSUserDefaults standardUserDefaults];
-
-    // Force antialiasing to be allowed on small font sizes
-    [userDefaults setInteger:1 forKey:@"AppleAntiAliasingThreshold"];
-    [userDefaults setInteger:1 forKey:@"AppleSmoothFixedFontsSizeThreshold"];
-
-    // Turn off high sierra's native tabs
-    [userDefaults setObject:@"manual" forKey:@"AppleWindowTabbingMode"];
-
-    // Turn off scroll animations because they screw up the terminal scrolling.
-    [userDefaults setInteger:0 forKey:@"AppleScrollAnimationEnabled"];
-
-    // Override smooth scrolling, which breaks various things (such as the
-    // assumption, when detectUserScroll is called, that scrolls happen
-    // immediately), and generally sucks with a terminal.
-    [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"NSScrollAnimationEnabled"];
+    [[self systemPreferenceOverrides] enumerateKeysAndObjectsUsingBlock:^(id  _Nonnull key, id  _Nonnull obj, BOOL * _Nonnull stop) {
+        [userDefaults setObject:obj forKey:key];
+    }];
 
     NSDictionary *infoDictionary = [[NSBundle bundleForClass:[self class]] infoDictionary];
     NSString *const thisVersion = infoDictionary[@"CFBundleVersion"];
     [self initializeAppVersionBeforeThisLaunch:thisVersion];
     [self initializeAllAppVersionsUsedOnThisMachine:thisVersion];
 
-    
-    // Disable under-titlebar mirror view.
-
-    // OS 10.10 has a spiffy feature where it finds a scrollview that is
-    // adjacent to the title bar and then does some magic to makes the
-    // scrollview's content show up with "vibrancy" (i.e., blur) under the
-    // title bar. The way it does this is to create an "NSScrollViewMirrorView"
-    // in the title bar's view hierarchy, under a view whose class is
-    // NSTitlebarContainerView. Unfortunately there is no way to turn
-    // this off. You can move the scroll view at least two points away from the
-    // title bar, but that looks terrible. Terminal.app went so far as to stop
-    // using scroll views! Trying to replace NSScrollView with my custom
-    // implementation seems fraught with peril. Trying to hide the mirror view
-    // doesn't work because it only becomes visible once the scroll view is
-    // taller than the window's content view (I think that is new in 10.10.3).
-    // I tried swizzling addSubview: in NSTitlebarContainerView to hide
-    // mirror views when they get added, but it caused some performance problems
-    // I can't reproduce (see issue 3499).
-    //
-    // Another option, which seems more fragile, is to override
-    // -[PTYScrollView _makeUnderTitlebarView] and have it return nil. That works
-    // in testing but could break things pretty badly.
-    //
-    // I found this undocumented setting while disassembling the caller to _makeUnderTitlebarView,
-    // and it seems to work.
-    //
-    // See issue 3244 for details.
-    [[NSUserDefaults standardUserDefaults] setBool:NO
-                                            forKey:@"NSScrollViewShouldScrollUnderTitlebar"];
-
     // Load prefs from remote.
-    [[iTermRemotePreferences sharedInstance] copyRemotePrefsToLocalUserDefaults];
+    [[iTermRemotePreferences sharedInstance] copyRemotePrefsToLocalUserDefaultsPreserving:self.systemPreferenceOverrides.allKeys];
 }
 
 #pragma mark - Default values
@@ -284,22 +327,29 @@ static NSString *sPreviousVersion;
                   kPreferenceKeyAdjustWindowForFontSizeChange: @YES,
                   kPreferenceKeyMaximizeVerticallyOnly: @NO,
                   kPreferenceKeyLionStyleFullscreen: @YES,
+                  kPreferenceKeySeparateWindowTitlePerTab: @YES,
                   kPreferenceKeyOpenTmuxWindowsIn: @(kOpenTmuxWindowsAsNativeWindows),
                   kPreferenceKeyTmuxDashboardLimit: @10,
                   kPreferenceKeyAutoHideTmuxClientSession: @NO,
                   kPreferenceKeyUseTmuxProfile: @YES,
                   kPreferenceKeyUseTmuxStatusBar: @YES,
+                  kPreferenceKeyTmuxPauseModeAgeLimit: @120,
+                  kPreferenceKeyTmuxUnpauseAutomatically: @NO,
+                  kPreferenceKeyTmuxWarnBeforePausing: @YES,
                   kPreferenceKeyUseMetal: @YES,
                   kPreferenceKeyDisableMetalWhenUnplugged: @YES,
                   kPreferenceKeyPreferIntegratedGPU: @YES,
                   kPreferenceKeyMetalMaximizeThroughput: @YES,
                   kPreferenceKeyEnableAPIServer: @NO,
+                  kPreferenceKeyAPIAuthentication: @0,  // ignored — synthetic value
 
                   kPreferenceKeyTabStyle_Deprecated: @(TAB_STYLE_LIGHT),
                   kPreferenceKeyTabStyle: @(TAB_STYLE_LIGHT),
                   
                   kPreferenceKeyTabPosition: @(TAB_POSITION_TOP),
                   kPreferenceKeyStatusBarPosition: @(iTermStatusBarPositionTop),
+                  kPreferenceKeyTopBottomMargins: @2,
+                  kPreferenceKeySideMargins: @5,
                   kPreferenceKeyHideTabBar: @YES,
                   kPreferenceKeyHideTabNumber: @NO,
                   kPreferenceKeyPreserveWindowSizeWhenTabBarVisibilityChanges: @NO,
@@ -313,7 +363,8 @@ static NSString *sPreviousVersion;
                   kPreferenceKeyPerPaneBackgroundImage: @YES,
                   kPreferenceKeyHideMenuBarInFullscreen:@YES,
                   kPreferenceKeyUIElement: @NO,
-                  kPreferenceKeyFlashTabBarInFullscreen:@YES,
+                  kPreferenceKeyUIElementRequiresHotkeys: @NO,
+                  kPreferenceKeyFlashTabBarInFullscreen:@NO,
                   kPreferenceKeyShowWindowNumber: @YES,
                   kPreferenceKeyShowJobName_Deprecated: @YES,
                   kPreferenceKeyShowProfileName_Deprecated: @NO,
@@ -353,8 +404,10 @@ static NSString *sPreviousVersion;
                   kPreferenceKeyOptionClickMovesCursor: @YES,
                   kPreferenceKeyThreeFingerEmulatesMiddle: @NO,
                   kPreferenceKeyFocusFollowsMouse: @NO,
+                  kPreferenceKeyFocusOnRightOrMiddleClick: @NO,
                   kPreferenceKeyTripleClickSelectsFullWrappedLines: @YES,
                   kPreferenceKeyDoubleClickPerformsSmartSelection: @NO,
+                  kPreferenceKeyEnterCopyModeAutomatically: @YES,
 
                   kPreferenceAutoCommandHistory: @NO,
 
@@ -377,6 +430,7 @@ static NSString *sPreviousVersion;
                   kPreferenceKeyLeftTabBarWidth: @150,
                   kPreferenceKeyDefaultToolbeltWidth: @250,
                   kPreferenceKeySizeChangesAffectProfile: @NO,
+                  kPreferenceKeyHTMLTabTitles: @NO
               };
     }
     return dict;
@@ -439,7 +493,7 @@ static NSString *sPreviousVersion;
                   kPreferenceKeyCharactersConsideredPartOfAWordForSelection: BLOCK(computedWordChars),
                   kPreferenceKeyTabStyle: BLOCK(computedTabStyle),
                   kPreferenceKeyUseMetal: BLOCK(computedUseMetal),
-                  kPreferenceKeyTabsHaveCloseButton: BLOCK(computedTabsHaveCloseButton),
+                  kPreferenceKeyTabsHaveCloseButton: BLOCK(computedTabsHaveCloseButton)
                   };
     }
     return dict;
@@ -574,6 +628,9 @@ static NSString *sPreviousVersion;
 
 + (NSUInteger)maskForModifierTag:(iTermPreferencesModifierTag)tag {
     switch (tag) {
+        case kPreferencesModifierTagControl:
+            return NSEventModifierFlagControl;
+
         case kPreferencesModifierTagEitherCommand:
             return NSEventModifierFlagCommand;
 

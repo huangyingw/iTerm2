@@ -8,12 +8,26 @@
 
 #import "NSArray+iTerm.h"
 
+#import "iTermMalloc.h"
 #import "iTermTuple.h"
+#import "NSData+iTerm.h"
 #import "NSLocale+iTerm.h"
 #import "NSMutableAttributedString+iTerm.h"
 #import "NSStringITerm.h"
 
 @implementation NSArray (iTerm)
+
+- (NSIndexSet *)it_indexSetWithIndexesOfObjects:(NSArray *)objects {
+    NSMutableIndexSet *indexes = [NSMutableIndexSet indexSet];
+    for (id object in objects) {
+        const NSInteger index = [self indexOfObject:object];
+        if (index == NSNotFound) {
+            continue;
+        }
+        [indexes addIndex:index];
+    }
+    return indexes;
+}
 
 + (NSArray<NSNumber *> *)sequenceWithRange:(NSRange)range {
     NSMutableArray<NSNumber *> *temp = [NSMutableArray array];
@@ -21,6 +35,20 @@
         [temp addObject:@(i + range.location)];
     }
     return temp;
+}
+
++ (NSArray<NSString *> *)stringSequenceWithRange:(NSRange)range {
+    NSMutableArray<NSString *> *temp = [NSMutableArray array];
+    for (NSUInteger i = 0; i < range.length; i++) {
+        [temp addObject:[@(i + range.location) stringValue]];
+    }
+    return temp;
+}
+
+- (NSArray *)it_arrayByRemovingObjectsAtIndexes:(NSIndexSet *)indexes {
+    NSMutableArray *result = [self mutableCopy];
+    [result removeObjectsAtIndexes:indexes];
+    return [result autorelease];
 }
 
 - (NSArray *)objectsOfClasses:(NSArray *)classes {
@@ -47,7 +75,18 @@
     return result;
 }
 
-- (NSArray *)mapWithBlock:(id (^)(id anObject))block {
+- (NSArray *)mapEnumeratedWithBlock:(id (^NS_NOESCAPE)(NSUInteger, id anObject, BOOL *stop))block {
+    NSMutableArray *temp = [NSMutableArray array];
+    [self enumerateObjectsUsingBlock:^(id  _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
+        id mappedObject = block(idx, obj, stop);
+        if (mappedObject) {
+            [temp addObject:mappedObject];
+        }
+    }];
+    return temp;
+}
+
+- (NSArray *)mapWithBlock:(id (^NS_NOESCAPE)(id anObject))block {
     NSMutableArray *temp = [NSMutableArray array];
     for (id anObject in self) {
         id mappedObject = block(anObject);
@@ -125,7 +164,7 @@
     return max;
 }
 
-- (NSArray *)minimumsWithComparator:(NSComparisonResult (^)(id, id))comparator {
+- (NSArray *)minimumsWithComparator:(NSComparisonResult (^ NS_NOESCAPE)(id, id))comparator {
     id min = nil;
     for (id object in self) {
         if (min == nil || comparator(min, object) == NSOrderedDescending) {
@@ -143,6 +182,11 @@
     return result;
 }
 
+- (NSArray *)maximumsWithComparator:(NSComparisonResult (^ NS_NOESCAPE)(id, id))comparator {
+    return [self minimumsWithComparator:^NSComparisonResult(id lhs, id rhs) {
+        return comparator(rhs, lhs);
+    }];
+}
 - (BOOL)anyWithBlock:(BOOL (^)(id anObject))block {
     for (id object in self) {
         if (block(object)) {
@@ -198,16 +242,20 @@
 }
 
 - (NSString *)componentsJoinedWithOxfordComma {
+    return [self componentsJoinedWithOxfordCommaAndConjunction:@"and"];
+}
+
+- (NSString *)componentsJoinedWithOxfordCommaAndConjunction:(NSString *)conjunction {
     if (self.count == 0) {
         return @"";
     } else if (self.count == 1) {
         return [self firstObject];
     } else if (self.count == 2) {
-        return [self componentsJoinedByString:@" and "];
+        return [self componentsJoinedByString:[NSString stringWithFormat:@" %@ ", conjunction]];
     } else {
         NSArray *allButLastArray = [self subarrayWithRange:NSMakeRange(0, self.count - 1)];
         NSString *allButLastString = [allButLastArray componentsJoinedByString:@", "];
-        NSString *result = [NSString stringWithFormat:@"%@, and %@", allButLastString, self.lastObject];
+        NSString *result = [NSString stringWithFormat:@"%@, %@ %@", allButLastString, conjunction, self.lastObject];
         return result;
     }
 }
@@ -229,7 +277,7 @@
     if (self.count >= index) {
         length = self.count - index;
     } else {
-        length = 0;
+        return @[];
     }
     return [self subarrayWithRange:NSMakeRange(index, length)];
 }
@@ -259,6 +307,22 @@
     return hash;
 }
 
+- (NSData *)hashWithSHA256 {
+    NSData *hash = [[NSData data] it_sha256];
+    for (id object in self) {
+        NSData *objectHash = nil;
+        if ([object respondsToSelector:@selector(hashWithSHA256)]) {
+            // This handles string and other arrays, at least.
+            objectHash = [object hashWithSHA256];
+        } else {
+            objectHash = hash;
+        }
+
+        hash = [[hash dataByAppending:objectHash] it_sha256];
+    }
+    return hash;
+}
+
 - (BOOL)isEqualIgnoringOrder:(NSArray *)other {
     NSSet *mySet = [[[NSCountedSet alloc] initWithArray:self] autorelease];
     NSSet *otherSet = [[[NSCountedSet alloc] initWithArray:other] autorelease];
@@ -267,6 +331,19 @@
 
 - (NSArray *)arrayByRemovingDuplicates {
     return [[[[NSSet alloc] initWithArray:self] autorelease] allObjects];
+}
+
+- (NSArray *)arrayByRemovingDuplicatesStably {
+    NSMutableSet *members = [NSMutableSet set];
+    NSMutableArray *result = [NSMutableArray array];
+    [self enumerateObjectsUsingBlock:^(id  _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
+        if ([members containsObject:obj]) {
+            return;
+        }
+        [members addObject:obj];
+        [result addObject:obj];
+    }];
+    return result;
 }
 
 - (NSArray *)uniq {
@@ -407,12 +484,42 @@
     return dict;
 }
 
+- (NSDictionary<id, NSArray *> *)classifyUniquelyWithBlock:(id (^)(id))block {
+    NSMutableDictionary *dict = [NSMutableDictionary dictionary];
+    [self enumerateObjectsUsingBlock:^(id  _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
+        id theClass = block(obj);
+        if (theClass) {
+            assert(!dict[theClass]);
+            dict[theClass] = obj;
+        }
+    }];
+    return dict;
+}
+
 - (id)uncheckedObjectAtIndex:(NSInteger)index {
     if (index < 0 || index >= self.count) {
         return nil;
     } else {
         return [self objectAtIndex:index];
     }
+}
+
+- (NSUInteger)indexOfMaxWithBlock:(NSComparisonResult (^)(id, id))block {
+    __block NSUInteger maxIndex = NSNotFound;
+    __block id max = nil;
+    [self enumerateObjectsUsingBlock:^(id  _Nonnull object, NSUInteger idx, BOOL * _Nonnull stop) {
+        if (max) {
+            NSComparisonResult result = block(max, object);
+            if (result == NSOrderedAscending) {
+                max = object;
+                maxIndex = idx;
+            }
+        } else {
+            max = object;
+            maxIndex = idx;
+        }
+    }];
+    return maxIndex;
 }
 
 - (id)maxWithBlock:(NSComparisonResult (^)(id, id))block {
@@ -537,6 +644,31 @@
     }];
 }
 
+- (const char **)nullTerminatedCStringArray {
+    const char **array = iTermMalloc(sizeof(char *) * (self.count + 1));
+    [self enumerateObjectsUsingBlock:^(NSString *_Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
+        array[idx] = strdup(obj.UTF8String);
+    }];
+    array[self.count] = NULL;
+    return array;
+}
+
+void iTermFreeeNullTerminatedCStringArray(const char **array) {
+    for (size_t i = 0; array[i] != NULL; i++) {
+        free((void *)array[i]);
+    }
+    free(array);
+}
+
+- (NSArray *)reversed {
+    const NSUInteger count = self.count;
+    if (count < 2) {
+        return self;
+    }
+    return [self mapEnumeratedWithBlock:^id(NSUInteger i, id object, BOOL *stop) {
+        return self[count - i - 1];
+    }];
+}
 @end
 
 @implementation NSMutableArray (iTerm)

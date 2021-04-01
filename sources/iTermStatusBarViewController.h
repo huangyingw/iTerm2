@@ -6,13 +6,13 @@
 //
 
 #import <Cocoa/Cocoa.h>
+#import "iTermActivityInfo.h"
+#import "iTermStatusBarContainerView.h"
 #import "iTermFindViewController.h"
 #import "iTermStatusBarComponent.h"
 #import "iTermStatusBarLayoutAlgorithm.h"
 
 NS_ASSUME_NONNULL_BEGIN
-
-extern const CGFloat iTermStatusBarHeight;
 
 @class iTermAction;
 @class iTermStatusBarLayout;
@@ -31,6 +31,19 @@ extern const CGFloat iTermStatusBarHeight;
 - (void)statusBarOpenPreferencesToComponent:(nullable id<iTermStatusBarComponent>)component;
 - (void)statusBarDisable;
 - (void)statusBarPerformAction:(iTermAction *)action;
+- (void)statusBarEditActions;
+- (void)statusBarEditSnippets;
+- (void)statusBarResignFirstResponder;
+- (void)statusBarReportScriptingError:(NSError *)error
+                        forInvocation:(NSString *)invocation
+                               origin:(NSString *)origin;
+
+// Takes into account theme, dark/light mode (if relevant), and advanced config background color.
+- (BOOL)statusBarHasDarkBackground;
+- (BOOL)statusBarCanDragWindow;
+- (BOOL)statusBarRevealComposer;
+- (iTermActivityInfo)statusBarActivityInfo;
+
 @end
 
 @protocol iTermStatusBarContainer<NSObject>
@@ -55,6 +68,7 @@ extern const CGFloat iTermStatusBarHeight;
 
 - (void)updateColors;
 - (nullable id<iTermStatusBarComponent>)componentWithIdentifier:(NSString *)identifier;
+- (nullable __kindof id<iTermStatusBarComponent>)visibleComponentWithIdentifier:(NSString *)identifier;
 
 @end
 

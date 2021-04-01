@@ -39,6 +39,9 @@
 // Close a session
 - (void)closeSession:(PTYSession*)aSession;
 
+// Close a session but don't kill the underlying window pane if it's a tmux session.
+- (void)softCloseSession:(PTYSession *)aSession;
+
 // Select the tab to the right of the foreground tab.
 - (void)nextTab:(id)sender;
 
@@ -101,6 +104,7 @@
 @property(nonatomic, readonly) BOOL shouldShowToolbelt;
 @property(nonatomic, readonly) NSArray *tabs;
 @property(nonatomic, readonly) BOOL windowIsResizing;
+@property(nonatomic, readonly) BOOL closing;
 
 #pragma mark - Basics
 
@@ -215,16 +219,13 @@
 - (BOOL)fitWindowToTabSize:(NSSize)tabSize;
 
 // Return the index of a tab or NSNotFound.
-// This method is used, for example, in iTermExpose, where PTYTabs are shown
-// side by side, and one needs to determine which index it has, so it can be
-// selected when leaving iTerm expose.
 - (NSInteger)indexOfTab:(PTYTab*)aTab;
 
 // Insert a tab at a specified location.
 - (void)insertTab:(PTYTab*)aTab atIndex:(int)anIndex;
 
 // Add a session to the tab view.
-- (void)insertSession:(PTYSession *)aSession atIndex:(int)anIndex;
+- (PTYTab *)insertSession:(PTYSession *)aSession atIndex:(int)anIndex;
 
 // Resize window to be just large enough to fit the largest tab without
 // changing session sizes.
@@ -258,9 +259,6 @@
 
 // Restart a session if the user agrees to a modal alert.
 - (void)restartSessionWithConfirmation:(PTYSession *)aSession;
-
-// Close a session but don't kill the underlying window pane if it's a tmux session.
-- (void)softCloseSession:(PTYSession *)aSession;
 
 // Update sessions' dimming status.
 - (void)setDimmingForSessions;
@@ -342,7 +340,9 @@
 
 // Fit the window to the tabs after a tmux layout change. A change is trivial
 // if views are resized but the view hierarchy is not changed.
-- (void)tmuxTabLayoutDidChange:(BOOL)nontrivialChange;
+- (void)tmuxTabLayoutDidChange:(BOOL)nontrivialChange
+                           tab:(PTYTab *)tab
+            variableWindowSize:(BOOL)variableWindowSize;
 
 // Returns an array of unique tmux controllers present in this window.
 - (NSArray *)uniqueTmuxControllers;
@@ -356,22 +356,14 @@
 
 #pragma mark - Splits
 
-// Create a new split. The new session uses the profile with |guid|.
-- (PTYSession *)splitVertically:(BOOL)isVertical
-               withBookmarkGuid:(NSString*)guid
-                    synchronous:(BOOL)synchronous;
-
-// Create a new split with a provided profile.
-- (PTYSession *)splitVertically:(BOOL)isVertical
-                    withProfile:(Profile *)profile
-                    synchronous:(BOOL)synchronous;
-
-// Create a new split with a specified bookmark. |targetSession| is the session
+// Create a new split with a specified bookmark. `targetSession` is the session
 // to split.
-- (PTYSession *)splitVertically:(BOOL)isVertical
-                   withBookmark:(Profile*)theBookmark
-                  targetSession:(PTYSession*)targetSession
-                    synchronous:(BOOL)synchronous;
+- (void)asyncSplitVertically:(BOOL)isVertical
+                      before:(BOOL)before
+                     profile:(Profile *)theBookmark
+               targetSession:(PTYSession *)targetSession
+                  completion:(void (^)(PTYSession *, BOOL ok))completion
+                       ready:(void (^)(PTYSession *, BOOL ok))ready;
 
 // Create a new split with the specified bookmark. The passed-in session is
 // inserted either before (left/above) or after (right/below) the target
@@ -382,7 +374,6 @@
           addingSession:(PTYSession*)newSession
           targetSession:(PTYSession*)targetSession
            performSetup:(BOOL)performSetup;
-
 // Indicates if the current session can be split.
 - (BOOL)canSplitPaneVertically:(BOOL)isVertical withBookmark:(Profile*)theBookmark;
 

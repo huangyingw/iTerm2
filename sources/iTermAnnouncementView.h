@@ -14,6 +14,7 @@ typedef NS_ENUM(NSInteger, iTermAnnouncementViewStyle) {
 };
 
 @interface iTermAnnouncementView : NSView
+@property (nonatomic, strong)NSString *title;
 
 + (instancetype)announcementViewWithTitle:(NSString *)title
                                     style:(iTermAnnouncementViewStyle)style
@@ -27,5 +28,7 @@ typedef NS_ENUM(NSInteger, iTermAnnouncementViewStyle) {
 - (void)willDismiss;
 
 - (void)addDismissOnKeyDownLabel;
+
+- (void)selectIndex:(NSInteger)index;
 
 @end

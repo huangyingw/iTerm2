@@ -7,6 +7,8 @@
 
 #import "PTYTextView.h"
 
+#import "iTermTextViewContextMenuHelper.h"
+#import "iTermMouseReportingFrustrationDetector.h"
 #import "iTermURLActionHelper.h"
 #import "VT100GridTypes.h"
 
@@ -14,7 +16,16 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-@interface PTYTextView (ARC)<iTermURLActionHelperDelegate>
+@interface PTYTextView (ARC)<
+iTermContextMenuHelperDelegate,
+iTermMouseReportingFrustrationDetectorDelegate,
+iTermURLActionHelperDelegate>
+
+- (void)initARC;
+
+#pragma mark - NSResponder
+
+- (BOOL)arcValidateMenuItem:(NSMenuItem *)item;
 
 #pragma mark - Coordinate Space Conversions
 
@@ -30,13 +41,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (VT100GridCoord)coordForPointInWindow:(NSPoint)point;
 
-#pragma mark - Query Coordinates
+#pragma mark - Inline Images
 
 - (nullable iTermImageInfo *)imageInfoAtCoord:(VT100GridCoord)coord;
-
-#pragma mark - Open URL
-
-- (NSDictionary<NSNumber *, NSString *> *)smartSelectionActionSelectorDictionary;
+- (BOOL)imageIsVisible:(iTermImageInfo *)image;
 
 #pragma mark - Semantic History
 
@@ -47,15 +55,9 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (void)updateUnderlinedURLs:(NSEvent *)event;
 
-#pragma mark - Context Menu Actions
+#pragma mark - Context Menu
 
-- (void)contextMenuActionOpenFile:(id)sender;
-- (void)contextMenuActionOpenURL:(id)sender;
-- (void)contextMenuActionRunCommand:(id)sender;
-- (void)contextMenuActionRunCommandInWindow:(id)sender;
-+ (void)runCommand:(NSString *)command;
-- (void)contextMenuActionRunCoprocess:(id)sender;
-- (void)contextMenuActionSendText:(id)sender;
+- (NSMenu *)menuForEvent:(NSEvent *)event;
 
 #pragma mark - Mouse Cursor
 
@@ -63,12 +65,6 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)updateCursor:(NSEvent *)event action:(nullable URLAction *)action;
 - (BOOL)setCursor:(NSCursor *)cursor;
 - (BOOL)mouseIsOverImageInEvent:(NSEvent *)event;
-
-#pragma mark - Mouse Reporting
-
-- (BOOL)xtermMouseReporting;
-- (BOOL)xtermMouseReportingAllowMouseWheel;
-- (BOOL)terminalWantsMouseReports;
 
 #pragma mark - Quicklook
 
@@ -78,6 +74,14 @@ NS_ASSUME_NONNULL_BEGIN
 
 // Returns a dictionary to pass to NSAttributedString.
 - (NSDictionary *)charAttributes:(screen_char_t)c;
+
+#pragma mark - Install Shell Integration
+
+- (IBAction)installShellIntegration:(nullable id)sender;
+
+#pragma mark - Mouse Reporting Frustration Detector
+
+- (void)didCopyToPasteboardWithControlSequence;
 
 @end
 

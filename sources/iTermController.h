@@ -37,8 +37,6 @@ typedef NS_ENUM(NSUInteger, iTermHotkeyWindowType) {
     iTermHotkeyWindowTypeFloatingWindow  // has a higher level than a regular window.
 };
 
-#define kApplicationDidFinishLaunchingNotification @"kApplicationDidFinishLaunchingNotification"
-
 @protocol iTermWindowController;
 @class iTermRestorableSession;
 @class PasteboardHistory;
@@ -62,7 +60,6 @@ typedef NS_ENUM(NSUInteger, iTermHotkeyWindowType) {
 @property(nonatomic, readonly) BOOL keystrokesBeingStolen;
 @property(nonatomic, readonly) BOOL anyWindowIsMain;
 @property(nonatomic, readonly) NSArray<iTermTerminalWindow *> *keyTerminalWindows;
-@property(nonatomic, readonly) NSString *savedArrangementNameBeingRestored;
 @property(nonatomic, readonly) NSInteger numberOfDecodesPending;
 @property(nonatomic, copy) NSString *lastSelection;
 
@@ -74,7 +71,7 @@ typedef NS_ENUM(NSUInteger, iTermHotkeyWindowType) {
 // actions are forwarded from application
 - (IBAction)newWindow:(id)sender;
 - (void)newWindow:(id)sender possiblyTmux:(BOOL)possiblyTmux;
-- (void)newSessionWithSameProfile:(id)sender;
+- (void)newSessionWithSameProfile:(id)sender newWindow:(BOOL)newWindow;
 - (void)newSession:(id)sender possiblyTmux:(BOOL)possiblyTmux;
 - (void)previousTerminal;
 - (void)nextTerminal;
@@ -90,7 +87,8 @@ typedef NS_ENUM(NSUInteger, iTermHotkeyWindowType) {
 
 - (PseudoTerminal*)terminalWithNumber:(int)n;
 - (PseudoTerminal *)terminalWithGuid:(NSString *)guid;
-- (PTYTab *)tabWithID:(NSString *)tabID;
+- (PTYTab *)tabWithID:(NSString *)tabID;  // short numeric ID
+- (PTYTab *)tabWithGUID:(NSString *)guid;  // UUID
 
 - (int)allocateWindowNumber;
 
@@ -101,9 +99,17 @@ typedef NS_ENUM(NSUInteger, iTermHotkeyWindowType) {
 - (void)loadWindowArrangementWithName:(NSString *)theName;
 - (BOOL)loadWindowArrangementWithName:(NSString *)theName asTabsInTerminal:(PseudoTerminal *)term;
 
+- (BOOL)arrangementWithName:(NSString *)arrangementName
+         hasSessionWithGUID:(NSString *)guid
+                        pwd:(NSString *)pwd;
+
 - (void)repairSavedArrangementNamed:(NSString *)savedArrangementName
                replacingMissingGUID:(NSString *)guidToReplace
                            withGUID:(NSString *)replacementGuid;
+
+- (void)repairSavedArrangementNamed:(NSString *)arrangementName
+replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
+                               with:(NSString *)replacementOldCWD;
 
 - (void)terminalWillClose:(PseudoTerminal*)theTerminalWindow;
 - (void)addBookmarksToMenu:(NSMenu *)aMenu
@@ -122,23 +128,6 @@ typedef NS_ENUM(NSUInteger, iTermHotkeyWindowType) {
                                                candidate:(PseudoTerminal *)preferredWindowController
                                       respectTabbingMode:(BOOL)respectTabbingMode;
 
-// Super-flexible way to create a new window or tab. If |block| is given then it is used to add a
-// new session/tab to the window; otherwise the bookmark is used in conjunction with the optional
-// URL.
-- (PTYSession *)launchBookmark:(Profile *)bookmarkData
-                    inTerminal:(PseudoTerminal *)theTerm
-                       withURL:(NSString *)url
-              hotkeyWindowType:(iTermHotkeyWindowType)hotkeyWindowType
-                       makeKey:(BOOL)makeKey
-                   canActivate:(BOOL)canActivate
-            respectTabbingMode:(BOOL)respectTabbingMode
-                       command:(NSString *)command
-                         block:(PTYSession *(^)(Profile *, PseudoTerminal *))block
-                   synchronous:(BOOL)synchronous
-                    completion:(void (^ _Nullable)(BOOL))completion;
-- (PTYSession *)launchBookmark:(Profile *)profile
-                    inTerminal:(PseudoTerminal *)theTerm
-            respectTabbingMode:(BOOL)respectTabbingMode;
 - (PTYTextView*)frontTextView;
 - (PseudoTerminal*)terminalAtIndex:(int)i;
 - (PseudoTerminal *)terminalForWindow:(NSWindow *)window;
@@ -191,15 +180,28 @@ typedef NS_OPTIONS(NSUInteger, iTermSingleUseWindowOptions) {
     // Bury it immediately?
     iTermSingleUseWindowOptionsInitiallyBuried = (1 << 2),
     // Don't escape arguments
-    iTermSingleUseWindowOptionsDoNotEscapeArguments = (1 << 3)
+    iTermSingleUseWindowOptionsDoNotEscapeArguments = (1 << 3),
+    // Command is not a swifty string
+    iTermSingleUseWindowOptionsCommandNotSwiftyString = (1 << 4)
 };
 
-- (PTYSession *)openSingleUseWindowWithCommand:(NSString *)command
-                                     arguments:(NSArray<NSString *> *)arguments
-                                        inject:(NSData *)injection
-                                   environment:(NSDictionary *)environment
-                                           pwd:(NSString *)initialPWD
+// Note that `command` is a Swifty string.
+- (void)openSingleUseWindowWithCommand:(NSString *)command
+                             arguments:(NSArray<NSString *> *)arguments
+                                inject:(NSData *)injection
+                           environment:(NSDictionary *)environment
+                                   pwd:(NSString *)initialPWD
                                options:(iTermSingleUseWindowOptions)options
-                                    completion:(void (^)(void))completion;
+                        didMakeSession:(void (^)(PTYSession *session))didMakeSession
+                            completion:(void (^)(void))completion;
+
+// Note that `rawCommand` is a plain old string, not a Swifty string.
+- (void)openSingleUseWindowWithCommand:(NSString *)rawCommand
+                                inject:(NSData *)injection
+                           environment:(NSDictionary *)environment
+                                   pwd:(NSString *)initialPWD
+                               options:(iTermSingleUseWindowOptions)options
+                        didMakeSession:(void (^)(PTYSession *session))didMakeSession
+                            completion:(void (^)(void))completion;
 @end
 

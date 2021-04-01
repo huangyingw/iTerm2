@@ -13,13 +13,17 @@
 #import <NMSSH/libssh2.h>
 
 #import "DebugLogging.h"
+#import "ITAddressBookMgr.h"
+#import "iTermSlowOperationGateway.h"
+#import "iTermOpenDirectory.h"
 #import "iTermWarning.h"
 #import "NSFileManager+iTerm.h"
 #import "NSObject+iTerm.h"
 #import "NSStringITerm.h"
+#import "ProfileModel.h"
 
 @interface NMSSHSession(iTerm)
-- (id)agent;
+@property (atomic, readonly) void *agent;
 @end
 
 static NSString *const kSCPFileErrorDomain = @"com.googlecode.iterm2.SCPFile";
@@ -31,8 +35,65 @@ static NSError *SCPFileError(NSString *description) {
                            userInfo:@{ NSLocalizedDescriptionKey: description }];
 }
 
+@interface iTermAuthSock: NSObject
+@property (nonatomic, readonly) NSString *authSock;
++ (instancetype)sharedInstance;
+@end
+
+@implementation iTermAuthSock {
+    NSString *_authSock;
+    dispatch_group_t _group;
+}
+
++ (instancetype)sharedInstance {
+    static iTermAuthSock *instance;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        instance = [[self alloc] init];
+    });
+    return instance;
+}
+
+- (NSString *)authSock {
+    Profile *profile = [[ProfileModel sharedInstance] defaultBookmark];
+    NSString *shell = [ITAddressBookMgr customShellForProfile:profile] ?: [iTermOpenDirectory userShell] ?:  @"/bin/bash";
+    dispatch_group_t group;
+    BOOL request = NO;
+    @synchronized(self) {
+        if (_authSock) {
+            return _authSock;
+        }
+        if (!_group) {
+            _group = dispatch_group_create();
+            request = YES;
+        }
+        group = _group;
+    }
+    if (request) {
+        dispatch_group_enter(group);
+        DLog(@"Try to get the value of $SSH_AUTH_SOCK");
+        [[iTermSlowOperationGateway sharedInstance] exfiltrateEnvironmentVariableNamed:@"SSH_AUTH_SOCK"
+                                                                                 shell:shell
+                                                                            completion:^(NSString * _Nonnull value) {
+            @synchronized(self) {
+                self->_authSock = value;
+            }
+            dispatch_group_leave(group);
+            DLog(@"Value is %@", value);
+        }];
+    }
+    dispatch_group_wait(group, dispatch_time(DISPATCH_TIME_NOW,
+                                             0.5 * NSEC_PER_SEC));
+    @synchronized(self) {
+        DLog(@"Return %@", _authSock);
+        return _authSock;
+    }
+}
+
+@end
+
 @interface SCPFile () <NMSSHSessionDelegate>
-@property(atomic, assign) NMSSHSession *session;
+@property(atomic, strong) NMSSHSession *session;
 @property(atomic, assign) BOOL stopped;
 @property(atomic, copy) NSString *error;
 @property(atomic, copy) NSString *destination;
@@ -60,18 +121,6 @@ static NSError *SCPFileError(NSString *description) {
     return self;
 }
 
-- (void)dealloc {
-    [_error release];
-    [_destination release];
-    dispatch_release(_queue);
-    [_homeDirectory release];
-    [_userName release];
-    [_hostName release];
-    [_localPath release];
-    [_path release];
-    [super dealloc];
-}
-
 - (NSError *)lastError {
   if (self.session.rawSession) {
     return self.session.lastError;
@@ -84,11 +133,7 @@ static NSError *SCPFileError(NSString *description) {
 - (void)setQueue:(dispatch_queue_t)queue {
     @synchronized(self) {
         if (queue != _queue) {
-            dispatch_release(_queue);
             _queue = queue;
-            if (queue) {
-                dispatch_retain(queue);
-            }
         }
     }
 }
@@ -161,16 +206,16 @@ static NSError *SCPFileError(NSString *description) {
 
     // Check if the host is {hostname}:{port} or {IPv4}:{port}
     if (components == 2) {
-        NSNumberFormatter *formatter = [[[NSNumberFormatter alloc] init] autorelease];
-        [formatter setLocale:[[[NSLocale alloc] initWithLocaleIdentifier:@"en_US"] autorelease]];
+        NSNumberFormatter *formatter = [[NSNumberFormatter alloc] init];
+        [formatter setLocale:[[NSLocale alloc] initWithLocaleIdentifier:@"en_US"]];
 
         return [[formatter numberFromString:[hostComponents lastObject]] intValue];
     } else if (components >= 4 &&
                [hostComponents[0] hasPrefix:@"["] &&
                [hostComponents[components-2] hasSuffix:@"]"]) {
         // Check if the host is [{IPv6}]:{port}
-        NSNumberFormatter *formatter = [[[NSNumberFormatter alloc] init] autorelease];
-        [formatter setLocale:[[[NSLocale alloc] initWithLocaleIdentifier:@"en_US"] autorelease]];
+        NSNumberFormatter *formatter = [[NSNumberFormatter alloc] init];
+        [formatter setLocale:[[NSLocale alloc] initWithLocaleIdentifier:@"en_US"]];
 
         return [[formatter numberFromString:[hostComponents lastObject]] intValue];
     }
@@ -252,6 +297,17 @@ static NSError *SCPFileError(NSString *description) {
     return value;
 }
 
+- (NSURL *)sessionURL {
+    assert(self.session);
+    NSURLComponents *components = [[NSURLComponents alloc] init];
+    components.host = self.session.host;
+    components.user = self.session.username;
+    components.port = self.session.port;
+    components.path = self.path.path;
+    components.scheme = @"ssh";
+    return components.URL;
+}
+
 // This runs in a thread.
 - (void)performTransfer:(BOOL)isDownload agentAllowed:(BOOL)agentAllowed {
     NSString *baseName = [[self class] fileNameForPath:self.path.path];
@@ -269,10 +325,10 @@ static NSError *SCPFileError(NSString *description) {
         self.session.delegate = self;
         effectivePort = self.session.port.intValue;
     } else {
-        self.session = [[[NMSSHSession alloc] initWithHost:[self hostname]
-                                                   configs:[self configs]
-                                           withDefaultPort:[self port]
-                                           defaultUsername:self.path.username] autorelease];
+        self.session = [[NMSSHSession alloc] initWithHost:[self hostname]
+                                                  configs:[self configs]
+                                          withDefaultPort:[self port]
+                                          defaultUsername:self.path.username];
         effectivePort = self.session.port.intValue;
         self.session.delegate = self;
         [self.session connect];
@@ -284,6 +340,7 @@ static NSError *SCPFileError(NSString *description) {
             return;
         }
     }
+    NSURL *url = [self sessionURL];
     if (!self.session.isConnected) {
         NSError *theError = [self lastError];
         if (!theError) {
@@ -317,6 +374,7 @@ static NSError *SCPFileError(NSString *description) {
 
     BOOL didConnectToAgent = NO;
     if (agentAllowed && !self.hasPredecessor) {
+        self.session.authSock = [[iTermAuthSock sharedInstance] authSock];
         [self.session connectToAgent];
         // Check a private property to see if the connection to the agent was made.
         if ([self.session respondsToSelector:@selector(agent)]) {
@@ -349,11 +407,7 @@ static NSError *SCPFileError(NSString *description) {
                 }
             } else if ([authType isEqualToString:@"keyboard-interactive"]) {
                 [self.session authenticateByKeyboardInteractiveUsingBlock:^NSString *(NSString *request) {
-                    __block NSString *response;
-                    dispatch_sync(dispatch_get_main_queue(), ^() {
-                        response = [self keyboardInteractiveRequest:request];
-                    });
-                    return response;
+                    return [self keyboardInteractiveRequest:request];
                 }];
                 if (self.stopped || self.session.isAuthorized) {
                     break;
@@ -372,20 +426,17 @@ static NSError *SCPFileError(NSString *description) {
                                                      @"~/.ssh/id_ecdsa" ]];
                 }
                 NSFileManager *fileManager = [NSFileManager defaultManager];
-                for (NSString *keyPath in keyPaths) {
-                    keyPath = [self filenameByExpandingMetasyntacticVariables:keyPath];
+                for (NSString *iteratedKeyPath in keyPaths) {
+                    NSString *keyPath = [self filenameByExpandingMetasyntacticVariables:iteratedKeyPath];
                     if (![fileManager fileExistsAtPath:keyPath]) {
                         XLog(@"No key file at %@", keyPath);
                         continue;
                     }
-                    __block NSString *password = nil;
+                    NSString *password = nil;
                     if ([self privateKeyIsEncrypted:keyPath]) {
-                        dispatch_sync(dispatch_get_main_queue(), ^() {
-                            NSString *prompt =
-                                [NSString stringWithFormat:@"passphrase for private key “%@”:",
-                                    keyPath];
-                            password = [self keyboardInteractiveRequest:prompt];
-                        });
+                        NSString *prompt = [NSString stringWithFormat:@"passphrase for private key “%@”:",
+                                            keyPath];
+                        password = [self keyboardInteractiveRequest:prompt];
                     }
                     XLog(@"Attempting to authenticate with key %@", keyPath);
                     NSString *publicKeyPath = [keyPath stringByAppendingString:@".pub"];
@@ -467,30 +518,48 @@ static NSError *SCPFileError(NSString *description) {
         }
         self.destination = tempfile;
         self.status = kTransferrableFileStatusTransferring;
+        __block BOOL quarantined = NO;
+        __block BOOL quarantineError = NO;
         BOOL ok = [self.session.channel downloadFile:self.path.path
                                                   to:tempfile
                                             progress:^BOOL (NSUInteger bytes, NSUInteger fileSize) {
-                                                self.bytesTransferred = bytes;
-                                                self.fileSize = fileSize;
-                                                dispatch_sync(dispatch_get_main_queue(), ^() {
-                                                    if (!self.stopped) {
-                                                        [[FileTransferManager sharedInstance] transferrableFileProgressDidChange:self];
-                                                    }
-                                                });
-                                                if (self.stopped) {
-                                                    XLog(@"Stopping mid-download");
-                                                }
-                                                return !self.stopped;
-                                            }];
-        __block NSError *error;
+            if (!quarantined) {
+                if (![self quarantine:tempfile sourceURL:url]) {
+                    quarantineError = YES;
+                    return NO;
+                }
+                quarantined = YES;
+            }
+            self.bytesTransferred = bytes;
+            self.fileSize = fileSize;
+            dispatch_sync(dispatch_get_main_queue(), ^() {
+                if (!self.stopped) {
+                    [[FileTransferManager sharedInstance] transferrableFileProgressDidChange:self];
+                }
+            });
+            if (self.stopped) {
+                XLog(@"Stopping mid-download");
+            }
+            return !self.stopped;
+        }];
+        if (!quarantined && [[NSFileManager defaultManager] fileExistsAtPath:tempfile]) {
+            // Zero-byte file, presumably.
+            if (![self quarantine:tempfile sourceURL:url]) {
+                quarantineError = YES;
+                ok = NO;
+            } else {
+                quarantined = YES;
+            }
+        }
+        __block NSError *error = nil;
         __block NSString *finalDestination = nil;
         if (ok) {
             error = nil;
             // We determine the filename and perform the move in the main thread to avoid two
             // threads trying to determine the final destination at the same time.
             dispatch_sync(dispatch_get_main_queue(), ^() {
-                finalDestination = [[self finalDestinationForPath:baseName
-                                             destinationDirectory:downloadDirectory] retain];
+                finalDestination = [self finalDestinationForPath:baseName
+                                            destinationDirectory:downloadDirectory];
                 [[NSFileManager defaultManager] moveItemAtPath:tempfile
                                                         toPath:finalDestination
                                                          error:&error];
@@ -500,20 +569,29 @@ static NSError *SCPFileError(NSString *description) {
                               tempfile, finalDestination];
             }
             [[NSFileManager defaultManager] removeItemAtPath:tempfile error:NULL];
-            self.destination = [finalDestination autorelease];
+            self.destination = finalDestination;
         } else {
-            [[NSFileManager defaultManager] removeItemAtPath:tempfile error:NULL];
+            const BOOL ok = [[NSFileManager defaultManager] removeItemAtPath:tempfile error:&error];
+            if (quarantineError && (!ok || error)) {
+                dispatch_sync(dispatch_get_main_queue(), ^{
+                    [self failedToRemoveUnquarantinedFileAt:tempfile];
+                });
+            }
             if (self.stopped) {
                 dispatch_sync(dispatch_get_main_queue(), ^() {
                     [[FileTransferManager sharedInstance] transferrableFileDidStopTransfer:self];
                 });
                 return;
             } else {
-                NSString *errorDescription = [[self lastError] localizedDescription];
-                if (errorDescription.length) {
-                    self.error = errorDescription;
+                if (quarantineError) {
+                    self.error = @"Quarantine Error";
                 } else {
-                    self.error = @"Download failed";
+                    NSString *errorDescription = [[self lastError] localizedDescription];
+                    if (errorDescription.length) {
+                        self.error = errorDescription;
+                    } else {
+                        self.error = @"Download failed";
+                    }
                 }
                 error = SCPFileError(@"Download failed");
             }

@@ -150,7 +150,12 @@ static NSString *const kLogDebugInfoKey = @"Log Smart Selection Debug Info";
 
 - (IBAction)removeRule:(id)sender {
     assert(tableView_.selectedRow >= 0);
-    [self setRule:nil forRow:[tableView_ selectedRow]];
+    const NSInteger row = tableView_.selectedRow;
+    if (row < 0) {
+        return;
+    }
+    [tableView_ reloadData];
+    [self setRule:nil forRow:row];
 }
 
 - (IBAction)loadDefaults:(id)sender {
@@ -289,7 +294,7 @@ static NSString *const kLogDebugInfoKey = @"Log Smart Selection Debug Info";
 + (BOOL)logDebugInfo {
     NSNumber *n = [[NSUserDefaults standardUserDefaults] valueForKey:kLogDebugInfoKey];
     if (n) {
-        return [n intValue] == NSOnState;
+        return [n intValue] == NSControlStateValueOn;
     } else {
         return NO;
     }
@@ -318,7 +323,7 @@ static NSString *const kLogDebugInfoKey = @"Log Smart Selection Debug Info";
 }
 
 - (void)windowWillOpen {
-    [logDebugInfo_ setState:[SmartSelectionController logDebugInfo] ? NSOnState : NSOffState];
+    [logDebugInfo_ setState:[SmartSelectionController logDebugInfo] ? NSControlStateValueOn : NSControlStateValueOff];
 }
 
 #pragma mark - Context Menu Actions Delegate

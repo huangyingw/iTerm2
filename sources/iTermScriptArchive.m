@@ -137,9 +137,9 @@ NSString *const iTermScriptMetadataName = @"metadata.json";
 }
 
 - (BOOL)userAcceptsTrustedScriptAutoLaunchInstall {
-    NSString *body = [NSString stringWithFormat:@"“%@” would like to run automatically when iTerm2 starts. Would you like to allow that?", self.name];
+    NSString *body = [NSString stringWithFormat:@"“%@” would like to launch automatically when iTerm2 starts. Would you like to allow that?", self.name];
     const iTermWarningSelection selection = [iTermWarning showWarningWithTitle:body
-                                                                       actions:@[ @"Allow", @"Decline" ]
+                                                                       actions:@[ @"Launch Automatically", @"Lauch Manually" ]
                                                                      accessory:nil
                                                                     identifier:nil
                                                                    silenceable:kiTermWarningTypePersistent
@@ -149,9 +149,9 @@ NSString *const iTermScriptMetadataName = @"metadata.json";
 }
 
 - (BOOL)userAcceptsExplicitAutoLaunchInstall {
-    NSString *body = [NSString stringWithFormat:@"“%@” can run automatically when iTerm2 starts. Would you like to allow that?", self.name];
+    NSString *body = [NSString stringWithFormat:@"“%@” can launch automatically when iTerm2 starts. Would you like to allow that?", self.name];
     const iTermWarningSelection selection = [iTermWarning showWarningWithTitle:body
-                                                                       actions:@[ @"Allow", @"Decline" ]
+                                                                       actions:@[ @"Launch Automatically", @"Lauch Manually" ]
                                                                      accessory:nil
                                                                     identifier:nil
                                                                    silenceable:kiTermWarningTypePersistent
@@ -180,9 +180,9 @@ NSString *const iTermScriptMetadataName = @"metadata.json";
     NSString *from = [self.container stringByAppendingPathComponent:self.name];
     NSString *to;
     if ([self shouldAutoLaunchWhenTrusted:trusted offerAutoLaunch:offerAutoLaunch]) {
-        to = [[[NSFileManager defaultManager] autolaunchScriptPath] stringByAppendingPathComponent:self.name];
+        to = [[[NSFileManager defaultManager] autolaunchScriptPathCreatingLink] stringByAppendingPathComponent:self.name];
     } else {
-        to = [[[NSFileManager defaultManager] scriptsPath] stringByAppendingPathComponent:self.name];
+        to = [[[NSFileManager defaultManager] scriptsPathWithoutSpaces] stringByAppendingPathComponent:self.name];
     }
     NSError *error = nil;
     [[NSFileManager defaultManager] moveItemAtPath:from
@@ -240,7 +240,7 @@ NSString *const iTermScriptMetadataName = @"metadata.json";
     // Decide where to put it and make the directory if needed.
     NSString *containingFolder;
     if ([self shouldAutoLaunchWhenTrusted:trusted offerAutoLaunch:offerAutoLaunch]) {
-        containingFolder = [[NSFileManager defaultManager] autolaunchScriptPath];
+        containingFolder = [[NSFileManager defaultManager] autolaunchScriptPathCreatingLink];
     } else {
         containingFolder = [[NSFileManager defaultManager] scriptsPathWithoutSpaces];
     }

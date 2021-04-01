@@ -1,3 +1,5 @@
+:orphan:
+
 .. _examples-index:
 .. Example Scripts
 
@@ -61,6 +63,12 @@ Here are a collection of working scripts for you to crib from. While they are ca
 
 :doc:`autoalert` - Demonstrates monitoring all sessions for long-running jobs. Also demonstrates posting notifications.
 
+:doc:`stty` - Demonstrates watching for a variable to change in all sessions and sending text in response.
+
+:doc:`app_tab_color` - Demonstrates watching for changes in the current foreground job. Updates the tab color as a function of the current command.
+
+:doc:`sync_title` — Monitors for changes to a pane's title and copies it to the tab title. Demonstrates monitoring for changes to a variable and setting variables.
+
 ----
 
 **Profiles and Color Presets**
@@ -115,6 +123,8 @@ Here are a collection of working scripts for you to crib from. While they are ca
 
 :doc:`mrutabs2` - This script selects the next-most-recently-used tab when the current tab closes. Same for split panes.
 
+:doc:`findps` - This script shows an alert prompting the user to enter a process ID and then reveals the pane that contains it.
+
 
 ----
 
@@ -148,7 +158,6 @@ Here are a collection of working scripts for you to crib from. While they are ca
 :doc:`create_window` — Demonstrates custom control sequences.
 
 :doc:`oneshot` — Demonstrates registering a function and showing a modal alert.
-
 
 ----
 

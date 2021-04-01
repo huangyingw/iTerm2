@@ -14,6 +14,7 @@
 #import "iTermExpressionParser.h"
 #import "iTermParsedExpression.h"
 #import "iTermVariableScope+Global.h"
+#import "NSFileManager+iTerm.h"
 
 @implementation iTermLaunchAPIScriptCommand
 
@@ -24,28 +25,35 @@
         [self setScriptErrorString:@"No script name was specified"];
         return nil;
     }
+    NSArray<NSString *> *args = self.evaluatedArguments[@"arguments"];
+    if ([scriptName hasPrefix:@"/"]) {
+        [[[[iTermApplication sharedApplication] delegate] scriptsMenuController] launchScriptWithAbsolutePath:scriptName
+                                                                                                    arguments:args
+                                                                                           explicitUserAction:NO];
+        return nil;
+    }
     NSArray<NSString *> *relativeFilenames = [[[[iTermApplication sharedApplication] delegate] scriptsMenuController] allScripts];
     for (NSString *relativeFilename in relativeFilenames) {
         if ([relativeFilename isEqualToString:scriptName]) {
-            [self launchPythonScript:relativeFilename];
+            [self launchPythonScript:relativeFilename arguments:args];
             return nil;
         }
     }
     for (NSString *relativeFilename in relativeFilenames) {
         if ([relativeFilename.stringByDeletingPathExtension isEqualToString:scriptName]) {
-            [self launchPythonScript:relativeFilename];
+            [self launchPythonScript:relativeFilename arguments:args];
             return nil;
         }
     }
     for (NSString *relativeFilename in relativeFilenames) {
         if ([relativeFilename.lastPathComponent isEqualToString:scriptName]) {
-            [self launchPythonScript:relativeFilename];
+            [self launchPythonScript:relativeFilename arguments:args];
             return nil;
         }
     }
     for (NSString *relativeFilename in relativeFilenames) {
         if ([relativeFilename.lastPathComponent.stringByDeletingPathExtension isEqualToString:scriptName]) {
-            [self launchPythonScript:relativeFilename];
+            [self launchPythonScript:relativeFilename arguments:args];
             return nil;
         }
     }
@@ -55,8 +63,12 @@
     return nil;
 }
 
-- (void)launchPythonScript:(NSString *)script {
+- (void)launchPythonScript:(NSString *)script arguments:(NSArray<NSString *> *)arguments {
+    if (![[NSFileManager defaultManager] homeDirectoryDotDir]) {
+        return;
+    }
     [[[[iTermApplication sharedApplication] delegate] scriptsMenuController] launchScriptWithRelativePath:script
+                                                                                                arguments:arguments
                                                                                        explicitUserAction:NO];
 }
 
@@ -107,10 +119,14 @@
         if (evaluator.error) {
             [self setScriptErrorNumber:2];
             [self setScriptErrorString:evaluator.error.localizedDescription];
-            [weakSelf resumeExecutionWithResult:nil];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [weakSelf resumeExecutionWithResult:nil];
+            });
             return;
         }
-        [weakSelf resumeExecutionWithResult:[NSString stringWithFormat:@"%@", evaluator.value]];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [weakSelf resumeExecutionWithResult:[NSString stringWithFormat:@"%@", evaluator.value]];
+        });
     }];
     return nil;
 }

@@ -14,8 +14,9 @@
 @import Sparkle;
 
 // SEE ALSO iTermWebSocketConnectionMinimumPythonLibraryVersion
-// NOTE: This does not affect full-environment scripts.
-const int iTermMinimumPythonEnvironmentVersion = 53;
+// NOTE: This forces upgrades of full-environment scripts.
+// Increasing this makes everyone download a new version.
+const int iTermMinimumPythonEnvironmentVersion = 72;
 
 @protocol iTermOptionalComponentDownloadPhaseDelegate<NSObject>
 - (void)optionalComponentDownloadPhaseDidComplete:(iTermOptionalComponentDownloadPhase *)sender;
@@ -31,7 +32,9 @@ const int iTermMinimumPythonEnvironmentVersion = 53;
 @property (nonatomic, strong) NSURLSession *urlSession;
 @end
 
-@implementation iTermOptionalComponentDownloadPhase
+@implementation iTermOptionalComponentDownloadPhase {
+    NSInteger _continuationsLeft;
+}
 
 - (instancetype)initWithURL:(NSURL *)url
                       title:(NSString *)title
@@ -41,6 +44,7 @@ const int iTermMinimumPythonEnvironmentVersion = 53;
         _url = [url copy];
         _title = [title copy];
         _nextPhaseFactory = [nextPhaseFactory copy];
+        _continuationsLeft = 10;
     }
     return self;
 }
@@ -63,6 +67,7 @@ const int iTermMinimumPythonEnvironmentVersion = 53;
 
     self.downloading = YES;
     NSURLSessionConfiguration *sessionConfig = [NSURLSessionConfiguration defaultSessionConfiguration];
+    sessionConfig.requestCachePolicy = NSURLRequestReloadIgnoringLocalCacheData;
     _urlSession = [NSURLSession sessionWithConfiguration:sessionConfig
                                                 delegate:self
                                            delegateQueue:nil];
@@ -84,6 +89,7 @@ const int iTermMinimumPythonEnvironmentVersion = 53;
 }
 
 #pragma mark - NSURLSessionDownloadDelegate
+
 
 - (void)URLSession:(NSURLSession *)session
       downloadTask:(NSURLSessionDownloadTask *)downloadTask
@@ -108,9 +114,34 @@ didFinishDownloadingToURL:(NSURL *)location {
 - (void)URLSession:(NSURLSession *)session
               task:(NSURLSessionTask *)task
 didCompleteWithError:(nullable NSError *)error {
+    if ([error.domain isEqualToString:NSURLErrorDomain] &&
+        error.code == kCFURLErrorNetworkConnectionLost &&
+        _continuationsLeft > 0) {
+        // There seems to be a bug in Big Sur. There's a spurious "The network connection was lost"
+        // error. I get it every once in a while, and a user reported it in issue 9236. This attempts
+        // to work around it.
+        // I made a wireshark trace and I can see that the client sends a FIN long before the
+        // download is complete. Turning on CFNETWORK_DIAGNOSTICS doesn't help; at level 1 we get
+        // "failed strict content length check" which suggests the connection was closed before the
+        // whole content was recevied. At level 2 and higher it is very slow and the bug doesn't
+        // reproduce.
+        // This is an attempt to route around the damage. I was able to reproduce the problem and
+        // verify that this fixes it.
+        NSData *resumeData = [error.userInfo objectForKey:NSURLSessionDownloadTaskResumeData];
+        if (resumeData.length > 0) {
+            _continuationsLeft -= 1;
+            NSURLSessionConfiguration *sessionConfig = [NSURLSessionConfiguration defaultSessionConfiguration];
+            _urlSession = [NSURLSession sessionWithConfiguration:sessionConfig
+                                                        delegate:self
+                                                   delegateQueue:nil];
+            _task = [_urlSession downloadTaskWithResumeData:resumeData];
+            [_task resume];
+            return;
+        }
+    }
     if (!error) {
         int statusCode = [[NSHTTPURLResponse castFrom:task.response] statusCode];
-        if (statusCode != 200) {
+        if (statusCode != 200 && statusCode != 206) {
             error = [NSError errorWithDomain:@"com.iterm2" code:1 userInfo:@{ NSLocalizedDescriptionKey: [NSString stringWithFormat:@"Server returned status code %@: %@", @(statusCode), [NSHTTPURLResponse localizedStringForStatusCode:statusCode] ] }];
         }
     }
@@ -129,6 +160,27 @@ didCompleteWithError:(nullable NSError *)error {
 
 @end
 
+@implementation iTermDownloadableComponentInfo
+
+- (instancetype)initWithURL:(NSURL *)url
+                       size:(NSInteger)size
+                  signature:(NSString *)signature
+         isSitePackagesOnly:(BOOL)isSitePackagesOnly {
+    if (!url || size == 0 || signature.length == 0) {
+        return nil;
+    }
+    self = [super init];
+    if (self) {
+        _URL = url;
+        _size = size;
+        _signature = [signature copy];
+        _isSitePackagesOnly = isSitePackagesOnly;
+    }
+    return self;
+}
+
+@end
+
 @implementation iTermManifestDownloadPhase
 
 - (instancetype)initWithURL:(NSURL *)url
@@ -139,6 +191,18 @@ didCompleteWithError:(nullable NSError *)error {
         _requestedPythonVersion = [requestedPythonVersion copy];
     }
     return self;
+}
+
+- (iTermDownloadableComponentInfo *)infoGivenExistingFullComponent:(NSNumber *)existingFullComponent {
+    if (!_sitePackagesComponent || !existingFullComponent) {
+        return _fullComponent;
+    }
+    const NSInteger previousVersion = existingFullComponent.integerValue;
+    if (previousVersion >= _sitePackagesDependencies.location &&
+        previousVersion < NSMaxRange(_sitePackagesDependencies)) {
+        return _sitePackagesComponent;
+    }
+    return _fullComponent;
 }
 
 - (BOOL)iTermVersionAtLeast:(NSString *)minVersion
@@ -230,8 +294,24 @@ didCompleteWithError:(nullable NSError *)error {
             if (version < iTermMinimumPythonEnvironmentVersion) {
                 innerError = [NSError errorWithDomain:@"com.iterm2" code:3 userInfo:@{ NSLocalizedDescriptionKey: @"☹️ No usable version found." }];
             } else if (dict) {
-                self->_nextURL = [NSURL URLWithString:dict[@"url"]];
-                self->_signature = dict[@"signature"];
+                self->_fullComponent =
+                [[iTermDownloadableComponentInfo alloc] initWithURL:[NSURL URLWithString:dict[@"url"]]
+                                                               size:dict[@"size"] ? [dict[@"size"] integerValue] : 30 * 1000 * 1000
+                                                          signature:dict[@"signature"]
+                                                 isSitePackagesOnly:NO];
+                self->_sitePackagesComponent =
+                [[iTermDownloadableComponentInfo alloc] initWithURL:[NSURL URLWithString:dict[@"site-packages-url"]]
+                                                               size:[dict[@"site-packages-size"] integerValue]
+                                                          signature:dict[@"site-packages-signature"]
+                                                 isSitePackagesOnly:YES];
+                const NSInteger fullMin = [dict[@"site-packages-full-min"] integerValue];
+                const NSInteger fullMax = [dict[@"site-packages-full-max"] integerValue];
+                if (fullMin && fullMax && fullMax >= fullMin) {
+                    self->_sitePackagesDependencies = NSMakeRange(fullMin, fullMax - fullMin + 1);
+                } else {
+                    self->_sitePackagesDependencies = NSMakeRange(NSNotFound, 0);
+                }
+                
                 self->_version = version;
                 self->_pythonVersionsInArchive = [dict[@"python_versions"] copy];
             } else {

@@ -88,46 +88,50 @@ static const NSTimeInterval kMaximumTimeToKeepFinishedDownload = 24 * 60 * 60;
             intoMenu:(AXUIElementRef)menuElement
            fromPoint:(NSPoint)point
             onScreen:(NSScreen *)screen {
-    if (menuElement) {
-        CFTypeRef temp;
-        AXUIElementCopyAttributeValue(menuElement, kAXPositionAttribute, (CFTypeRef *)&temp);
-
-        CGPoint position;
-        AXValueGetValue(temp, kAXValueCGPointType, &position);
-        CFRelease(temp);
-        CFRelease(menuElement);
-
-        NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(point.x,
-                                                                            point.y,
-                                                                            image.size.width,
-                                                                            image.size.height)
-                                                       styleMask:NSWindowStyleMaskBorderless
-                                                         backing:NSBackingStoreBuffered
-                                                           defer:NO];
-        NSImageView  *imageView =
-            [[[NSImageView alloc] initWithFrame:NSMakeRect(0,
-                                                           0,
-                                                           image.size.width,
-                                                           image.size.height)] autorelease];
-        imageView.image = image;
-        window.contentView = imageView;
-        [window makeKeyAndOrderFront:nil];
-        [window setLevel:NSMainMenuWindowLevel];
-
-        // Todo: deal with multiple screens, mavericks
-        const CGFloat menuBarHeight =
-            [[[NSApplication sharedApplication] mainMenu] menuBarHeight];
-        position.y = screen.frame.size.height - position.y - menuBarHeight;
-
-        [window.animator setFrame:NSMakeRect(position.x,
-                                             position.y,
-                                             window.frame.size.width,
-                                             window.frame.size.height)
-                          display:YES];
-        [self performSelector:@selector(fadeWindowOut:)
-                   withObject:window
-                   afterDelay:[[NSAnimationContext currentContext] duration]];
+    if (!menuElement) {
+        return;
     }
+    CFTypeRef temp = NULL;
+    AXUIElementCopyAttributeValue(menuElement, kAXPositionAttribute, (CFTypeRef *)&temp);
+    if (!temp) {
+        return;
+    }
+
+    CGPoint position;
+    AXValueGetValue(temp, kAXValueCGPointType, &position);
+    CFRelease(temp);
+    CFRelease(menuElement);
+
+    NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(point.x,
+                                                                        point.y,
+                                                                        image.size.width,
+                                                                        image.size.height)
+                                                   styleMask:NSWindowStyleMaskBorderless
+                                                     backing:NSBackingStoreBuffered
+                                                       defer:NO];
+    NSImageView  *imageView =
+        [[[NSImageView alloc] initWithFrame:NSMakeRect(0,
+                                                       0,
+                                                       image.size.width,
+                                                       image.size.height)] autorelease];
+    imageView.image = image;
+    window.contentView = imageView;
+    [window makeKeyAndOrderFront:nil];
+    [window setLevel:NSMainMenuWindowLevel];
+
+    // Todo: deal with multiple screens, mavericks
+    const CGFloat menuBarHeight =
+        [[[NSApplication sharedApplication] mainMenu] menuBarHeight];
+    position.y = screen.frame.size.height - position.y - menuBarHeight;
+
+    [window.animator setFrame:NSMakeRect(position.x,
+                                         position.y,
+                                         window.frame.size.width,
+                                         window.frame.size.height)
+                      display:YES];
+    [self performSelector:@selector(fadeWindowOut:)
+               withObject:window
+               afterDelay:[[NSAnimationContext currentContext] duration]];
 }
 
 - (void)animateImage:(NSImage *)image intoDownloadsMenuFromPoint:(NSPoint)point onScreen:(NSScreen *)screen {
@@ -315,7 +319,7 @@ static const NSTimeInterval kMaximumTimeToKeepFinishedDownload = 24 * 60 * 60;
 }
 
 - (void)transferrableFileDidStartTransfer:(TransferrableFile *)transferrableFile {
-    NSLog(@"Transfer started");
+    XLog(@"Transfer started");
     [[self menuForFile:transferrableFile] addItem:[self menuItemForTransferrableFile:transferrableFile]];
     TransferrableFileMenuItemViewController *controller = [self viewControllerForTransferrableFile:transferrableFile];
     [controller update];
@@ -331,21 +335,21 @@ static const NSTimeInterval kMaximumTimeToKeepFinishedDownload = 24 * 60 * 60;
 - (void)transferrableFile:(TransferrableFile *)transferrableFile
     didFinishTransmissionWithError:(NSError *)error {
     transferrableFile.status = error ? kTransferrableFileStatusFinishedWithError : kTransferrableFileStatusFinishedSuccessfully;
-    NSLog(@"Transfer finished. error=%@", error);
+    XLog(@"Transfer finished. error=%@", error);
 
     TransferrableFileMenuItemViewController *controller = [self viewControllerForTransferrableFile:transferrableFile];
     [controller update];
 }
 
 - (void)transferrableFileWillStop:(TransferrableFile *)transferrableFile {
-    NSLog(@"file transfer stop requested");
+    XLog(@"file transfer stop requested");
     transferrableFile.status = kTransferrableFileStatusCancelling;
     TransferrableFileMenuItemViewController *controller = [self viewControllerForTransferrableFile:transferrableFile];
     [controller update];
 }
 
 - (void)transferrableFileDidStopTransfer:(TransferrableFile *)transferrableFile {
-    NSLog(@"file transfer stopped");
+    XLog(@"file transfer stopped");
     transferrableFile.status = kTransferrableFileStatusCancelled;
     TransferrableFileMenuItemViewController *controller = [self viewControllerForTransferrableFile:transferrableFile];
     [controller update];
@@ -429,6 +433,14 @@ static const NSTimeInterval kMaximumTimeToKeepFinishedDownload = 24 * 60 * 60;
     _passwordCompletion = nil;
     _passwordManagerWindowController.delegate = nil;
     _passwordManagerWindowController = nil;
+}
+
+- (void)iTermPasswordManagerEnterUserName:(NSString *)username broadcast:(BOOL)broadcast {
+    assert(false);
+}
+
+- (BOOL)iTermPasswordManagerCanEnterUserName {
+    return NO;
 }
 
 - (BOOL)iTermPasswordManagerCanBroadcast {

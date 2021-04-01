@@ -7,6 +7,7 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "iTermEncoderAdapter.h"
 #import "iTermFindViewController.h"
 #import "ScreenChar.h"
 
@@ -32,7 +33,7 @@ typedef struct {
 
 // LineBlock represents an ordered collection of lines of text. It stores them contiguously
 // in a buffer.
-@interface LineBlock : NSObject <NSCopying>
+@interface LineBlock : NSObject <NSCopying, iTermUniquelyIdentifiable>
 
 // Once this is set to true, it stays true. If double width characters are
 // possibly present then a slower algorithm is used to count the number of
@@ -40,6 +41,7 @@ typedef struct {
 // that get wrapped to the next line.
 @property(nonatomic, assign) BOOL mayHaveDoubleWidthCharacter;
 @property(nonatomic, readonly) int numberOfCharacters;
+@property(nonatomic, readonly) NSInteger generation;
 
 + (instancetype)blockWithDictionary:(NSDictionary *)dictionary;
 
@@ -70,7 +72,8 @@ typedef struct {
                                    lineLength:(int*)lineLength
                             includesEndOfLine:(int*)includesEndOfLine
                                       yOffset:(int*)yOffsetPtr
-                                 continuation:(screen_char_t *)continuationPtr;
+                                 continuation:(screen_char_t *)continuationPtr
+                         isStartOfWrappedLine:(BOOL *)isStartOfWrappedLine;
 
 
 // Get the number of lines in this block at a given screen width.
@@ -88,6 +91,9 @@ typedef struct {
               upToWidth:(int)width
               timestamp:(NSTimeInterval *)timestampPtr
            continuation:(screen_char_t *)continuationPtr;
+
+- (void)removeLastWrappedLines:(int)numberOfLinesToRemove
+                         width:(int)width;
 
 // Drop lines from the start of the buffer. Returns the number of lines actually dropped
 // (either n or the number of lines in the block).
@@ -143,8 +149,12 @@ typedef struct {
 
 // Tries to convert a byte offset into the block to an x,y coordinate relative to the first char
 // in the block. Returns YES on success, NO if the position is out of range.
+//
+// If the position is after the last character on a line, wrapEOL determines if it will return the
+// coordinate of the first null on that line of the first character on the next line.
 - (BOOL)convertPosition:(int)position
               withWidth:(int)width
+              wrapOnEOL:(BOOL)wrapOnEOL
                     toX:(int*)x
                     toY:(int*)y;
 
@@ -209,5 +219,7 @@ void EnableDoubleWidthCharacterLineCache(void);
 - (void)addObserver:(id<iTermLineBlockObserver>)observer;
 - (void)removeObserver:(id<iTermLineBlockObserver>)observer;
 - (BOOL)hasObserver:(id<iTermLineBlockObserver>)observer;
+
+- (void)setPartial:(BOOL)partial;
 
 @end

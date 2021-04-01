@@ -22,6 +22,7 @@
 #import "iTermVariableReference.h"
 #import "iTermWarning.h"
 #import "NSArray+iTerm.h"
+#import "NSFileManager+iTerm.h"
 #import "NSJSONSerialization+iTerm.h"
 #import "NSObject+iTerm.h"
 
@@ -50,6 +51,10 @@ static NSString *const iTermStatusBarRPCRegistrationRequestKey = @"registration 
 @implementation iTermStatusBarRPCComponentFactory {
     ITMRPCRegistrationRequest *_savedRegistrationRequest;
     // NOTE: If mutable state is added, change copyWithZone:
+}
+
++ (BOOL)supportsSecureCoding {
+    return YES;
 }
 
 - (instancetype)initWithRegistrationRequest:(ITMRPCRegistrationRequest *)registrationRequest {
@@ -296,6 +301,11 @@ static NSString *const iTermStatusBarRPCRegistrationRequestKey = @"registration 
         // avoid spurious errors, do not actually evaluate the invocation.
         return;
     }
+    DLog(@"Update status bar component %@ instance %p for session %@\n%@",
+         _savedRegistrationRequest.statusBarComponentAttributes.uniqueIdentifier,
+         self,
+         [scope valueForVariableName:iTermVariableKeySessionID],
+         [NSThread callStackSymbols]);
     // Create a temporary frame to shadow __knobs in the scope. This avoids mutating a scope we don't own.
     iTermVariables *variables = [[iTermVariables alloc] initWithContext:iTermVariablesSuggestionContextNone
                                                                   owner:self];
@@ -320,6 +330,9 @@ static NSString *const iTermStatusBarRPCRegistrationRequestKey = @"registration 
 
 - (void)maybeOfferToMoveScriptToAutoLaunch {
     if (-[_dateOfLaunchToFix timeIntervalSinceNow] >= 1) {
+        return;
+    }
+    if (![[NSFileManager defaultManager] homeDirectoryDotDir]) {
         return;
     }
     iTermScriptsMenuController *menuController = [[[iTermApplication sharedApplication] delegate] scriptsMenuController];
@@ -446,7 +459,7 @@ static NSString *const iTermStatusBarRPCRegistrationRequestKey = @"registration 
         return;
     }
     iTermScriptsMenuController *menuController = [[[iTermApplication sharedApplication] delegate] scriptsMenuController];
-    [menuController launchScriptWithAbsolutePath:fullPath explicitUserAction:YES];
+    [menuController launchScriptWithAbsolutePath:fullPath arguments:@[] explicitUserAction:YES];
     _dateOfLaunchToFix = [NSDate date];
     _fullPath = [fullPath copy];
 }
@@ -493,7 +506,8 @@ static NSString *const iTermStatusBarRPCRegistrationRequestKey = @"registration 
                                completion:^(id result, NSError *error, NSSet<NSString *> *mutations) {
                                    if (error) {
                                        NSString *message = [NSString stringWithFormat:@"Error in onclick handler: %@\n%@", error.localizedDescription, error.localizedFailureReason];
-                                       [[iTermScriptHistoryEntry globalEntry] addOutput:message];
+                                       [[iTermScriptHistoryEntry globalEntry] addOutput:message
+                                                                             completion:^{}];
                                    }
                                }];
 }

@@ -7,6 +7,7 @@
 
 #import "iTermMigrationHelper.h"
 
+#import "DebugLogging.h"
 #import "ITAddressBookMgr.h"
 #import "iTermDisclosableView.h"
 #import "iTermProfilePreferences.h"
@@ -105,6 +106,15 @@
         accessory.textView.selectable = YES;
         accessory.requestLayout = ^{
             [alert layout];
+            if (@available(macOS 10.16, *)) {
+                // FB8897296:
+                // Prior to Big Sur, you could call [NSAlert layout] on an already-visible NSAlert
+                // to have it change its size to accommodate an accessory view controller whose
+                // frame changed.
+                //
+                // On Big Sur, it no longer works. Instead, you must call NSAlert.layout *twice*.
+                [alert layout];
+            }
         };
         alert.accessoryView = accessory;
 
@@ -156,7 +166,7 @@
         } else if ([prefix isEqualToString:@"KeyBindings"]) {
             parent = [keybindingProfiles objectForKey:[dict objectForKey:KEY_KEYBOARD_PROFILE]];
         } else {
-            NSAssert(0, @"Bad prefix");
+            ITAssertWithMessage(0, @"Bad prefix");
         }
         id value = nil;
         if (parent) {
@@ -178,7 +188,7 @@
         [self copyProfileToBookmark:temp];
         [temp setObject:[ProfileModel freshGuid] forKey:KEY_GUID];
         [temp setObject:path forKey:KEY_TAGS];
-        [temp setObject:@"Yes" forKey:KEY_CUSTOM_COMMAND];
+        [temp setObject:kProfilePreferenceCommandTypeCustomValue forKey:KEY_CUSTOM_COMMAND];
         NSString* dir = [data objectForKey:KEY_WORKING_DIRECTORY];
         if (dir && [dir length] > 0) {
             [temp setObject:kProfilePreferenceInitialDirectoryCustomValue

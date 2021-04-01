@@ -63,7 +63,7 @@ static BOOL AdvanceAndEatControlChars(iTermParserContext *context,
             case VT100CC_DC1:
             case VT100CC_DC3:
             case VT100CC_DEL:
-                CVectorAppend(incidentals, [VT100Token tokenForControlCharacter:c]);
+                CVectorAppend(incidentals, [VT100Token newTokenForControlCharacter:c]);
                 break;
 
             case VT100CC_CAN:
@@ -200,8 +200,9 @@ static BOOL ParseCSIParameters(iTermParserContext *context,
                 while (iTermParserTryPeek(context, &c) && isdigit(c)) {
                     if (n > (INT_MAX - 10) / 10) {
                         *unrecognized = YES;
+                    } else {
+                        n = n * 10 + (c - '0');
                     }
-                    n = n * 10 + (c - '0');
                     if (!AdvanceAndEatControlChars(context, support8BitControlCharacters, incidentals)) {
                         return NO;
                     }
@@ -240,7 +241,7 @@ static BOOL ParseCSIParameters(iTermParserContext *context,
                 }
                 // reset the parameter flag
                 readNumericParameter = NO;
-
+                isSub = NO;
                 if (!AdvanceAndEatControlChars(context, support8BitControlCharacters, incidentals)) {
                     return NO;
                 }
@@ -541,6 +542,25 @@ static void SetCSITypeAndDefaultParameters(CSIParam *param, VT100Token *result) 
         case PACKED_CSI_COMMAND(0, ' ', 'q'):
             result->type = VT100CSI_DECSCUSR;
             iTermParserSetCSIParameterIfDefault(param, 0, 0);
+            break;
+
+        case PACKED_CSI_COMMAND('>', 0, 'q'):
+            result->type = VT100CSI_XDA;
+            iTermParserSetCSIParameterIfDefault(param, 0, 0);
+            break;
+
+        case PACKED_CSI_COMMAND('>', 0, 'u'):
+            iTermParserSetCSIParameterIfDefault(param, 0, 0);
+            result->type = VT100CSI_PUSH_KEY_REPORTING_MODE;
+            break;
+
+        case PACKED_CSI_COMMAND('<', 0, 'u'):
+            iTermParserSetCSIParameterIfDefault(param, 0, 0);
+            result->type = VT100CSI_POP_KEY_REPORTING_MODE;
+            break;
+
+        case PACKED_CSI_COMMAND('?', 0, 'u'):
+            result->type = VT100CSI_QUERY_KEY_REPORTING_MODE;
             break;
 
         case PACKED_CSI_COMMAND(0, '!', 'p'):

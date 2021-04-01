@@ -8,18 +8,23 @@
 
 #import "iTermEditKeyActionWindowController.h"
 
+#import "DebugLogging.h"
 #import "iTermActionsModel.h"
 #import "iTermFunctionCallTextFieldDelegate.h"
+#import "iTermKeystrokeFormatter.h"
 #import "iTermPasteSpecialViewController.h"
 #import "iTermPreferences.h"
 #import "iTermShortcutInputView.h"
 #import "iTermVariableScope.h"
-#import "iTermKeyBindingMgr.h"
 #import "NSPopUpButton+iTerm.h"
 #import "RegexKitLite.h"
 
+#import <SearchableComboListView/SearchableComboListView-Swift.h>
+
 @interface iTermEditKeyActionWindowController () <
-    iTermShortcutInputViewDelegate>
+    iTermSearchableComboViewDelegate,
+    iTermShortcutInputViewDelegate,
+    NSTextFieldDelegate>
 
 @property(nonatomic, assign) BOOL ok;
 
@@ -29,7 +34,8 @@
     IBOutlet iTermShortcutInputView *_shortcutField;
     IBOutlet NSTextField *_keyboardShortcutLabel;
     IBOutlet NSTextField *_touchBarLabel;
-    IBOutlet NSPopUpButton *_actionPopup;
+    IBOutlet NSView *_comboViewContainer;
+    iTermSearchableComboView *_comboView;
     IBOutlet NSTextField *_parameter;
     IBOutlet NSTextField *_parameterLabel;
     IBOutlet NSPopUpButton *_profilePopup;
@@ -38,17 +44,21 @@
     IBOutlet NSTextField *_profileLabel;
     IBOutlet NSTextField *_colorPresetsLabel;
     IBOutlet NSPopUpButton *_colorPresetsPopup;
+    IBOutlet NSPopUpButton *_snippetsPopup;
     IBOutlet NSView *_pasteSpecialViewContainer;
+    IBOutlet NSButton *_okButton;
 
     iTermPasteSpecialViewController *_pasteSpecialViewController;
     iTermFunctionCallTextFieldDelegate *_functionCallDelegate;
     iTermFunctionCallTextFieldDelegate *_labelDelegate;
 }
 
-- (instancetype)initWithContext:(iTermVariablesSuggestionContext)context {
+- (instancetype)initWithContext:(iTermVariablesSuggestionContext)context
+                           mode:(iTermEditKeyActionWindowControllerMode)mode {
     self = [super initWithWindowNibName:@"iTermEditKeyActionWindowController"];
     if (self) {
         _suggestContext = context;
+        _mode = mode;
     }
     return self;
 }
@@ -57,19 +67,161 @@
 {
     [super windowDidLoad];
 
+    NSArray<iTermSearchableComboViewGroup *> *groups = @[
+        [[iTermSearchableComboViewGroup alloc] initWithLabel:@"General" items:@[
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Ignore" tag:KEY_ACTION_IGNORE],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Select Menu Item..." tag:KEY_ACTION_SELECT_MENU_ITEM],
+        ]],
+    ];
+    if (self.mode == iTermEditKeyActionWindowControllerModeKeyboardShortcut) {
+        groups = [groups arrayByAddingObjectsFromArray:@[
+            [[iTermSearchableComboViewGroup alloc] initWithLabel:@"Modifier Remapping" items:@[
+                [[iTermSearchableComboViewItem alloc] initWithLabel:@"Do Not Remap Modifiers" tag:KEY_ACTION_DO_NOT_REMAP_MODIFIERS],
+                [[iTermSearchableComboViewItem alloc] initWithLabel:@"Remap Modifiers in iTerm2 Only" tag:KEY_ACTION_REMAP_LOCALLY],
+            ]],
+            [[iTermSearchableComboViewGroup alloc] initWithLabel:@"Cycle" items:@[
+                [[iTermSearchableComboViewItem alloc] initWithLabel:@"Cycle Tabs Forward" tag:KEY_ACTION_NEXT_MRU_TAB],
+                [[iTermSearchableComboViewItem alloc] initWithLabel:@"Cycle Tabs Backward" tag:KEY_ACTION_PREVIOUS_MRU_TAB],
+            ]],
+        ]];
+    }
+
+    groups = [groups arrayByAddingObjectsFromArray:@[
+        [[iTermSearchableComboViewGroup alloc] initWithLabel:@"Miscellaneous" items:@[
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Run Coprocess" tag:KEY_ACTION_RUN_COPROCESS],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Start Instant Replay" tag:KEY_ACTION_IR_BACKWARD],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Undo" tag:KEY_ACTION_UNDO],
+        ]],
+
+        [[iTermSearchableComboViewGroup alloc] initWithLabel:@"New Tab or Window" items:@[
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"New Window with Profile" tag:KEY_ACTION_NEW_WINDOW_WITH_PROFILE],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"New Tab with Profile" tag:KEY_ACTION_NEW_TAB_WITH_PROFILE],
+        [[iTermSearchableComboViewItem alloc] initWithLabel:@"Duplicate Tab" tag:KEY_ACTION_DUPLICATE_TAB],
+        ]],
+
+        [[iTermSearchableComboViewGroup alloc] initWithLabel:@"Split" items:@[
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Split Horizontally with Profile" tag:KEY_ACTION_SPLIT_HORIZONTALLY_WITH_PROFILE],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Split Vertically with Profile" tag:KEY_ACTION_SPLIT_VERTICALLY_WITH_PROFILE],
+        ]],
+
+        [[iTermSearchableComboViewGroup alloc] initWithLabel:@"Profile" items:@[
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Change Profile" tag:KEY_ACTION_SET_PROFILE],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Load Color Preset" tag:KEY_ACTION_LOAD_COLOR_PRESET],
+        ]],
+
+        [[iTermSearchableComboViewGroup alloc] initWithLabel:@"Navigate Tabs" items:@[
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Next Tab" tag:KEY_ACTION_NEXT_SESSION],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Previous Tab" tag:KEY_ACTION_PREVIOUS_SESSION],
+        ]],
+
+        [[iTermSearchableComboViewGroup alloc] initWithLabel:@"Reorder Tabs" items:@[
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Move Tab Left" tag:KEY_ACTION_MOVE_TAB_LEFT],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Move Tab Right" tag:KEY_ACTION_MOVE_TAB_RIGHT],
+        ]],
+
+        [[iTermSearchableComboViewGroup alloc] initWithLabel:@"Navigate Windows" items:@[
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Next Window" tag:KEY_ACTION_NEXT_WINDOW],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Previous Window" tag:KEY_ACTION_PREVIOUS_WINDOW],
+        ]],
+
+        [[iTermSearchableComboViewGroup alloc] initWithLabel:@"Navigate Panes" items:@[
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Next Pane" tag:KEY_ACTION_NEXT_PANE],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Previous Pane" tag:KEY_ACTION_PREVIOUS_PANE],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Select Split Pane Above" tag:KEY_ACTION_SELECT_PANE_ABOVE],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Select Split Pane Below" tag:KEY_ACTION_SELECT_PANE_BELOW],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Select Split Pane On Left" tag:KEY_ACTION_SELECT_PANE_LEFT],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Select Split Pane On Right" tag:KEY_ACTION_SELECT_PANE_RIGHT],
+        ]],
+
+        [[iTermSearchableComboViewGroup alloc] initWithLabel:@"Resize Pane" items:@[
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Decrease Height" tag:KEY_ACTION_DECREASE_HEIGHT],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Increase Height" tag:KEY_ACTION_INCREASE_HEIGHT],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Decrease Width" tag:KEY_ACTION_DECREASE_WIDTH],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Increase Width" tag:KEY_ACTION_INCREASE_WIDTH],
+        ]],
+
+        [[iTermSearchableComboViewGroup alloc] initWithLabel:@"Scroll" items:@[
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Scroll to End" tag:KEY_ACTION_SCROLL_END],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Scroll to Top" tag:KEY_ACTION_SCROLL_HOME],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Scroll One Line Down" tag:KEY_ACTION_SCROLL_LINE_DOWN],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Scroll One Line Up" tag:KEY_ACTION_SCROLL_LINE_UP],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Scroll One Page Down" tag:KEY_ACTION_SCROLL_PAGE_DOWN],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Scroll One Page Up" tag:KEY_ACTION_SCROLL_PAGE_UP],
+        ]],
+
+        [[iTermSearchableComboViewGroup alloc] initWithLabel:@"Split Panes" items:@[
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Swap With Split Pane Above" tag:KEY_ACTION_SWAP_PANE_ABOVE],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Swap With Split Pane Below" tag:KEY_ACTION_SWAP_PANE_BELOW],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Swap With Split Pane on Left" tag:KEY_ACTION_SWAP_PANE_LEFT],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Swap With Split Pane on Right" tag:KEY_ACTION_SWAP_PANE_RIGHT],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Move Session to Split Pane" tag:KEY_ACTION_MOVE_TO_SPLIT_PANE],
+        ]],
+
+        [[iTermSearchableComboViewGroup alloc] initWithLabel:@"Send Keystrokes" items:@[
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Send ^H Backspace" tag:KEY_ACTION_SEND_C_H_BACKSPACE],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Send ^? Backspace" tag:KEY_ACTION_SEND_C_QM_BACKSPACE],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Send Escape Sequence" tag:KEY_ACTION_ESCAPE_SEQUENCE],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Send Hex Code" tag:KEY_ACTION_HEX_CODE],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Send Text" tag:KEY_ACTION_TEXT],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Send Text with “vim” Special Chars" tag:KEY_ACTION_VIM_TEXT],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Send Snippet" tag:KEY_ACTION_SEND_SNIPPET]
+        ]],
+
+        [[iTermSearchableComboViewGroup alloc] initWithLabel:@"Search" items:@[
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Find Regular Expression…" tag:KEY_ACTION_FIND_REGEX],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Find Again Down" tag:KEY_FIND_AGAIN_DOWN],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Find Again Up" tag:KEY_FIND_AGAIN_UP],
+        ]],
+
+        [[iTermSearchableComboViewGroup alloc] initWithLabel:@"Pasteboard" items:@[
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Paste…" tag:KEY_ACTION_PASTE_SPECIAL],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Paste from Selection…" tag:KEY_ACTION_PASTE_SPECIAL_FROM_SELECTION],
+        ]],
+
+        [[iTermSearchableComboViewGroup alloc] initWithLabel:@"Toggles" items:@[
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Toggle Fullscreen" tag:KEY_ACTION_TOGGLE_FULLSCREEN],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Toggle Pin Hotkey Window" tag:KEY_ACTION_TOGGLE_HOTKEY_WINDOW_PINNING],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Toggle Mouse Reporting" tag:KEY_ACTION_TOGGLE_MOUSE_REPORTING],
+        ]],
+
+        [[iTermSearchableComboViewGroup alloc] initWithLabel:@"Selection" items:@[
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Move Start of Selection Back" tag:KEY_ACTION_MOVE_START_OF_SELECTION_LEFT],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Move Start of Selection Forward" tag:KEY_ACTION_MOVE_START_OF_SELECTION_RIGHT],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Move End of Selection Back" tag:KEY_ACTION_MOVE_END_OF_SELECTION_LEFT],
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Move End of Selection Forward" tag:KEY_ACTION_MOVE_END_OF_SELECTION_RIGHT],
+        ]],
+
+        [[iTermSearchableComboViewGroup alloc] initWithLabel:@"Scripting" items:@[
+            [[iTermSearchableComboViewItem alloc] initWithLabel:@"Invoke Script Function…" tag:KEY_ACTION_INVOKE_SCRIPT_FUNCTION],
+        ]],
+    ]];
+
+    switch (self.mode) {
+        case iTermEditKeyActionWindowControllerModeKeyboardShortcut:
+            break;
+        case iTermEditKeyActionWindowControllerModeTouchBarItem:
+            _touchBarLabel.placeholderString = @"Label to show in Touch Bar";
+            break;
+        case iTermEditKeyActionWindowControllerModeUnbound:
+            _touchBarLabel.placeholderString = self.titleIsInterpolated ? @"Title (Interpolated String)" : @"Title";
+            break;
+    }
+
+    _comboView = [[iTermSearchableComboView alloc] initWithGroups:groups];
+    [_comboViewContainer addSubview:_comboView];
+    _comboView.frame = _comboViewContainer.bounds;
+    _comboView.delegate = self;
+
     // For some reason, the first item is checked by default. Make sure every
     // item is unchecked before making a selection.
-    for (NSMenuItem *item in [_actionPopup itemArray]) {
-        [item setState:NSOffState];
-    }
     NSString *formattedString = @"";
-    if (self.currentKeyCombination) {
-        formattedString = [iTermKeyBindingMgr formatKeyCombination:self.currentKeyCombination];
+    if (self.currentKeystroke) {
+        formattedString = [iTermKeystrokeFormatter stringForKeystroke:self.currentKeystroke];
     }
     _shortcutField.stringValue = formattedString;
     _touchBarLabel.stringValue = self.label ?: @"";
-    [_actionPopup selectItemWithTag:self.action];
-    [_actionPopup setTitle:[self titleOfActionWithTag:self.action]];
+    _okButton.enabled = [self shouldEnableOK];
+    (void)[_comboView selectItemWithTag:self.action];
     _parameter.stringValue = self.parameterValue ?: @"";
     if (self.action == KEY_ACTION_SELECT_MENU_ITEM) {
         [[self class] populatePopUpButtonWithMenuItems:_menuToSelectPopup
@@ -100,6 +252,9 @@
     if (!_colorPresetsPopup.isHidden) {
         [_colorPresetsPopup loadColorPresetsSelecting:self.parameterValue];
     }
+    if (!_snippetsPopup.isHidden) {
+        [_snippetsPopup populateWithSnippetsSelectingActionKey:self.parameterValue];
+    }
     if (!_selectionMovementUnit.isHidden) {
         [_selectionMovementUnit selectItemWithTag:[self.parameterValue integerValue]];
     }
@@ -124,17 +279,6 @@
     [_pasteSpecialViewContainer addSubview:_pasteSpecialViewController.view];
 }
 
-- (NSString *)titleOfActionWithTag:(int)theTag {
-    // Can't search for an item with tag 0 using the API, so search manually.
-    for (NSMenuItem* anItem in [[_actionPopup menu] itemArray]) {
-        if (![anItem isSeparatorItem] && [anItem tag] == theTag) {
-            return [anItem title];
-            break;
-        }
-    }
-    return @"";
-}
-
 - (void)setAction:(int)action {
     if (action == KEY_ACTION_IR_FORWARD) {
         action = KEY_ACTION_IGNORE;
@@ -145,49 +289,16 @@
 - (iTermAction *)unboundAction {
     return [[iTermAction alloc] initWithTitle:self.label
                                        action:self.action
-                                     parameter:self.parameterValue];
+                                    parameter:self.parameterValue
+                     useCompatibilityEscaping:self.useCompatibilityEscaping];
 }
 
-- (void)setMode:(iTermEditKeyActionWindowControllerMode)mode {
-    _mode = mode;
-    [self window];
-    switch (mode) {
-        case iTermEditKeyActionWindowControllerModeKeyboardShortcut:
-            break;
-        case iTermEditKeyActionWindowControllerModeTouchBarItem:
-            _touchBarLabel.placeholderString = @"Label to show in Touch Bar";
-            [self removeActionsRequiringKeyBinding];
-            break;
-        case iTermEditKeyActionWindowControllerModeUnbound:
-            _touchBarLabel.placeholderString = self.titleIsInterpolated ? @"Title (Interpolated String)" : @"Title";
-            [self removeActionsRequiringKeyBinding];
-            break;
-    }
-}
-
-- (void)removeActionsRequiringKeyBinding {
-    NSArray<NSNumber *> *toRemove = @[ @(KEY_ACTION_DO_NOT_REMAP_MODIFIERS),
-                                       @(KEY_ACTION_REMAP_LOCALLY),
-                                       @(KEY_ACTION_NEXT_MRU_TAB),
-                                       @(KEY_ACTION_PREVIOUS_MRU_TAB),
-                                       ];
-    NSMutableIndexSet *indexes = [[NSMutableIndexSet alloc] init];
-    [_actionPopup.menu.itemArray enumerateObjectsUsingBlock:^(NSMenuItem * _Nonnull menuItem, NSUInteger idx, BOOL * _Nonnull stop) {
-        if ([toRemove containsObject:@(menuItem.tag)]) {
-            [indexes addIndex:idx];
-        }
-    }];
-    [indexes enumerateIndexesWithOptions:NSEnumerationReverse usingBlock:^(NSUInteger idx, BOOL * _Nonnull stop) {
-        [self->_actionPopup.menu removeItemAtIndex:idx];
-    }];
-}
-
-- (NSString *)identifier {
+- (iTermKeystrokeOrTouchbarItem *)keystrokeOrTouchbarItem {
     switch (_mode) {
         case iTermEditKeyActionWindowControllerModeKeyboardShortcut:
-            return self.currentKeyCombination;
+            return [iTermOr first:self.currentKeystroke];
         case iTermEditKeyActionWindowControllerModeTouchBarItem:
-            return self.touchBarItemID;
+            return [iTermOr second:[[iTermTouchbarItem alloc] initWithIdentifier:self.touchBarItemID]];
         case iTermEditKeyActionWindowControllerModeUnbound:
             return nil;
     }
@@ -198,29 +309,37 @@
 // Note: This is called directly by iTermHotKeyController when the action requires key remapping
 // to be disabled so the shortcut can be input properly. In this case, |view| will be nil.
 - (void)shortcutInputView:(iTermShortcutInputView *)view didReceiveKeyPressEvent:(NSEvent *)event {
-    self.currentKeyCombination = view.shortcut.identifier;
+    self.currentKeystroke = view.shortcut.keystroke;
+    _okButton.enabled = [self shouldEnableOK];
+}
+
+- (void)setMode:(iTermEditKeyActionWindowControllerMode)mode {
+    assert(NO);
 }
 
 #pragma mark - Private
 
 - (void)updateViewsAnimated:(BOOL)animated {
-    int tag = [[_actionPopup selectedItem] tag];
+    int tag = _comboView.selectedTag;
     switch (self.mode) {
         case iTermEditKeyActionWindowControllerModeUnbound:
             _keyboardShortcutLabel.stringValue = @"Title";
             if (self.titleIsInterpolated) {
                 if (!_labelDelegate) {
                     _labelDelegate = [[iTermFunctionCallTextFieldDelegate alloc] initWithPathSource:[iTermVariableHistory pathSourceForContext:iTermVariablesSuggestionContextSession]
-                                                                                        passthrough:nil
+                                                                                        passthrough:self
                                                                                       functionsOnly:NO];
                 }
                 _touchBarLabel.delegate = _labelDelegate;
+            } else {
+                _touchBarLabel.delegate = self;
             }
             _touchBarLabel.hidden = NO;
             _shortcutField.hidden = YES;
             break;
         case iTermEditKeyActionWindowControllerModeTouchBarItem:
             _keyboardShortcutLabel.stringValue = @"Touch Bar Label";
+            _touchBarLabel.delegate = self;
             _touchBarLabel.hidden = NO;
             _shortcutField.hidden = YES;
             break;
@@ -241,9 +360,14 @@
     BOOL colorPresetsLabelHidden = YES;
     BOOL colorPresetsPopupHidden = YES;
     BOOL pasteSpecialHidden = YES;
+    BOOL snippetsHidden = YES;
     id<NSTextFieldDelegate> parameterDelegate = nil;
 
     switch (tag) {
+        case KEY_ACTION_SEND_SNIPPET:
+            snippetsHidden = NO;
+            break;
+
         case KEY_ACTION_HEX_CODE:
             parameterHidden = NO;
             [[_parameter cell] setPlaceholderString:@"ex: 0x7f 0x20"];
@@ -337,6 +461,7 @@
     _shortcutField.disableKeyRemapping = shortcutFieldDisableKeyRemapping;
     [_colorPresetsLabel setHidden:colorPresetsLabelHidden];
     [_colorPresetsPopup setHidden:colorPresetsPopupHidden];
+    [_snippetsPopup setHidden:snippetsHidden];
     [self setPasteSpecialHidden:pasteSpecialHidden];
     _parameter.delegate = parameterDelegate;
     if (!parameterDelegate && _functionCallDelegate) {
@@ -351,6 +476,7 @@
             !_profilePopup.isHidden ||
             !_menuToSelectPopup.isHidden ||
             !_colorPresetsPopup.isHidden ||
+            !_snippetsPopup.isHidden ||
             !_pasteSpecialViewContainer.isHidden ||
             !_parameterLabel.isHidden ||
             !_selectionMovementUnit.isHidden);
@@ -416,12 +542,12 @@
 + (void)populatePopUpButtonWithMenuItems:(NSPopUpButton *)button
                            selectedTitle:(NSString *)selectedValue
                               identifier:(NSString *)identifier {
-    [self recursiveAddMenu:[NSApp mainMenu] toButtonMenu:[button menu] depth:0];
+    [self recursiveAddMenu:[NSApp mainMenu] toButtonMenu:[button menu] depth:0 ancestors:@[]];
     if (selectedValue) {
         NSMenuItem *theItem = [[button menu] itemWithTitle:selectedValue];
         if (theItem) {
             [button setTitle:selectedValue];
-            [theItem setState:NSOnState];
+            [theItem setState:NSControlStateValueOn];
         }
     }
 }
@@ -434,48 +560,76 @@
     return ([item.title isMatchedByRegex:@"^\\d+\\. " ]);
 }
 
++ (BOOL)ancestorsContainsProfilesMenuItem:(NSArray<NSMenuItem *> *)ancestors {
+    if (ancestors.count == 0) {
+        return NO;
+    }
+    return [ancestors[0].identifier isEqualToString:@".Profiles"];
+}
+
 + (void)recursiveAddMenu:(NSMenu *)menu
             toButtonMenu:(NSMenu *)buttonMenu
-                   depth:(int)depth{
-    for (NSMenuItem* item in [menu itemArray]) {
-        if ([item isSeparatorItem]) {
+                   depth:(int)depth
+               ancestors:(NSArray<NSMenuItem *> *)ancestors {
+    const BOOL descendsFromProfiles = [self ancestorsContainsProfilesMenuItem:ancestors];
+    for (NSMenuItem *item in [menu itemArray]) {
+        if (item.isSeparatorItem) {
             continue;
         }
-        if ([[item title] isEqualToString:@"Services"] ||  // exclude services menu
+        if ([item.title isEqualToString:@"Services"] ||  // exclude services menu
             [self item:item isWindowInWindowsMenu:menu]) {  // exclude windows in window menu
             continue;
         }
         NSMenuItem *theItem = [[NSMenuItem alloc] init];
-        [theItem setTitle:[item title]];
+
+        if (([item.identifier hasPrefix:iTermProfileModelNewTabMenuItemIdentifierPrefix] ||
+             [item.identifier hasPrefix:iTermProfileModelNewWindowMenuItemIdentifierPrefix]) &&
+            descendsFromProfiles && !item.hasSubmenu) {
+            if (item.isAlternate) {
+                theItem.title = [NSString stringWithFormat:@"%@ — New Window", item.title];
+            } else {
+                theItem.title = [NSString stringWithFormat:@"%@ — New Tab", item.title];
+            }
+        } else {
+            theItem.title = item.title;
+        }
         theItem.identifier = item.identifier;
-        [theItem setIndentationLevel:depth];
-        if ([item hasSubmenu]) {
-            if (depth == 0 && [[buttonMenu itemArray] count]) {
+        theItem.indentationLevel = depth;
+        if (item.hasSubmenu) {
+            if (depth == 0 && buttonMenu.itemArray.count) {
                 [buttonMenu addItem:[NSMenuItem separatorItem]];
             }
-            [theItem setEnabled:NO];
+            theItem.enabled = NO;
             [buttonMenu addItem:theItem];
-            [self recursiveAddMenu:[item submenu] toButtonMenu:buttonMenu depth:depth + 1];
+            [self recursiveAddMenu:item.submenu
+                      toButtonMenu:buttonMenu
+                             depth:depth + 1
+                         ancestors:[ancestors arrayByAddingObject:item]];
         } else {
             [buttonMenu addItem:theItem];
         }
     }
 }
 
-
-#pragma mark - Actions
-
-- (IBAction)actionChanged:(id)sender {
-    [_actionPopup setTitle:[[sender selectedItem] title]];
-    NSString *guid = [[_profilePopup selectedItem] representedObject];
-    [_profilePopup populateWithProfilesSelectingGuid:guid];
-    [_colorPresetsPopup loadColorPresetsSelecting:_colorPresetsPopup.selectedItem.representedObject];
-    [[self class] populatePopUpButtonWithMenuItems:_menuToSelectPopup
-                                     selectedTitle:[[_menuToSelectPopup selectedItem] title]
-                                        identifier:_menuToSelectPopup.selectedItem.identifier];
-    [self updateViewsAnimated:YES];
+- (BOOL)shouldEnableOK {
+    switch (self.mode) {
+        case iTermEditKeyActionWindowControllerModeUnbound:
+            break;
+        case iTermEditKeyActionWindowControllerModeTouchBarItem:
+            if (!_touchBarLabel.stringValue.length) {
+                return NO;
+            }
+            break;
+        case iTermEditKeyActionWindowControllerModeKeyboardShortcut:
+            if (!self.currentKeystroke) {
+                return NO;
+            }
+            break;
+    }
+    return YES;
 }
 
+#pragma mark - Actions
 
 - (IBAction)ok:(id)sender {
     switch (self.mode) {
@@ -484,20 +638,22 @@
             break;
         case iTermEditKeyActionWindowControllerModeTouchBarItem:
             if (!_touchBarLabel.stringValue.length) {
+                DLog(@"Beep: empty touch bar label");
                 NSBeep();
                 return;
             }
             self.label = _touchBarLabel.stringValue;
             break;
         case iTermEditKeyActionWindowControllerModeKeyboardShortcut:
-            if (!self.currentKeyCombination) {
+            if (!self.currentKeystroke) {
+                DLog(@"Beep: no key combo");
                 NSBeep();
                 return;
             }
             break;
     }
 
-    self.action = [[_actionPopup selectedItem] tag];
+    self.action = _comboView.selectedTag;
 
     switch (self.action) {
         case KEY_ACTION_SELECT_MENU_ITEM:
@@ -507,7 +663,6 @@
                 self.parameterValue = [[_menuToSelectPopup selectedItem] title];
             }
             break;
-
 
         case KEY_ACTION_SPLIT_HORIZONTALLY_WITH_PROFILE:
         case KEY_ACTION_SPLIT_VERTICALLY_WITH_PROFILE:
@@ -519,6 +674,10 @@
 
         case KEY_ACTION_LOAD_COLOR_PRESET:
             self.parameterValue = [[_colorPresetsPopup selectedItem] title];
+            break;
+
+        case KEY_ACTION_SEND_SNIPPET:
+            self.parameterValue = [[_snippetsPopup selectedItem] representedObject];
             break;
 
         case KEY_ACTION_PASTE_SPECIAL_FROM_SELECTION:
@@ -544,6 +703,25 @@
 - (IBAction)cancel:(id)sender {
     self.ok = NO;
     [self.window.sheetParent endSheet:self.window];
+}
+
+#pragma mark - iTermSearchableComboViewDelegate
+
+- (void)searchableComboView:(iTermSearchableComboView *)view didSelectItem:(iTermSearchableComboViewItem *)didSelectItem {
+    NSString *guid = [[_profilePopup selectedItem] representedObject];
+    [_profilePopup populateWithProfilesSelectingGuid:guid];
+    [_colorPresetsPopup loadColorPresetsSelecting:_colorPresetsPopup.selectedItem.representedObject];
+    [_snippetsPopup populateWithSnippetsSelectingActionKey:_snippetsPopup.selectedItem.representedObject];
+    [[self class] populatePopUpButtonWithMenuItems:_menuToSelectPopup
+                                     selectedTitle:[[_menuToSelectPopup selectedItem] title]
+                                        identifier:_menuToSelectPopup.selectedItem.identifier];
+    [self updateViewsAnimated:YES];
+}
+
+#pragma mark - NSTextEditing
+
+- (void)controlTextDidChange:(NSNotification *)notification {
+    _okButton.enabled = [self shouldEnableOK];
 }
 
 @end

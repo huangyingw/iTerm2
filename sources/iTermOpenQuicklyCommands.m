@@ -57,6 +57,14 @@
     return NO;
 }
 
+- (BOOL)supportsAction {
+    return NO;
+}
+
+- (BOOL)supportsSnippet {
+    return NO;
+}
+
 @end
 
 @implementation iTermOpenQuicklyWindowArrangementCommand
@@ -181,5 +189,44 @@
     return YES;
 }
 
+- (BOOL)supportsAction {
+    return YES;
+}
+
+- (BOOL)supportsSnippet {
+    return YES;
+}
+
 @end
 
+@implementation iTermOpenQuicklyActionCommand
+
++ (NSString *)restrictionDescription {
+    return @"perform action";
+}
+
++ (NSString *)command {
+    return @":";
+}
+
+- (BOOL)supportsAction {
+    return YES;
+}
+
+@end
+
+@implementation iTermOpenQuicklySnippetCommand
+
++ (NSString *)restrictionDescription {
+    return @"send snippet";
+}
+
++ (NSString *)command {
+    return @".";
+}
+
+- (BOOL)supportsSnippet {
+    return YES;
+}
+
+@end

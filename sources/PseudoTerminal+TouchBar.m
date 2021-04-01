@@ -10,16 +10,20 @@
 #import "PseudoTerminal+Private.h"
 
 #import "DebugLogging.h"
+#import "NSArray+iTerm.h"
 #import "NSDictionary+iTerm.h"
 #import "NSImage+iTerm.h"
 #import "NSStringITerm.h"
 #import "iTermAdvancedSettingsModel.h"
 #import "iTermApplication.h"
 #import "iTermColorPresets.h"
-#import "iTermKeyBindingMgr.h"
+#import "iTermKeyBindingAction.h"
+#import "iTermKeystroke.h"
 #import "iTermRootTerminalView.h"
 #import "iTermSystemVersion.h"
 #import "iTermTouchBarButton.h"
+#import "iTermTouchbarMappings.h"
+#import "iTermVariableScope+Tab.h"
 #import "PTYTab.h"
 
 static NSString *const iTermTabBarTouchBarIdentifier = @"tab bar";
@@ -141,7 +145,8 @@ ITERM_IGNORE_PARTIAL_BEGIN
                 [scrubber setSelectedIndex:[self.tabs indexOfObject:self.currentTab]];
             });
         }
-        NSArray *ids = @[ iTermTouchBarIdentifierManPage,
+        NSArray *ids = @[ NSTouchBarItemIdentifierCharacterPicker,
+                          iTermTouchBarIdentifierManPage,
                           iTermTouchBarIdentifierColorPreset,
                           iTermTouchBarIdentifierFunctionKeys,
                           iTermTouchBarFunctionKeysScrollView,
@@ -151,10 +156,74 @@ ITERM_IGNORE_PARTIAL_BEGIN
                           iTermTouchBarIdentifierPreviousMark,
                           iTermTouchBarIdentifierAutocomplete,
                           iTermTouchBarIdentifierStatus ];
-        ids = [ids arrayByAddingObjectsFromArray:[iTermKeyBindingMgr sortedTouchBarKeysInDictionary:[iTermKeyBindingMgr globalTouchBarMap]]];
+        NSArray<iTermTouchbarItem *> *items = [iTermTouchbarMappings sortedTouchbarItemsInDictionary:[iTermTouchbarMappings globalTouchBarMap]];
+        NSArray<NSString *> *customIDs = [items mapWithBlock:^id(iTermTouchbarItem *anObject) {
+            return anObject.identifier;
+        }];
+        customIDs = [self idsByAddingVersions:customIDs];
+        ids = [ids arrayByAddingObjectsFromArray:customIDs];
         self.touchBar.customizationAllowedItemIdentifiers = ids;
         [self updateTouchBarFunctionKeyLabels];
     }
+}
+
+// Returns the version for a global touch bar identifier by checking if its
+// value has changed and incrementing the version if so, otherwise returning
+// the last version. If it's never been seen before then it's assigned version
+// 0.
+//
+// This scheme is used because the touch bar doesn't recognize changes to
+// existing identifiers. If you modify a custom touch bar button then you also
+// have to change its identifier. Prefs has no notion of versioning because
+// that's never been needed before. So the touch bar code imposes its own
+// notion of versions on it.
+//
+// We have to make sure to remove the version number (if present) before using
+// an identifier from the touch bar APIs.
+//
+// The version table is global because custom touch bar items are global.
+//
+// Versioned identifiers will be saved, which breaks downgrading to an older
+// version of iTerm2. Backward compatibility is preserved because the code to
+// remove a version number does nothing if one is missing.
+- (NSNumber *)versionFor:(NSString *)identifier withValue:(NSDictionary *)binding {
+    assert(binding);
+    static NSMutableDictionary<NSString *, NSDictionary *> *table;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        table = [[NSMutableDictionary alloc] init];
+    });
+    NSString *const bindingKey = @"binding";
+    NSString *const versionKey = @"version";
+    NSDictionary *const entry = table[identifier];
+    NSDictionary *const existingBinding = entry[bindingKey];
+    if (existingBinding && [existingBinding isEqual:binding]) {
+        return entry[versionKey];
+    }
+    if (!existingBinding) {
+        table[identifier] = @{ bindingKey: binding, versionKey: @0 };
+        return @0;
+    }
+    NSNumber *const lastVersion = entry[versionKey];
+    NSNumber *const currentVersion = @(lastVersion.integerValue + 1);
+    table[identifier] = @{ bindingKey: binding, versionKey: currentVersion };
+    return currentVersion;
+}
+
+- (NSArray<NSString *> *)idsByAddingVersions:(NSArray<NSString *> *)unversioned {
+    NSDictionary *map = [iTermTouchbarMappings globalTouchBarMap];
+    return [unversioned mapWithBlock:^id(NSString *string) {
+        NSDictionary *binding = map[string];
+        return [string stringByAppendingFormat:@"/v%@", [self versionFor:string withValue:binding]];
+    }];
+}
+
+- (NSString *)idByRemovingVersion:(NSString *)identifier {
+    NSRange range = [identifier rangeOfString:@"/v"];
+    if (range.location == NSNotFound) {
+        return identifier;
+    }
+    return [identifier substringToIndex:range.location];
 }
 
 - (NSTouchBar *)amendTouchBar:(NSTouchBar *)touchBar {
@@ -440,29 +509,46 @@ ITERM_IGNORE_PARTIAL_BEGIN
         }
         return item;
     }
-    NSDictionary *map = [iTermKeyBindingMgr globalTouchBarMap];
-    NSDictionary *binding = map[identifier];
+    
+    // Custom action
+    NSString *unversionedIdentifier = [self idByRemovingVersion:identifier];
+    NSDictionary *map = [iTermTouchbarMappings globalTouchBarMap];
+    NSDictionary *binding = map[unversionedIdentifier];
 
     if (!binding) {
         return nil;
     }
+    iTermKeyBindingAction *action = [iTermKeyBindingAction withDictionary:binding];
+    if (!action) {
+        return nil;
+    }
     NSCustomTouchBarItem *item = [[[NSCustomTouchBarItem alloc] initWithIdentifier:identifier] autorelease];
-    iTermTouchBarButton *button = [iTermTouchBarButton buttonWithTitle:[iTermKeyBindingMgr touchBarLabelForBinding:binding]
+    iTermTouchBarButton *button = [iTermTouchBarButton buttonWithTitle:action.label
                                                                 target:self
                                                                 action:@selector(touchBarItemSelected:)];
     button.keyBindingAction = binding;
     item.view = button;
     item.view.identifier = identifier;
-    item.customizationLabel = [iTermKeyBindingMgr formatAction:binding];
+    item.customizationLabel = action.displayName;
 
     return item;
 }
 
 - (void)touchBarItemSelected:(iTermTouchBarButton *)sender {
-    NSDictionary *binding = sender.keyBindingAction;
-    [self.currentSession performKeyBindingAction:[iTermKeyBindingMgr actionForTouchBarItemBinding:binding]
-                                       parameter:[iTermKeyBindingMgr parameterForTouchBarItemBinding:binding]
-                                           event:[NSApp currentEvent]];
+    NSDictionary *map = [iTermTouchbarMappings globalTouchBarMap];
+    NSString *unversionedIdentifier = [self idByRemovingVersion:sender.identifier];
+    NSDictionary *binding = unversionedIdentifier ? map[unversionedIdentifier] : nil;
+    if (!binding) {
+        // The item has been deleted from prefs but the touch bar retains
+        // existing config until the user edits it.
+        binding = sender.keyBindingAction;
+    }
+    iTermKeyBindingAction *action = [iTermKeyBindingAction withDictionary:binding];
+    if (!action) {
+        DLog(@"Bogus binding: %@", binding);
+        return;
+    }
+    [self.currentSession performKeyBindingAction:action event:[NSApp currentEvent]];
 }
 
 - (void)addMarkTouchBarItemSelected:(id)sender {
@@ -470,22 +556,23 @@ ITERM_IGNORE_PARTIAL_BEGIN
 }
 
 - (void)nextMarkTouchBarItemSelected:(id)sender {
-    [self.currentSession nextMarkOrNote];
+    [self.currentSession nextMark];
 }
 
 - (void)previousMarkTouchBarItemSelected:(id)sender {
-    [self.currentSession previousMarkOrNote];
+    [self.currentSession previousMark];
 }
 
 - (void)manPageTouchBarItemSelected:(iTermTouchBarButton *)sender {
     NSString *command = sender.keyBindingAction[@"command"];
     if (command) {
         [[iTermController sharedInstance] openSingleUseWindowWithCommand:command
-                                                               arguments:nil
                                                                   inject:nil
                                                              environment:nil
                                                                      pwd:nil
-                                                                 options:iTermSingleUseWindowOptionsDoNotEscapeArguments
+                                                                 options:(iTermSingleUseWindowOptionsDoNotEscapeArguments |
+                                                                          iTermSingleUseWindowOptionsCloseOnTermination)
+                                                          didMakeSession:nil
                                                               completion:nil];
     }
 }
@@ -580,7 +667,8 @@ ITERM_IGNORE_PARTIAL_BEGIN
 
 - (NSString *)scrubber:(NSScrubber *)scrubber labelAtIndex:(NSInteger)index {
     NSArray<PTYTab *> *tabs = self.tabs;
-    return index < tabs.count ?  self.tabs[index].activeSession.name : @"";
+    PTYTab *tab = index < tabs.count ? self.tabs[index] : nil;
+    return tab.variablesScope.title ?: @"";
 }
 
 - (__kindof NSScrubberItemView *)scrubber:(NSScrubber *)scrubber viewForItemAtIndex:(NSInteger)index {

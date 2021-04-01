@@ -44,6 +44,7 @@ typedef NS_ENUM(NSInteger, iTermTabBarFlashState) {
         if (@available(macOS 10.14, *)) {
             self.showAddTabButton = YES;
         }
+        self.selectsTabsOnMouseDown = [iTermAdvancedSettingsModel selectsTabsOnMouseDown];
     }
     return self;
 }
@@ -94,7 +95,7 @@ typedef NS_ENUM(NSInteger, iTermTabBarFlashState) {
 }
 
 - (void)setAlphaValue:(CGFloat)alphaValue animated:(BOOL)animated {
-    if ([self.superview isKindOfClass:[NSVisualEffectView class]]) {
+    if ([self.superview conformsToProtocol:@protocol(iTermTabBarControlViewContainer)]) {
         if (animated) {
             self.superview.animator.alphaValue = alphaValue;
         } else {

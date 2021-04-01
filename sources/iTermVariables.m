@@ -61,6 +61,7 @@ NSString *const iTermVariableKeySessionIconName = @"terminalIconName";
 NSString *const iTermVariableKeySessionTriggerName = @"triggerName";
 NSString *const iTermVariableKeySessionWindowName = @"terminalWindowName";
 NSString *const iTermVariableKeySessionJob = @"jobName";
+NSString *const iTermVariableKeySessionProcessTitle = @"processTitle";
 NSString *const iTermVariableKeySessionCommandLine = @"commandLine";
 NSString *const iTermVariableKeySessionPresentationName = @"presentationName";
 NSString *const iTermVariableKeySessionTmuxPaneTitle = @"tmuxPaneTitle";
@@ -76,6 +77,10 @@ NSString *const iTermVariableKeySessionTmuxStatusRight = @"tmuxStatusRight";
 NSString *const iTermVariableKeySessionMouseReportingMode = @"mouseReportingMode";
 NSString *const iTermVariableKeySessionBadge = @"badge";
 NSString *const iTermVariableKeySessionTab = @"tab";
+NSString *const iTermVariableKeySessionSelection = @"selection";
+NSString *const iTermVariableKeySessionSelectionLength = @"selectionLength";
+NSString *const iTermVariableKeySessionParent = @"parentSession";
+NSString *const iTermVariableKeySessionBellCount = @"bellCount";
 
 #pragma mark - Window Context
 
@@ -573,6 +578,7 @@ NSString *const iTermVariableKeyWindowNumber = @"number";
     NSMutableDictionary<NSString *, NSString *> *result = [NSMutableDictionary dictionary];
     for (NSString *name in _values) {
         id value = _values[name];
+        assert(value != self);
         // Weak variables are intentionally not unwrapped here to avoid getting stuck in a cycle.
         iTermVariables *child = [iTermVariables castFrom:value];
         if (child) {
@@ -596,6 +602,15 @@ NSString *const iTermVariableKeyWindowNumber = @"number";
 
 - (NSDictionary *)dictionaryValue {
     return [self dictionaryInScope:nil];
+}
+
+- (NSDictionary *)encodableDictionaryValue {
+    return [self.dictionaryValue filteredWithBlock:^BOOL(id key, id value) {
+        if ([value isKindOfClass:[iTermWeakVariables class]]) {
+            return NO;
+        }
+        return YES;
+    }];
 }
 
 @end

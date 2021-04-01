@@ -77,6 +77,10 @@ NSString *const iTermStatusBarSwiftyStringComponentExpressionKey = @"expression"
     [self updateTextFieldIfNeeded];
 }
 
+- (BOOL)statusBarComponentIsEmpty {
+    return _value.length == 0;
+}
+
 - (NSTextField *)newTextField {
     NSTextField *textField = [super newTextField];
 
@@ -128,7 +132,7 @@ NSString *const iTermStatusBarSwiftyStringComponentExpressionKey = @"expression"
     static NSString *ladybug = @"🐞";
     if (error != nil) {
         NSString *message = [NSString stringWithFormat:@"Error while evaluating “%@”:\n%@", expression, error.localizedDescription];
-        [[iTermScriptHistoryEntry globalEntry] addOutput:message];
+        [[iTermScriptHistoryEntry globalEntry] addOutput:message completion:^{}];
         _errorReason = message;
         return ladybug;
     } else if (newValue != ladybug) {

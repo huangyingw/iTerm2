@@ -8,6 +8,7 @@
 
 #import "SIGArchiveChunk.h"
 
+#import "SIGArchiveCommon.h"
 #import "SIGError.h"
 
 static const NSInteger SIGArchiveChunkOverhead = sizeof(long long) * 2;
@@ -30,18 +31,18 @@ NSString *const SIGArchiveHeaderMagicString = @"signed-archive";
     }
     
     SIGArchiveTag tag;
-    if (![self readIntegerFromFileHandle:fileHandle fromOffset:offset value:(long long *)&tag error:error]) {
+    if (![self readNonnegativeIntegerFromFileHandle:fileHandle fromOffset:offset value:(long long *)&tag error:error]) {
         return nil;
     }
 
     long long length;
-    if (![self readIntegerFromFileHandle:fileHandle fromOffset:offset + sizeof(long long) value:(long long *)&length error:error]) {
+    if (![self readNonnegativeIntegerFromFileHandle:fileHandle fromOffset:SIGAddNonnegativeInt64s(offset, sizeof(long long)) value:(long long *)&length error:error]) {
         return nil;
     }
     
     SIGArchiveChunk *chunk = [[SIGArchiveChunk alloc] initWithTag:tag
                                                            length:length
-                                                           offset:offset + SIGArchiveChunkOverhead];
+                                                           offset:SIGAddNonnegativeInt64s(offset, SIGArchiveChunkOverhead)];
     if (!chunk) {
         if (error) {
             *error = [SIGError errorWithCode:SIGErrorCodeUnknown
@@ -58,6 +59,8 @@ NSString *const SIGArchiveHeaderMagicString = @"signed-archive";
 + (NSData *)readDataFromFileHandle:(NSFileHandle *)fileHandle
                     expectedLength:(long long)expectedLength
                              error:(out NSError * _Nullable __autoreleasing * _Nullable)error {
+    assert(expectedLength >= 0);
+
     NSError *readError = nil;
     NSData *data = nil;
     @try {
@@ -87,6 +90,9 @@ NSString *const SIGArchiveHeaderMagicString = @"signed-archive";
                         fromOffset:(NSInteger)offset
                     expectedLength:(long long)expectedLength
                              error:(out NSError * _Nullable __autoreleasing * _Nullable)error {
+    assert(offset >= 0);
+    assert(expectedLength >= 0);
+
     @try {
         [fileHandle seekToFileOffset:offset];
     } @catch (NSException *exception) {
@@ -103,10 +109,10 @@ NSString *const SIGArchiveHeaderMagicString = @"signed-archive";
                                   error:error];
 }
 
-+ (BOOL)readIntegerFromFileHandle:(NSFileHandle *)fileHandle
-                       fromOffset:(NSInteger)offset
-                            value:(out long long *)valuePointer
-                            error:(out NSError * _Nullable __autoreleasing * _Nullable)error {
++ (BOOL)readNonnegativeIntegerFromFileHandle:(NSFileHandle *)fileHandle
+                                  fromOffset:(NSInteger)offset
+                                       value:(out long long *)valuePointer
+                                       error:(out NSError * _Nullable __autoreleasing * _Nullable)error {
     NSData *data = [self readDataFromFileHandle:fileHandle
                                      fromOffset:offset
                                  expectedLength:sizeof(long long)
@@ -115,7 +121,11 @@ NSString *const SIGArchiveHeaderMagicString = @"signed-archive";
         long long networkOrder;
         assert(data.length == sizeof(networkOrder));
         memmove(&networkOrder, data.bytes, data.length);
-        *valuePointer = ntohll(networkOrder);
+        const long long temp = ntohll(networkOrder);
+        if (temp < 0) {
+            return NO;
+        }
+        *valuePointer = temp;
         return YES;
     }
 
@@ -127,6 +137,8 @@ NSString *const SIGArchiveHeaderMagicString = @"signed-archive";
                      offset:(long long)offset {
     self = [super init];
     if (self) {
+        assert(length >= 0);
+        assert(offset >= 0);
         _tag = tag;
         _payloadLength = length;
         _payloadOffset = offset;
@@ -135,7 +147,7 @@ NSString *const SIGArchiveHeaderMagicString = @"signed-archive";
 }
 
 - (long long)chunkLength {
-    return self.payloadLength + SIGArchiveChunkOverhead;
+    return SIGAddNonnegativeInt64s(self.payloadLength, SIGArchiveChunkOverhead);
 }
 
 - (NSData *)data:(out NSError * _Nullable __autoreleasing * _Nullable)error {
@@ -220,7 +232,7 @@ NSString *const SIGArchiveHeaderMagicString = @"signed-archive";
             }
             return NO;
         }
-        totalNumberOfBytes += numberOfBytesRead;
+        totalNumberOfBytes = SIGAddNonnegativeInt64s(totalNumberOfBytes, numberOfBytesRead);
         if (totalNumberOfBytes > self.payloadLength) {
             if (error) {
                 *error = [SIGError errorWithCode:SIGErrorCodeConsistency

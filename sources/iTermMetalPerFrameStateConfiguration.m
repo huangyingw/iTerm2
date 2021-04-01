@@ -10,6 +10,7 @@
 #import "PTYTextView.h"
 #import "VT100Terminal.h"
 #import "iTermController.h"
+#import "iTermMetalPerFrameState.h"
 #import "iTermTextDrawingHelper.h"
 
 static vector_float4 VectorForColor(NSColor *color) {
@@ -19,7 +20,8 @@ static vector_float4 VectorForColor(NSColor *color) {
 @implementation iTermMetalPerFrameStateConfiguration
 
 - (void)loadSettingsWithDrawingHelper:(iTermTextDrawingHelper *)drawingHelper
-                             textView:(PTYTextView *)textView {
+                             textView:(PTYTextView *)textView
+                                 glue:(id<iTermMetalPerFrameStateDelegate>)glue {
     _cellSize = drawingHelper.cellSize;
     _cellSizeWithoutSpacing = drawingHelper.cellSizeWithoutSpacing;
     _scale = textView.window.backingScaleFactor;
@@ -34,7 +36,8 @@ static vector_float4 VectorForColor(NSColor *color) {
     _useItalicFont = textView.useItalicFont;
     _useNonAsciiFont = textView.useNonAsciiFont;
     _reverseVideo = textView.dataSource.terminal.reverseVideo;
-    _useBoldColor = textView.useBoldColor;
+    _useCustomBoldColor = textView.useCustomBoldColor;
+    _brightenBold = textView.brightenBold;
     _thinStrokes = textView.thinStrokes;
     _isRetina = drawingHelper.isRetina;
     _isInKeyWindow = [textView isInKeyWindow];
@@ -42,8 +45,9 @@ static vector_float4 VectorForColor(NSColor *color) {
     _shouldDrawFilledInCursor = ([textView.delegate textViewShouldDrawFilledInCursor] || textView.keyFocusStolenCount);
     _blinkAllowed = textView.blinkAllowed;
     _blinkingItemsVisible = drawingHelper.blinkingItemsVisible;
-    _asciiAntialias = drawingHelper.asciiAntiAlias;
-    _nonasciiAntialias = _useNonAsciiFont ? drawingHelper.nonAsciiAntiAlias : _asciiAntialias;
+    const BOOL forceAA = (drawingHelper.forceAntialiasingOnRetina && drawingHelper.isRetina);
+    _asciiAntialias = drawingHelper.asciiAntiAlias || forceAA;
+    _nonasciiAntialias = (_useNonAsciiFont ? drawingHelper.nonAsciiAntiAlias : _asciiAntialias)  || forceAA;
     _useNativePowerlineGlyphs = drawingHelper.useNativePowerlineGlyphs;
     _showBroadcastStripes = drawingHelper.showStripes;
     _processedDefaultBackgroundColor = [drawingHelper defaultBackgroundColor];
@@ -59,8 +63,8 @@ static vector_float4 VectorForColor(NSColor *color) {
     _cursorGuideColor = drawingHelper.cursorGuideColor;
 
     // Background image
-    _backgroundImageBlending = textView.blend;
-    _backgroundImageMode = textView.delegate.backgroundImageMode;
+    _backgroundImageBlend = [glue backgroundImageBlend];
+    _backgroundImageMode = [glue backroundImageMode];
     
     _edgeInsets = textView.delegate.textViewEdgeInsets;
     _edgeInsets.left++;

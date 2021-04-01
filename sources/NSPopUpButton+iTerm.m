@@ -9,6 +9,8 @@
 #import "NSPopUpButton+iTerm.h"
 #import "ITAddressBookMgr.h"
 #import "iTermColorPresets.h"
+#import "iTermSnippetsModel.h"
+#import "NSArray+iTerm.h"
 #import "ProfilesColorsPreferencesViewController.h"
 #import "ProfileModel.h"
 
@@ -39,6 +41,25 @@
         i++;
     }
     [self selectItemAtIndex:selectedIndex];
+}
+
+- (void)populateWithSnippetsSelectingActionKey:(id)actionKey {
+    [self removeAllItems];
+    NSArray *sorted = [[[iTermSnippetsModel sharedInstance] snippets] sortedArrayUsingComparator:^NSComparisonResult(iTermSnippet *lhs, iTermSnippet *rhs) {
+        return [lhs.title localizedCaseInsensitiveCompare:rhs.title];
+    }];
+    __block NSInteger selectedIndex = -1;
+    [sorted enumerateObjectsUsingBlock:^(iTermSnippet *snippet, NSUInteger i, BOOL * _Nonnull stop) {
+        [self addItemWithTitle:snippet.displayTitle];
+        NSMenuItem *item = self.lastItem;
+        item.representedObject = snippet.actionKey;
+        if ([snippet matchesActionKey:actionKey]) {
+            selectedIndex = i;
+        }
+    }];
+    if (selectedIndex != -1) {
+        [self selectItemAtIndex:selectedIndex];
+    }
 }
 
 - (void)loadColorPresetsSelecting:(NSString *)presetName {

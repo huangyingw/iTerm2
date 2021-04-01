@@ -21,9 +21,6 @@
 
 #define PROFILE_BLOCK(x) [^id(Profile *profile) { return [self x:profile]; } copy]
 
-NSString *const kProfilePreferenceCommandTypeCustomValue = @"Yes";
-NSString *const kProfilePreferenceCommandTypeLoginShellValue = @"No";
-
 NSString *const kProfilePreferenceInitialDirectoryCustomValue = @"Yes";
 NSString *const kProfilePreferenceInitialDirectoryHomeValue = @"No";
 NSString *const kProfilePreferenceInitialDirectoryRecycleValue = @"Recycle";
@@ -180,7 +177,8 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
                              KEY_NON_ASCII_FONT, KEY_AWDS_TAB_OPTION, KEY_AWDS_PANE_OPTION, KEY_AWDS_WIN_OPTION,
                              KEY_SHORTCUT, KEY_ICON_PATH, KEY_CUSTOM_COMMAND, KEY_COMMAND_LINE,
                              KEY_INITIAL_TEXT, KEY_CUSTOM_DIRECTORY, KEY_WORKING_DIRECTORY,
-                             KEY_CUSTOM_WINDOW_TITLE, KEY_HOTKEY_CHARACTERS, KEY_HOTKEY_CHARACTERS_IGNORING_MODIFIERS,
+                             KEY_CUSTOM_WINDOW_TITLE, KEY_CUSTOM_TAB_TITLE,
+                             KEY_HOTKEY_CHARACTERS, KEY_HOTKEY_CHARACTERS_IGNORING_MODIFIERS,
                              KEY_LOGDIR, KEY_TERMINAL_TYPE, KEY_TITLE_FUNC, KEY_GUID,
                              KEY_ORIGINAL_GUID, KEY_AWDS_WIN_DIRECTORY, KEY_AWDS_TAB_OPTION,
                              KEY_AWDS_TAB_DIRECTORY, KEY_AWDS_PANE_OPTION, KEY_AWDS_PANE_DIRECTORY,
@@ -201,6 +199,7 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
                              KEY_SMART_CURSOR_COLOR, KEY_MINIMUM_CONTRAST, KEY_CURSOR_BOOST,
                              KEY_CURSOR_TYPE, KEY_BLINKING_CURSOR, KEY_USE_BOLD_FONT, KEY_THIN_STROKES,
                              KEY_ASCII_LIGATURES, KEY_NON_ASCII_LIGATURES, KEY_USE_BOLD_COLOR,
+                             KEY_BRIGHTEN_BOLD_TEXT,
                              KEY_BLINK_ALLOWED, KEY_USE_ITALIC_FONT, KEY_AMBIGUOUS_DOUBLE_WIDTH,
                              KEY_UNICODE_NORMALIZATION, KEY_HORIZONTAL_SPACING, KEY_VERTICAL_SPACING,
                              KEY_USE_NONASCII_FONT, KEY_TRANSPARENCY, KEY_INITIAL_USE_TRANSPARENCY,
@@ -212,6 +211,7 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
                              KEY_UNLIMITED_SCROLLBACK, KEY_SCROLLBACK_WITH_STATUS_BAR,
                              KEY_SCROLLBACK_IN_ALTERNATE_SCREEN, KEY_CHARACTER_ENCODING,
                              KEY_XTERM_MOUSE_REPORTING, KEY_XTERM_MOUSE_REPORTING_ALLOW_MOUSE_WHEEL,
+                             KEY_XTERM_MOUSE_REPORTING_ALLOW_CLICKS_AND_DRAGS,
                              KEY_UNICODE_VERSION, KEY_ALLOW_TITLE_REPORTING, KEY_ALLOW_TITLE_SETTING,
                              KEY_DISABLE_PRINTING, KEY_DISABLE_SMCUP_RMCUP, KEY_SILENCE_BELL,
                              KEY_BOOKMARK_USER_NOTIFICATIONS, KEY_SEND_BELL_ALERT, KEY_SEND_IDLE_ALERT,
@@ -220,17 +220,19 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
                              KEY_SESSION_END_ACTION, KEY_PROMPT_CLOSE,
                              KEY_UNDO_TIMEOUT, KEY_REDUCE_FLICKER, KEY_SHOW_STATUS_BAR, KEY_SEND_CODE_WHEN_IDLE,
                              KEY_IDLE_CODE, KEY_IDLE_PERIOD, KEY_OPTION_KEY_SENDS,
-                             KEY_RIGHT_OPTION_KEY_SENDS, KEY_APPLICATION_KEYPAD_ALLOWED,
+                             KEY_RIGHT_OPTION_KEY_SENDS, KEY_APPLICATION_KEYPAD_ALLOWED, KEY_ALLOW_MODIFY_OTHER_KEYS,
+                             KEY_LEFT_OPTION_KEY_CHANGEABLE, KEY_RIGHT_OPTION_KEY_CHANGEABLE,
                              KEY_PLACE_PROMPT_AT_FIRST_COLUMN, KEY_SHOW_MARK_INDICATORS,
                              KEY_POWERLINE, KEY_TRIGGERS_USE_INTERPOLATED_STRINGS,
-                             KEY_COLUMNS, KEY_ROWS, KEY_ICON, KEY_AUTOLOG, KEY_HAS_HOTKEY,
+                             KEY_COLUMNS, KEY_ROWS, KEY_ICON, KEY_AUTOLOG, KEY_PLAIN_TEXT_LOGGING, KEY_HAS_HOTKEY,
                              KEY_HIDE_AFTER_OPENING, KEY_HOTKEY_MODIFIER_FLAGS, KEY_HOTKEY_KEY_CODE,
                              KEY_HOTKEY_AUTOHIDE, KEY_HOTKEY_REOPEN_ON_ACTIVATION, KEY_HOTKEY_ANIMATE,
                              KEY_HOTKEY_FLOAT, KEY_HOTKEY_DOCK_CLICK_ACTION,
                              KEY_HOTKEY_MODIFIER_ACTIVATION, KEY_HOTKEY_ACTIVATE_WITH_MODIFIER,
                              KEY_OPEN_TOOLBELT, KEY_PREVENT_TAB, KEY_SCREEN, KEY_SET_LOCALE_VARS, KEY_SPACE,
-                             KEY_TITLE_COMPONENTS, KEY_USE_CUSTOM_WINDOW_TITLE,
-                             KEY_USE_LIBTICKIT_PROTOCOL, KEY_WINDOW_TYPE, KEY_ALLOW_PASTE_BRACKETING];
+                             KEY_TITLE_COMPONENTS, KEY_USE_CUSTOM_WINDOW_TITLE, KEY_USE_CUSTOM_TAB_TITLE,
+                             KEY_USE_LIBTICKIT_PROTOCOL, KEY_WINDOW_TYPE, KEY_ALLOW_PASTE_BRACKETING,
+                             KEY_PREVENT_APS ];
         NSArray *stringArrays = @[ KEY_TAGS, KEY_JOBS, KEY_BOUND_HOSTS ];
         NSArray *dictArrays = @[ KEY_HOTKEY_ALTERNATE_SHORTCUTS, KEY_TRIGGERS, KEY_SMART_SELECTION_RULES,
                                  ];
@@ -350,6 +352,7 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
                   KEY_ASCII_LIGATURES: @NO,
                   KEY_NON_ASCII_LIGATURES: @NO,
                   KEY_USE_BOLD_COLOR: @YES,
+                  KEY_BRIGHTEN_BOLD_TEXT: @YES,
                   KEY_BLINK_ALLOWED: @NO,
                   KEY_USE_ITALIC_FONT: @YES,
                   KEY_AMBIGUOUS_DOUBLE_WIDTH: @NO,
@@ -369,6 +372,8 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
                   KEY_WINDOW_TYPE: @(WINDOW_TYPE_NORMAL),
                   KEY_USE_CUSTOM_WINDOW_TITLE: @NO,
                   KEY_CUSTOM_WINDOW_TITLE: @"",
+                  KEY_USE_CUSTOM_TAB_TITLE: @NO,
+                  KEY_CUSTOM_TAB_TITLE: @"",
                   KEY_SCREEN: @-1,
                   KEY_SPACE: @(iTermProfileOpenInCurrentSpace),
                   KEY_DISABLE_WINDOW_RESIZING: @NO,
@@ -380,13 +385,14 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
                   KEY_POWERLINE: @NO,
                   KEY_SCROLLBACK_LINES: @1000,
                   KEY_UNLIMITED_SCROLLBACK: @NO,
-                  KEY_SCROLLBACK_WITH_STATUS_BAR: @NO,
+                  KEY_SCROLLBACK_WITH_STATUS_BAR: @YES,
                   KEY_SCROLLBACK_IN_ALTERNATE_SCREEN: @YES,
                   KEY_CHARACTER_ENCODING: @(NSUTF8StringEncoding),
                   KEY_TERMINAL_TYPE: @"xterm",
                   KEY_ANSWERBACK_STRING: @"",
                   KEY_XTERM_MOUSE_REPORTING: @NO,
                   KEY_XTERM_MOUSE_REPORTING_ALLOW_MOUSE_WHEEL: @YES,
+                  KEY_XTERM_MOUSE_REPORTING_ALLOW_CLICKS_AND_DRAGS: @YES,
                   KEY_UNICODE_VERSION: @8,
                   KEY_ALLOW_TITLE_REPORTING: @NO,
                   KEY_ALLOW_TITLE_SETTING: @YES,
@@ -408,13 +414,17 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
                   KEY_JOBS: @[],
                   KEY_REDUCE_FLICKER: @NO,
                   KEY_AUTOLOG: @NO,
+                  KEY_PLAIN_TEXT_LOGGING: @NO,
                   KEY_LOGDIR: @"",
                   KEY_SEND_CODE_WHEN_IDLE: @NO,
                   KEY_IDLE_CODE: @0,
                   KEY_IDLE_PERIOD: @60,
                   KEY_OPTION_KEY_SENDS: @(OPT_NORMAL),
                   KEY_RIGHT_OPTION_KEY_SENDS: @(OPT_NORMAL),
+                  KEY_LEFT_OPTION_KEY_CHANGEABLE: @YES,
+                  KEY_RIGHT_OPTION_KEY_CHANGEABLE: @NO,
                   KEY_APPLICATION_KEYPAD_ALLOWED: @NO,
+                  KEY_ALLOW_MODIFY_OTHER_KEYS: @NO,
                   KEY_USE_LIBTICKIT_PROTOCOL: @NO,
                   KEY_PLACE_PROMPT_AT_FIRST_COLUMN: @YES,
                   KEY_SHOW_MARK_INDICATORS: @YES,
@@ -442,6 +452,7 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
                   KEY_AWDS_WIN_OPTION: kProfilePreferenceInitialDirectoryHomeValue,
                   KEY_TMUX_PANE_TITLE: [NSNull null],
                   KEY_ALLOW_PASTE_BRACKETING: @YES,
+                  KEY_PREVENT_APS: @NO,
                   // NOTES:
                   //   * Remove deprecated values from this list.
                   //   * Update validation blocks in preceding method.
@@ -540,7 +551,8 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
                   KEY_BADGE_MAX_WIDTH: PROFILE_BLOCK(badgeMaxWidth),
                   KEY_BADGE_MAX_HEIGHT: PROFILE_BLOCK(badgeMaxHeight),
                   KEY_BADGE_FONT: PROFILE_BLOCK(badgeFont),
-                  KEY_WINDOW_TYPE: PROFILE_BLOCK(windowType)
+                  KEY_WINDOW_TYPE: PROFILE_BLOCK(windowType),
+                  KEY_BRIGHTEN_BOLD_TEXT: PROFILE_BLOCK(brightenBoldText)
                 };
     }
     return dict;
@@ -684,6 +696,16 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
         return nil;
     }
     return @(iTermThemedWindowType(number.intValue));
+}
+
++ (id)brightenBoldText:(Profile *)profile {
+    NSNumber *number = profile[KEY_BRIGHTEN_BOLD_TEXT];
+    if (number) {
+        return number;
+    }
+    // Migration path. This used to be one and the same as "use bold color". If you've never tweaked
+    // this setting directly, fall back to the "use bold color" setting.
+    return [self objectForKey:KEY_USE_BOLD_COLOR inProfile:profile];
 }
 
 + (id)badgeFont:(Profile *)profile {

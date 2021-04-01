@@ -7,7 +7,9 @@
 #import "iTermCarbonHotKeyController.h"
 #import "iTermController.h"
 #import "iTermPreferences.h"
+#import "iTermPresentationController.h"
 #import "iTermProfilePreferences.h"
+#import "iTermSessionLauncher.h"
 #import "NSArray+iTerm.h"
 #import "NSScreen+iTerm.h"
 #import "PseudoTerminal.h"
@@ -39,7 +41,7 @@ static NSString *const kArrangement = @"Arrangement";
 
 @interface iTermProfileHotKey()
 @property(nonatomic, copy) NSString *profileGuid;
-@property(nonatomic, retain) NSDictionary *restorableState;
+@property(nonatomic, retain) NSDictionary *restorableState;  // non-sqlite legacy
 @property(nonatomic, readwrite) BOOL rollingIn;
 @property(nonatomic) BOOL birthingWindow;
 @property(nonatomic, retain) NSWindowController *windowControllerBeingBorn;
@@ -96,6 +98,10 @@ static NSString *const kArrangement = @"Arrangement";
                                                  selector:@selector(windowDidBecomeKey:)
                                                      name:NSWindowDidBecomeKeyNotification
                                                    object:nil];
+        [[[NSWorkspace sharedWorkspace] notificationCenter] addObserver:self
+                                                               selector:@selector(activeSpaceDidChange:)
+                                                                   name:NSWorkspaceActiveSpaceDidChangeNotification
+                                                                 object:nil];
     }
     return self;
 }
@@ -122,37 +128,47 @@ static NSString *const kArrangement = @"Arrangement";
     return [[ProfileModel sharedInstance] bookmarkWithGuid:_profileGuid];
 }
 
-- (void)createWindow {
-    [self createWindowWithURL:nil];
+- (void)createWindowWithCompletion:(void (^)(void))completion {
+    [self createWindowWithURL:nil
+                   completion:completion];
 }
 
-- (void)createWindowWithURL:(NSURL *)url {
+- (void)createWindowWithURL:(NSURL *)url completion:(void (^)(void))completion {
     if (self.windowController.weaklyReferencedObject) {
+        if (completion) {
+            completion();
+        }
         return;
     }
 
     DLog(@"Create new window controller for profile hotkey");
     PseudoTerminal *windowController = [self windowControllerFromRestorableState];
-    if (windowController) {
-        if (url) {
-            [[iTermController sharedInstance] launchBookmark:self.profile
-                                                  inTerminal:windowController
-                                                     withURL:url.absoluteString
-                                            hotkeyWindowType:[self hotkeyWindowType]
-                                                     makeKey:YES
-                                                 canActivate:YES
-                                          respectTabbingMode:NO
-                                                     command:nil
-                                                       block:nil
-                                                 synchronous:NO
-                                                  completion:nil];
-        }
-    } else {
-        windowController = [self windowControllerFromProfile:[self profile] url:url];
-    }
     [_windowController release];
     _windowController = nil;
-    self.windowController = [windowController weakSelf];
+    if (windowController) {
+        if (url) {
+            [iTermSessionLauncher launchBookmark:self.profile
+                                      inTerminal:windowController
+                                         withURL:url.absoluteString
+                                hotkeyWindowType:[self hotkeyWindowType]
+                                         makeKey:YES
+                                     canActivate:YES
+                              respectTabbingMode:NO
+                                         command:nil
+                                     makeSession:nil
+                                  didMakeSession:nil
+                                      completion:nil];
+        }
+        self.windowController = [windowController weakSelf];
+        completion();
+        return;
+    }
+    [self getWindowControllerFromProfile:[self profile] url:url completion:^(PseudoTerminal *windowController) {
+        self.windowController = [windowController weakSelf];
+        if (completion) {
+            completion();
+        }
+    }];
 }
 
 - (void)setWindowController:(PseudoTerminal<iTermWeakReference> *)windowController {
@@ -186,6 +202,40 @@ static NSString *const kArrangement = @"Arrangement";
     if (before != after && after == NSNormalWindowLevel) {
         [[NSApp keyWindow] makeKeyAndOrderFront:nil];
     }
+}
+
+- (void)activeSpaceDidChange:(NSNotification *)notification {
+    DLog(@"activeSpaceDidChangei %@", self.windowController);
+    if (!self.isHotKeyWindowOpen) {
+        DLog(@"Not open");
+        return;
+    }
+    if (self.autoHides) {
+        DLog(@"Autohides");
+        return;
+    }
+    if (self.windowController.spaceSetting != iTermProfileJoinsAllSpaces) {
+        DLog(@"Doesn't join all spaces");
+        return;
+    }
+    if (!self.windowController.window.isKeyWindow) {
+        DLog(@"Not key");
+        return;
+    }
+    // I'm not proud. One spin is enough when switching desktops when both have
+    // apps. When switching from a desktop with nothing to a desktop with
+    // another app, you resign key and get deactivated over two spins. Sigh.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        dispatch_async(dispatch_get_main_queue(), ^{
+            DLog(@"Two spins after activeSpaceDidChange %@", self.windowController);
+            if (self.windowController.window.isKeyWindow) {
+                DLog(@"Hotkey window still key a spin after changing spaces. Inexplicable.");
+                return;
+            }
+            DLog(@"One spin after changing spaces with open non-autohiding joins-all-spaces key hotkey window that lost key status. Make key.");
+            [self.windowController.window makeKeyAndOrderFront:nil];
+        });
+    });
 }
 
 - (void)updateWindowLevel {
@@ -431,6 +481,10 @@ static NSString *const kArrangement = @"Arrangement";
         [self didFinishRollingOut];
     }];
     self.windowController.window.animator.alphaValue = 0;
+#if BETA
+    SetPinnedDebugLogMessage([NSString stringWithFormat:@"Fade out hotkey window %p", self],
+                             [[NSThread callStackSymbols] componentsJoinedByString:@"\n"]);
+#endif
     [NSAnimationContext endGrouping];
 }
 
@@ -483,6 +537,12 @@ static NSString *const kArrangement = @"Arrangement";
         return;
     }
     _rollingIn = YES;
+    if (self.windowController.windowType == WINDOW_TYPE_TRADITIONAL_FULL_SCREEN) {
+        // This has to be done before making it key or the dock will be hidden based on the
+        // display it was last on, not the display it will be on. I think it might be safe to
+        // do this for all window types, but I don't want to risk introducing bugs here.
+        [self moveToPreferredScreen];
+    }
     if (self.hotkeyWindowType != iTermHotkeyWindowTypeFloatingPanel) {
         DLog(@"Activate iTerm2 prior to animating hotkey window in");
         _activationPending = YES;
@@ -583,10 +643,11 @@ static NSString *const kArrangement = @"Arrangement";
     }
 }
 
+// Non-sqlite legacy code path
 - (void)saveHotKeyWindowState {
     if (self.windowController.weaklyReferencedObject && self.profileGuid) {
         DLog(@"Saving hotkey window state for %@", self);
-        BOOL includeContents = [iTermAdvancedSettingsModel restoreWindowContents];
+        const BOOL includeContents = [iTermAdvancedSettingsModel restoreWindowContents];
         NSDictionary *arrangement = [self.windowController arrangementExcludingTmuxTabs:YES
                                                                       includingContents:includeContents];
         if (arrangement) {
@@ -601,15 +662,28 @@ static NSString *const kArrangement = @"Arrangement";
     }
 }
 
-- (void)setLegacyState:(NSDictionary *)state {
-    if (self.profileGuid && state) {
-        self.restorableState = @{ kGUID: self.profileGuid,
-                                  kArrangement: state };
-    } else {
-        DLog(@"Not setting legacy state. profileGuid=%@, state=%@", self.profileGuid, state);
+- (BOOL)encodeGraphWithEncoder:(iTermGraphEncoder *)encoder {
+    if (!self.windowController.weaklyReferencedObject || !self.profileGuid) {
+        DLog(@"Not encoding hotkey window state for %@", self);
+        return NO;
     }
+    if (![self.windowController conformsToProtocol:@protocol(iTermGraphCodable)]) {
+        XLog(@"Window controller %@ does not conform to iTermGraphCodable", self.windowController);
+        return NO;
+    }
+    id<iTermGraphCodable> codable = (id<iTermGraphCodable>)self.windowController;
+
+    [encoder encodeString:self.profileGuid forKey:kGUID];
+    [encoder encodeChildWithKey:kArrangement
+                     identifier:@""
+                     generation:iTermGenerationAlwaysEncode
+                          block:^BOOL(iTermGraphEncoder * _Nonnull subencoder) {
+        return [codable encodeGraphWithEncoder:subencoder];
+    }];
+    return YES;
 }
 
+// Non-sqlite legacy code path
 - (BOOL)loadRestorableStateFromArray:(NSArray *)states {
     for (NSDictionary *state in states) {
         if ([state[kGUID] isEqualToString:self.profileGuid]) {
@@ -759,6 +833,7 @@ static NSString *const kArrangement = @"Arrangement";
     }
 
     PseudoTerminal *term = [PseudoTerminal terminalWithArrangement:arrangement
+                                                             named:nil
                                           forceOpeningHotKeyWindow:NO];
     if (term) {
         [[iTermController sharedInstance] addTerminalWindow:term];
@@ -779,9 +854,12 @@ static NSString *const kArrangement = @"Arrangement";
     }
 }
 
-- (PseudoTerminal *)windowControllerFromProfile:(Profile *)hotkeyProfile url:(NSURL *)url {
+- (void)getWindowControllerFromProfile:(Profile *)hotkeyProfile
+                                   url:(NSURL *)url
+                            completion:(void (^)(PseudoTerminal *))completion {
     if (!hotkeyProfile) {
-        return nil;
+        completion(nil);
+        return;
     }
     if ([[hotkeyProfile objectForKey:KEY_WINDOW_TYPE] intValue] == WINDOW_TYPE_LION_FULL_SCREEN) {
         // Lion fullscreen doesn't make sense with hotkey windows. Change
@@ -792,26 +870,27 @@ static NSString *const kArrangement = @"Arrangement";
     }
     [self.delegate hotKeyWillCreateWindow:self];
     self.birthingWindow = YES;
-    PTYSession *session = [[iTermController sharedInstance] launchBookmark:hotkeyProfile
-                                                                inTerminal:nil
-                                                                   withURL:url.absoluteString
-                                                          hotkeyWindowType:[self hotkeyWindowType]
-                                                                   makeKey:YES
-                                                               canActivate:YES
-                                                        respectTabbingMode:NO
-                                                                   command:nil
-                                                                     block:nil
-                                                               synchronous:NO
-                                                                completion:nil];
-    self.birthingWindow = NO;
+    [iTermSessionLauncher launchBookmark:hotkeyProfile
+                              inTerminal:nil
+                                 withURL:url.absoluteString
+                        hotkeyWindowType:[self hotkeyWindowType]
+                                 makeKey:YES
+                             canActivate:YES
+                      respectTabbingMode:NO
+                                 command:nil
+                             makeSession:nil
+                          didMakeSession:^(PTYSession * _Nonnull session) {
+        self.birthingWindow = NO;
 
-    [self.delegate hotKeyDidCreateWindow:self];
-    PseudoTerminal *result = nil;
-    if (session) {
-        result = [[iTermController sharedInstance] terminalWithSession:session];
+        [self.delegate hotKeyDidCreateWindow:self];
+        PseudoTerminal *result = nil;
+        if (session) {
+            result = [[iTermController sharedInstance] terminalWithSession:session];
+        }
+        self.windowControllerBeingBorn = nil;
+        completion(result);
     }
-    self.windowControllerBeingBorn = nil;
-    return result;
+                              completion:nil];
 }
 
 - (void)rollInFinished {
@@ -823,6 +902,7 @@ static NSString *const kArrangement = @"Arrangement";
     [self.windowController.window makeFirstResponder:self.windowController.currentSession.textview];
     [[self.windowController currentTab] recheckBlur];
     self.windowController.window.collectionBehavior = self.windowController.desiredWindowCollectionBehavior;
+    [[iTermPresentationController sharedInstance] update];
 }
 
 - (void)didFinishRollingOut {
@@ -915,10 +995,13 @@ static NSString *const kArrangement = @"Arrangement";
     BOOL result = NO;
     if (!self.windowController.weaklyReferencedObject) {
         DLog(@"Create new hotkey window");
-        [self createWindowWithURL:url];
+        [self createWindowWithURL:url completion:^{
+            [self rollInAnimated:[iTermProfilePreferences boolForKey:KEY_HOTKEY_ANIMATE inProfile:self.profile]];
+        }];
         result = YES;
+    } else {
+        [self rollInAnimated:[iTermProfilePreferences boolForKey:KEY_HOTKEY_ANIMATE inProfile:self.profile]];
     }
-    [self rollInAnimated:[iTermProfilePreferences boolForKey:KEY_HOTKEY_ANIMATE inProfile:self.profile]];
     return result;
 }
 

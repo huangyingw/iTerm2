@@ -19,6 +19,10 @@ NSString *const iTermStatusBarElementPasteboardType = @"com.iterm2.status-bar-el
     id<iTermStatusBarComponent> _component;
 }
 
++ (BOOL)supportsSecureCoding {
+    return YES;
+}
+
 - (instancetype)initWithComponent:(id<iTermStatusBarComponent>)component {
     self = [super init];
     if (self) {
@@ -112,7 +116,9 @@ NSString *const iTermStatusBarElementPasteboardType = @"com.iterm2.status-bar-el
         return nil;
     }
 
-    return [NSKeyedArchiver archivedDataWithRootObject:self];
+    return [NSKeyedArchiver archivedDataWithRootObject:self
+                                 requiringSecureCoding:NO
+                                                 error:nil];
 }
 
 #pragma mark - NSPasteboardReading
@@ -122,14 +128,18 @@ NSString *const iTermStatusBarElementPasteboardType = @"com.iterm2.status-bar-el
 }
 
 - (nullable instancetype)initWithPasteboardPropertyList:(id)propertyList ofType:(NSString *)type {
-    NSKeyedUnarchiver *unarchiver = [[NSKeyedUnarchiver alloc] initForReadingWithData:propertyList];
+    // I haven't tested this because I think it's unreachable. If it breaks then it's because
+    // whatever this decodes doesn't conform to secure coding.
+    NSKeyedUnarchiver *unarchiver = [[NSKeyedUnarchiver alloc] initForReadingFromData:propertyList
+                                                                                error:nil];
     return [self initWithCoder:unarchiver];
 }
 
 #pragma mark - iTermStatusBarComponentDelegate
 
-- (void)statusBarComponentKnobsDidChange:(id<iTermStatusBarComponent>)component {
-    [self.delegate itermStatusBarSetupElementDidChange:self];
+- (void)statusBarComponentKnobsDidChange:(id<iTermStatusBarComponent>)component
+                             updatedKeys:(NSSet<NSString *> *)updatedKeys {
+    [self.delegate itermStatusBarSetupElementDidChange:self updatedKeys:updatedKeys];
 }
 
 - (BOOL)statusBarComponentIsInSetupUI:(id<iTermStatusBarComponent>)component {
@@ -164,6 +174,38 @@ NSString *const iTermStatusBarElementPasteboardType = @"com.iterm2.status-bar-el
 }
 
 - (void)statusBarComponentPerformAction:(iTermAction *)action {
+    assert(NO);
+}
+
+- (void)statusBarComponentEditActions:(id<iTermStatusBarComponent>)component {
+    assert(NO);
+}
+
+- (void)statusBarComponentEditSnippets:(id<iTermStatusBarComponent>)component {
+    assert(NO);
+}
+
+- (void)statusBarComponentResignFirstResponder:(id<iTermStatusBarComponent>)component {
+    assert(NO);
+}
+
+- (BOOL)statusBarComponentComposerShouldUsePopover:(id<iTermStatusBarComponent>)component {
+    assert(NO);
+    return NO;
+}
+
+- (void)statusBarComponent:(id<iTermStatusBarComponent>)component
+      reportScriptingError:(NSError *)error
+             forInvocation:(NSString *)invocation
+                    origin:(NSString *)origin {
+    assert(NO);
+}
+
+- (void)statusBarComponentComposerRevealComposer:(id<iTermStatusBarComponent>)component { 
+    assert(NO);
+}
+
+- (iTermActivityInfo)statusBarComponentActivityInfo:(id<iTermStatusBarComponent>)component {
     assert(NO);
 }
 

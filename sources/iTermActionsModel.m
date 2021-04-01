@@ -7,21 +7,25 @@
 
 #import "iTermActionsModel.h"
 #import "iTermNotificationCenter+Protected.h"
+#import "iTermPreferences.h"
 #import "NSArray+iTerm.h"
+#import "NSIndexSet+iTerm.h"
 #import "NSObject+iTerm.h"
-
-static NSString *const iTermActionsUserDefaultsKey = @"Actions";
 
 @implementation iTermAction
 
 - (instancetype)initWithTitle:(NSString *)title
                        action:(KEY_ACTION)action
-                    parameter:(NSString *)parameter {
+                    parameter:(NSString *)parameter
+     useCompatibilityEscaping:(BOOL)useCompatibilityEscaping {
     self = [super init];
     if (self) {
         _action = action;
         _title = [title copy];
         _parameter = [parameter copy];
+        _useCompatibilityEscaping = useCompatibilityEscaping;
+        static NSInteger nextIdentifier;
+        _identifier = nextIdentifier++;
     }
     return self;
 }
@@ -29,13 +33,16 @@ static NSString *const iTermActionsUserDefaultsKey = @"Actions";
 - (instancetype)initWithDictionary:(NSDictionary *)dictionary {
     return [self initWithTitle:dictionary[@"title"] ?: @""
                         action:[dictionary[@"action"] intValue]
-                     parameter:dictionary[@"parameter"] ?: @""];
+                     parameter:dictionary[@"parameter"] ?: @""
+      useCompatibilityEscaping:[dictionary[@"version"] intValue] == 0];
 }
 
 - (NSDictionary *)dictionaryValue {
     return @{ @"action": @(_action),
               @"title": _title ?: @"",
-              @"parameter": _parameter ?: @"" };
+              @"parameter": _parameter ?: @"",
+              @"version": _useCompatibilityEscaping ? @0 : @1,
+    };
 }
 
 - (BOOL)isEqual:(id)object {
@@ -47,6 +54,12 @@ static NSString *const iTermActionsUserDefaultsKey = @"Actions";
         return NO;
     }
     return [self.dictionaryValue isEqual:other.dictionaryValue];
+}
+
+- (NSString *)displayString {
+    return [[iTermKeyBindingAction withAction:_action
+                                    parameter:_parameter ?: @""
+                     useCompatibilityEscaping:_useCompatibilityEscaping] displayName];
 }
 
 @end
@@ -67,7 +80,7 @@ static NSString *const iTermActionsUserDefaultsKey = @"Actions";
 - (instancetype)init {
     self = [super init];
     if (self) {
-        _actions = [[[NSArray castFrom:[[NSUserDefaults standardUserDefaults] objectForKey:iTermActionsUserDefaultsKey]] mapWithBlock:^id(id anObject) {
+        _actions = [[[NSArray castFrom:[[NSUserDefaults standardUserDefaults] objectForKey:kPreferenceKeyActions]] mapWithBlock:^id(id anObject) {
             NSDictionary *dict = [NSDictionary castFrom:anObject];
             if (!dict) {
                 return nil;
@@ -84,14 +97,11 @@ static NSString *const iTermActionsUserDefaultsKey = @"Actions";
     [[iTermActionsDidChangeNotification notificationWithMutationType:iTermActionsDidChangeMutationTypeInsertion index:_actions.count - 1] post];
 }
 
-- (void)removeAction:(iTermAction *)action {
-    NSInteger index = [_actions indexOfObject:action];
-    if (index == NSNotFound) {
-        return;
-    }
-    [_actions removeObject:action];
+- (void)removeActions:(NSArray<iTermAction *> *)actions {
+    NSIndexSet *indexes = [_actions it_indexSetWithIndexesOfObjects:actions];
+    [_actions removeObjectsAtIndexes:indexes];
     [self save];
-    [[iTermActionsDidChangeNotification notificationWithMutationType:iTermActionsDidChangeMutationTypeDeletion index:index] post];
+    [[iTermActionsDidChangeNotification removalNotificationWithIndexes:indexes] post];
 }
 
 - (void)replaceAction:(iTermAction *)actionToReplace withAction:(iTermAction *)replacement {
@@ -104,11 +114,57 @@ static NSString *const iTermActionsUserDefaultsKey = @"Actions";
     [[iTermActionsDidChangeNotification notificationWithMutationType:iTermActionsDidChangeMutationTypeEdit index:index] post];
 }
 
+- (NSInteger)indexOfActionWithIdentifier:(NSInteger)identifier {
+    return [_actions indexOfObjectPassingTest:^BOOL(iTermAction * _Nonnull action, NSUInteger idx, BOOL * _Nonnull stop) {
+        return action.identifier == identifier;
+    }];
+}
+
+- (iTermAction *)actionWithIdentifier:(NSInteger)identifier {
+    const NSInteger i = [self indexOfActionWithIdentifier:identifier];
+    if (i == NSNotFound) {
+        return nil;
+    }
+    return _actions[i];
+}
+
+- (void)moveActionsWithIdentifiers:(NSArray<NSNumber *> *)identifiers
+                           toIndex:(NSInteger)row {
+    NSArray<iTermAction *> *actions = [_actions filteredArrayUsingBlock:^BOOL(iTermAction *action) {
+        return [identifiers containsObject:@(action.identifier)];
+    }];
+    NSInteger countBeforeRow = [[actions filteredArrayUsingBlock:^BOOL(iTermAction *action) {
+        return [self indexOfActionWithIdentifier:action.identifier] < row;
+    }] count];
+    NSMutableArray<iTermAction *> *updatedActions = [_actions mutableCopy];
+    NSMutableIndexSet *removals = [NSMutableIndexSet indexSet];
+    for (iTermAction *action in actions) {
+        const NSInteger i = [_actions indexOfObject:action];
+        assert(i != NSNotFound);
+        [removals addIndex:i];
+        [updatedActions removeObject:action];
+    }
+    NSInteger insertionIndex = row - countBeforeRow;
+    for (iTermAction *action in actions) {
+        [updatedActions insertObject:action atIndex:insertionIndex++];
+    }
+    _actions = updatedActions;
+    [self save];
+    [[iTermActionsDidChangeNotification moveNotificationWithRemovals:removals
+                                                    destinationIndex:row - countBeforeRow] post];
+}
+
+- (void)setActions:(NSArray<iTermAction *> *)actions {
+    _actions = [actions mutableCopy];
+    [self save];
+    [[iTermActionsDidChangeNotification fullReplacementNotification] post];
+}
+
 #pragma mark - Private
 
 - (void)save {
     [[NSUserDefaults standardUserDefaults] setObject:[self arrayOfDictionaries]
-                                              forKey:iTermActionsUserDefaultsKey];
+                                              forKey:kPreferenceKeyActions];
 }
 
 - (NSArray<NSDictionary *> *)arrayOfDictionaries {
@@ -125,6 +181,28 @@ static NSString *const iTermActionsUserDefaultsKey = @"Actions";
     iTermActionsDidChangeNotification *notif = [[self alloc] initPrivate];
     notif->_mutationType = mutationType;
     notif->_index = index;
+    return notif;
+}
+
++ (instancetype)moveNotificationWithRemovals:(NSIndexSet *)removals
+                            destinationIndex:(NSInteger)destinationIndex {
+    iTermActionsDidChangeNotification *notif = [[self alloc] initPrivate];
+    notif->_mutationType = iTermActionsDidChangeMutationTypeMove;
+    notif->_indexSet = removals;
+    notif->_index = destinationIndex;
+    return notif;
+}
+
++ (instancetype)fullReplacementNotification {
+    iTermActionsDidChangeNotification *notif = [[self alloc] initPrivate];
+    notif->_mutationType = iTermActionsDidChangeMutationTypeFullReplacement;
+    return notif;
+}
+
++ (instancetype)removalNotificationWithIndexes:(NSIndexSet *)indexes {
+    iTermActionsDidChangeNotification *notif = [[self alloc] initPrivate];
+    notif->_mutationType = iTermActionsDidChangeMutationTypeDeletion;
+    notif->_indexSet = indexes;
     return notif;
 }
 

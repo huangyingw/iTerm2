@@ -11,6 +11,7 @@ static char iTermAdvancedSettingsModelKVOKey;
 
 @implementation iTermUserDefaultsObserver {
     NSMutableDictionary<NSString *, void (^)(void)> *_blocks;
+    NSMutableArray<void (^)(void)> *_allKeysBlocks;
 }
 
 - (instancetype)init {
@@ -19,6 +20,14 @@ static char iTermAdvancedSettingsModelKVOKey;
         _blocks = [NSMutableDictionary dictionary];
     }
     return self;
+}
+
+- (void)dealloc {
+    for (NSString *key in _blocks) {
+        [[NSUserDefaults standardUserDefaults] removeObserver:self
+                                                   forKeyPath:key
+                                                      context:(void *)&iTermAdvancedSettingsModelKVOKey];
+    }
 }
 
 - (void)observeKey:(NSString *)key block:(void (^)(void))block {
@@ -41,5 +50,23 @@ static char iTermAdvancedSettingsModelKVOKey;
         }
     }
 }
+
+- (void)observeAllKeysWithBlock:(void (^)(void))block {
+    if (!_allKeysBlocks) {
+        _allKeysBlocks = [NSMutableArray array];
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(userDefaultsDidChange:)
+                                                     name:NSUserDefaultsDidChangeNotification
+                                                   object:nil];
+    }
+    [_allKeysBlocks addObject:[block copy]];
+}
+
+- (void)userDefaultsDidChange:(NSNotification *)notification {
+    for (void (^block)(void) in _allKeysBlocks) {
+        block();
+    }
+}
+
 @end
 

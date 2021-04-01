@@ -32,6 +32,8 @@ typedef struct {
 
 - (void)cadenceControllerActiveStateDidChange:(BOOL)active;
 
+- (BOOL)updateCadenceControllerWindowHasSheet;
+
 @end
 
 @interface iTermUpdateCadenceController : NSObject
@@ -48,5 +50,7 @@ typedef struct {
 
 - (void)willStartLiveResize;
 - (void)liveResizeDidEnd;
+- (void)didHandleInput;
+- (void)didHandleKeystroke;
 
 @end

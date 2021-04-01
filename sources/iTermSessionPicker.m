@@ -12,6 +12,7 @@
 #import "iTermHelpMessageViewController.h"
 #import "NSImage+iTerm.h"
 #import "NSObject+iTerm.h"
+#import "NSView+iTerm.h"
 #import "NSWindow+iTerm.h"
 #import "PTYSession.h"
 #import "SessionView.h"
@@ -75,9 +76,9 @@
 - (NSStatusItem *)addStatusBarItem {
     NSStatusItem *item = [[NSStatusBar systemStatusBar] statusItemWithLength:22];
     NSImage *image = [NSImage it_imageNamed:@"StopStatusIcon" forClass:self.class];
-    item.title = @"";
-    item.image = image;
-    item.highlightMode = YES;
+    item.button.title = @"";
+    item.button.image = image;
+    ((NSButtonCell *)item.button.cell).highlightsBy = NSChangeBackgroundCellMask;
     item.button.target = self;
     item.button.action = @selector(abort:);
 
@@ -113,11 +114,7 @@
 }
 
 - (void)chooseSessionUnderCursor:(NSTimer *)timer {
-    NSRect mouseRect = {
-        .origin = [NSEvent mouseLocation],
-        .size = { 0, 0 }
-    };
-    NSView *view = [self viewAtMouseRect:mouseRect];
+    NSView *view = [NSView viewAtScreenCoordinate:[NSEvent mouseLocation]];
     while (view && ![view isKindOfClass:[SessionView class]]) {
         view = view.superview;
     }

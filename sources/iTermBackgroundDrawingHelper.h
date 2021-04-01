@@ -10,10 +10,11 @@
 #import "ITAddressBookMgr.h"
 
 @class SessionView;
+@class iTermImageWrapper;
 
 @protocol iTermBackgroundDrawingHelperDelegate<NSObject>
 - (SessionView *)backgroundDrawingHelperView;  // _view
-- (NSImage *)backgroundDrawingHelperImage;  // _backgroundImage
+- (iTermImageWrapper *)backgroundDrawingHelperImage;  // _backgroundImage
 - (BOOL)backgroundDrawingHelperUseTransparency;  // _textview.useTransparency
 - (CGFloat)backgroundDrawingHelperTransparency;  // _textview.transparency
 - (iTermBackgroundImageMode)backgroundDrawingHelperBackgroundImageMode;  // _backgroundImageMode
@@ -29,7 +30,11 @@
                         dirtyRect:(NSRect)rect
            visibleRectInContainer:(NSRect)visibleRectInContainer
            blendDefaultBackground:(BOOL)blendDefaultBackground
-                             flip:(BOOL)shouldFlip;
+                             flip:(BOOL)shouldFlip
+                    virtualOffset:(CGFloat)virtualOffset;
+
+// Call this when the image changes.
+- (void)invalidate;
 
 // imageSize is the size of the source image, which may have a different aspect ratio than the area it's being drawn into.
 // destinationRect is the frame of the area to draw into.

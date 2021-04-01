@@ -11,9 +11,14 @@
 #import "DebugLogging.h"
 #import "ITAddressBookMgr.h"
 #import "iTermAdvancedSettingsModel.h"
+#import "iTermScriptConsole.h"
+#import "iTermScriptHistory.h"
+#import "iTermWarning.h"
+#import "NSArray+iTerm.h"
 #import "NSDictionary+iTerm.h"
 #import "NSDictionary+Profile.h"
 #import "NSFileManager+iTerm.h"
+#import "NSObject+iTerm.h"
 #import "NSMutableDictionary+Profile.h"
 #import "ProfileModel.h"
 #import "SCEvents.h"
@@ -21,10 +26,44 @@
 @interface iTermDynamicProfileManager () <SCEventListenerProtocol>
 @end
 
+@interface iTermFilesAndFolders: NSObject
+@property (nonatomic, readonly) NSSet<NSString *> *files;
+@property (nonatomic, readonly) NSSet<NSString *> *folders;
+@end
+
+@implementation iTermFilesAndFolders
+
+- (instancetype)initWithFiles:(NSSet<NSString *> *)files
+                      folders:(NSSet<NSString *> *)folders {
+    self = [super init];
+    if (self) {
+        _files = files.copy;
+        _folders = folders.copy;
+    }
+    return self;
+}
+
+- (NSString *)description {
+    return [NSString stringWithFormat:@"<%@: %p files=%@ folders=%@>",
+            NSStringFromClass(self.class),
+            self,
+            [_files.allObjects componentsJoinedByString:@", "],
+            [_folders.allObjects componentsJoinedByString:@", "]];
+}
+
+- (BOOL)isEqual:(id)other {
+    iTermFilesAndFolders *obj = [iTermFilesAndFolders castFrom:other];
+    return [obj.files isEqual:self.files] && [obj.folders isEqual:self.folders];
+}
+
+@end
 
 @implementation iTermDynamicProfileManager {
     SCEvents *_events;
     NSMutableDictionary<NSString *, NSString *> *_guidToPathMap;
+    NSInteger _pendingErrors;
+    iTermFilesAndFolders *_paths;
+    NSArray *_tokens;
 }
 
 + (instancetype)sharedInstance {
@@ -47,15 +86,123 @@
       }
       _events = [[SCEvents alloc] init];
       _events.delegate = self;
-      [_events startWatchingPaths:@[ path ]];
+      _paths = self.pathsToWatch;
+      DLog(@"Watching files: %@, folders: %@", _paths.files, _paths.folders);
+      [self startWatching];
   }
   return self;
 }
 
-- (void)dealloc {
-    [_events release];
-    [_guidToPathMap release];
-    [super dealloc];
+- (void)startWatching {
+    [_events startWatchingPaths:_paths.folders.allObjects];
+    __weak __typeof(self) weakSelf = self;
+    _tokens = [_paths.files.allObjects mapWithBlock:^id(NSString *file) {
+        return [[NSFileManager defaultManager] monitorFile:file block:^(long flags) {
+            [weakSelf somethingChanged];
+        }];
+    }];
+}
+
+- (void)stopWatching {
+    [_events stopWatchingPaths];
+    for (id token in _tokens) {
+        [[NSFileManager defaultManager] stopMonitoringFileWithToken:token];
+    }
+    _tokens = nil;
+}
+
+- (iTermFilesAndFolders *)pathsToWatch {
+    NSMutableSet<NSString *> *files = [NSMutableSet set];
+    NSMutableSet<NSString *> *folders = [NSMutableSet set];
+
+    NSString *path = [self dynamicProfilesPath];
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+
+    if ([fileManager itemIsSymlink:path]) {
+        NSString *resolved = [fileManager destinationOfSymbolicLinkAtPath:path error:nil];
+        if (resolved && [fileManager itemIsDirectory:resolved]) {
+            [folders addObject:resolved];
+        } else {
+            return [[iTermFilesAndFolders alloc] init];
+        }
+    } else {
+        [folders addObject:path];
+    }
+
+    for (NSString *relativeFile in [fileManager enumeratorAtPath:path]) {
+        NSString *file = [path stringByAppendingPathComponent:relativeFile];
+        if (![fileManager itemIsSymlink:file]) {
+            // Just a regular file
+            continue;
+        }
+        file = [fileManager destinationOfSymbolicLinkAtPath:file error:nil];
+        if (!file) {
+            // Bogus symlink
+            continue;
+        }
+        [files addObject:file];
+    }
+
+    return [[iTermFilesAndFolders alloc] initWithFiles:files folders:folders];
+}
+
+- (void)reportError:(NSString *)error file:(NSString *)file {
+    [[iTermScriptHistory sharedInstance] addDynamicProfilesLoggingEntryIfNeeded];
+    [[iTermScriptHistoryEntry dynamicProfilesEntry] addOutput:[error stringByAppendingString:@"\n"]
+                                                   completion:^{}];
+
+    _pendingErrors += 1;
+    if (_pendingErrors > 1) {
+        return;
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self reallyReportError:error file:file];
+    });
+}
+
+- (void)reallyReportError:(NSString *)error file:(NSString *)file {
+    NSString *message =
+    [NSString stringWithFormat:@"There was a problem with one of your Dynamic Profiles:\n\n%@", error];
+    if (_pendingErrors > 1) {
+        const NSInteger count = _pendingErrors - 1;
+        message = [message stringByAppendingFormat:@"\n\n%@ additional error%@ may be seen in the log.",
+                   @(count), count == 1 ? @"" : @"s"];
+    }
+    _pendingErrors = 0;
+    NSButton *button = nil;
+    if (file && [[NSFileManager defaultManager] fileExistsAtPath:file]) {
+        button = [[NSButton alloc] init];
+        button.buttonType = NSButtonTypeMomentaryPushIn;
+        button.bezelStyle = NSBezelStyleRounded;
+        button.title = @"Reveal in Finder";
+        [button setAction:@selector(reveal:)];
+        [button setTarget:self];
+        [button setIdentifier:file];
+        [button sizeToFit];
+    }
+    const iTermWarningSelection selection =
+    [iTermWarning showWarningWithTitle:message
+                               actions:@[ @"OK", @"View Log" ]
+                             accessory:button
+                            identifier:@"NoSyncDynamicProfilesWarning"
+                           silenceable:kiTermWarningTypeTemporarilySilenceable
+                               heading:@"Dynamic Profiles Error"
+                                window:nil];
+    if (selection == 1) {
+        [[iTermScriptConsole sharedInstance] revealTailOfHistoryEntry:[iTermScriptHistoryEntry dynamicProfilesEntry]];
+    }
+}
+
+- (void)reveal:(id)sender {
+    NSButton *button = [NSButton castFrom:sender];
+    if (!button) {
+        return;
+    }
+    NSString *file = button.identifier;
+    if (!file) {
+        return;
+    }
+    [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[ [NSURL fileURLWithPath:file] ]];
 }
 
 - (void)revealProfileWithGUID:(NSString *)guid {
@@ -68,18 +215,39 @@
     [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[ [NSURL fileURLWithPath:fullPath] ]];
 }
 
-- (NSString *)dynamicProfilesPath {
+// Returns ~/Library/Application Support/iTerm2/DynamicProfiles
+- (NSString *)unresolvedDynamicProfilesPath {
     if ([[iTermAdvancedSettingsModel dynamicProfilesPath] length]) {
         return [[iTermAdvancedSettingsModel dynamicProfilesPath] stringByExpandingTildeInPath];
     }
     NSFileManager *fileManager = [NSFileManager defaultManager];
     NSString *appSupport = [fileManager applicationSupportDirectory];
     NSString *thePath = [appSupport stringByAppendingPathComponent:@"DynamicProfiles"];
-    [[NSFileManager defaultManager] createDirectoryAtPath:thePath
-                              withIntermediateDirectories:YES
-                                               attributes:nil
-                                                    error:NULL];
+    [fileManager createDirectoryAtPath:thePath
+           withIntermediateDirectories:YES
+                            attributes:nil
+                                 error:NULL];
     return thePath;
+}
+
+// If DynamicProfiles is a symlink, returns its destination
+- (NSString *)dynamicProfilesPath {
+    NSString *thePath = [self unresolvedDynamicProfilesPath];
+    return [[NSFileManager defaultManager] destinationOfSymbolicLinkAtPath:thePath error:nil] ?: thePath;
+}
+
+// Call this when a file or folder changes.
+- (void)somethingChanged {
+    DLog(@"Path watcher noticed a change");
+    [self reloadDynamicProfiles];
+
+    iTermFilesAndFolders *updatedPaths = self.pathsToWatch;
+    if (![updatedPaths isEqual:_paths]) {
+        DLog(@"Paths to watch changed to %@", updatedPaths);
+        [self stopWatching];
+        _paths = updatedPaths;
+        [self startWatching];
+    }
 }
 
 - (void)reloadDynamicProfiles {
@@ -110,10 +278,14 @@
         if ([file hasPrefix:@"."]) {
             DLog(@"Skipping it because of leading dot");
             continue;
+        } else if ([file hasSuffix:@"~"]) {
+            DLog(@"Skipping it because of trailing tilde (GNU-style backup file)");
+            continue;
         }
         NSString *fullName = [path stringByAppendingPathComponent:file];
         if (![self loadDynamicProfilesFromFile:fullName intoArray:newProfiles guids:guids]) {
-            XLog(@"Ignoring dynamic profiles in malformed file %@ and continuing.", fullName);
+            [self reportError:[NSString stringWithFormat:@"Ignoring dynamic profiles in “%@” because of an error.", fullName]
+                         file:fullName];
         }
     }
 
@@ -161,17 +333,26 @@
         }
     } else {
         // Try JSON
-        NSData *data = [NSData dataWithContentsOfFile:filename];
+        NSError *error = nil;
+        NSData *data = [NSData dataWithContentsOfFile:filename options:0 error:&error];
         if (!data) {
-            XLog(@"Dynamic Profiles file %@ is unreadable", filename);
+            [self reportError:[NSString stringWithFormat:@"Could not read Dynamic Profile from file %@: %@",
+                               filename, error.localizedDescription]
+                         file:filename];
             return nil;
         }
-        NSError *error = nil;
         dict = [NSJSONSerialization JSONObjectWithData:data
                                                options:0
                                                  error:&error];
         if (!dict) {
-            XLog(@"Dynamic Profiles file %@ doesn't contain a valid property list", filename);
+            [self reportError:[NSString stringWithFormat:@"Dynamic Profiles file %@ contains invalid JSON: %@", filename, error.localizedDescription]
+                         file:filename];
+            return nil;
+        }
+        dict = [NSDictionary castFrom:dict];
+        if (!dict) {
+            [self reportError:[NSString stringWithFormat:@"Dynamic Profiles file %@ does not have an Object (i.e., a dictionary) as its root element", filename]
+                         file:filename];
             return nil;
         }
         if (fileType) {
@@ -181,22 +362,28 @@
     NSArray *entries = dict[@"Profiles"];
     if (!entries) {
         XLog(@"Property list in %@ has no entries", entries);
+        [self reportError:[NSString stringWithFormat:@"Dynamic Profiles file %@ does not have a “Profiles” key at the root.",
+                           filename]
+                     file:filename];
         return nil;
     }
 
     NSMutableArray *profiles = [NSMutableArray array];
     for (Profile *profile in entries) {
         if (![profile[KEY_GUID] isKindOfClass:[NSString class]]) {
-            XLog(@"Dynamic profile is missing the Guid field in file %@", filename);
+            [self reportError:[NSString stringWithFormat:@"Dynamic profile is missing the Guid field in file %@", filename]
+                         file:filename];
             continue;
         }
         if (![profile[KEY_NAME] isKindOfClass:[NSString class]]) {
-            XLog(@"Dynamic profile with guid %@ is missing the name field", profile[KEY_GUID]);
+            [self reportError:[NSString stringWithFormat:@"Dynamic profile with Guid %@ is missing the “name” field", profile[KEY_GUID]]
+                         file:filename];
             continue;
         }
         if ([self nonDynamicProfileHasGuid:profile[KEY_GUID]]) {
-            XLog(@"Dynamic profile with guid %@ conflicts with non-dynamic profile with same guid",
-                 profile[KEY_GUID]);
+            [self reportError:[NSString stringWithFormat:@"Dynamic profile with Guid %@ conflicts with non-dynamic profile with same Guid",
+                 profile[KEY_GUID]]
+                         file:filename];
             continue;
         }
         [profiles addObject:profile];
@@ -218,15 +405,18 @@
 
     for (Profile *profile in allProfiles) {
         if ([guids containsObject:profile[KEY_GUID]]) {
-            XLog(@"Two dynamic profiles have the same guid: %@", profile[KEY_GUID]);
+            [self reportError:[NSString stringWithFormat:@"Two dynamic profiles have the same Guid: %@", profile[KEY_GUID]]
+                         file:filename];
             continue;
         }
         DLog(@"Read profile name=%@ guid=%@", profile[KEY_NAME], profile[KEY_GUID]);
-        profile = [profile dictionaryBySettingObject:filename forKey:KEY_DYNAMIC_PROFILE_FILENAME];
-        [profiles addObject:profile];
-        NSString *guid = profile[KEY_GUID];
-        [guids addObject:guid];
-        _guidToPathMap[guid] = filename;
+        {
+            Profile *amendedProfile = [profile dictionaryBySettingObject:filename forKey:KEY_DYNAMIC_PROFILE_FILENAME];
+            [profiles addObject:amendedProfile];
+            NSString *guid = amendedProfile[KEY_GUID];
+            [guids addObject:guid];
+            _guidToPathMap[guid] = filename;
+        }
     }
     return YES;
 }
@@ -276,7 +466,7 @@
 // mutable dictionary.
 - (NSMutableDictionary *)profileByMergingProfile:(Profile *)profile
                                      intoProfile:(Profile *)prototype {
-    NSMutableDictionary *merged = [[profile mutableCopy] autorelease];
+    NSMutableDictionary *merged = [profile mutableCopy];
     for (NSString *key in prototype) {
         if (profile[key]) {
             merged[key] = profile[key];
@@ -293,8 +483,9 @@
     if (parentName) {
         prototype = [[ProfileModel sharedInstance] bookmarkWithName:parentName];
         if (!prototype) {
-            XLog(@"Dynamic profile %@ references unknown parent name %@. Using default profile as parent.",
-                 profile[KEY_NAME], parentName);
+            [self reportError:[NSString stringWithFormat:@"Dynamic profile %@ references unknown parent name %@. Using default profile as parent.",
+                               profile[KEY_NAME], parentName]
+                         file:profile[KEY_DYNAMIC_PROFILE_FILENAME]];
         }
     }
     if (!prototype) {
@@ -331,8 +522,7 @@
 #pragma mark - SCEventListenerProtocol
 
 - (void)pathWatcher:(SCEvents *)pathWatcher eventOccurred:(SCEvent *)event {
-    DLog(@"Path watcher noticed a change");
-    [self reloadDynamicProfiles];
+    [self somethingChanged];
 }
 
 @end

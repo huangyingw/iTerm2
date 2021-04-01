@@ -19,13 +19,15 @@
 
 @interface iTermProcessInfo()
 @property(nonatomic, weak, readwrite) iTermProcessInfo *parent;
-@property(atomic, strong) NSString *nameValue;
-@property(atomic, strong) NSString *commandLineValue;
+@property(atomic, copy) NSString *nameValue;
+@property(atomic, copy) NSString *argv0Value;
+@property(atomic, copy) NSString *commandLineValue;
 @property(atomic) NSNumber *isForegroundJobValue;
 @end
 
 @implementation iTermProcessInfo {
-    NSMutableArray<iTermProcessInfo *> *_children;
+    __weak iTermProcessCollection *_collection;
+    NSMutableIndexSet *_childProcessIDs;
     __weak iTermProcessInfo *_deepestForegroundJob;
     BOOL _haveDeepestForegroundJob;
     NSString *_name;
@@ -33,21 +35,25 @@
     BOOL _initialized;
     NSNumber *_testValueForForegroundJob;
     BOOL _computingTreeString;
+    NSDate *_startTime;
 }
 
 - (instancetype)initWithPid:(pid_t)processID
-                       ppid:(pid_t)parentProcessID {
+                       ppid:(pid_t)parentProcessID
+                 collection:(iTermProcessCollection *)collection {
     self = [super init];
     if (self) {
         _processID = processID;
         _parentProcessID = parentProcessID;
+        _childProcessIDs = [[NSMutableIndexSet alloc] init];
+        _collection = collection;
     }
     return self;
 }
 
 - (NSString *)description {
     return [NSString stringWithFormat:@"<%@: %p pid=%@ name=%@ children.count=%@ haveDeepest=%@ isFg=%@>",
-            self.class, self, @(self.processID), _name, @(_children.count), @(_haveDeepestForegroundJob), _isForegroundJob];
+            self.class, self, @(self.processID), _name, @(_childProcessIDs.count), @(_haveDeepestForegroundJob), _isForegroundJob];
 }
 
 - (BOOL)isEqual:(id)object {
@@ -57,32 +63,49 @@
     }
     return self.processID == other.processID && [self.name isEqualToString:other.name] && self.parentProcessID == self.parentProcessID;
 }
+
 - (NSString *)treeStringWithIndent:(NSString *)indent {
     if (_computingTreeString) {
         return [NSString stringWithFormat:@"<CYCLE DETECTED AT %@>", self];
     }
     _computingTreeString = YES;
-    NSString *children = [[_children mapWithBlock:^id(id anObject) {
+    NSArray<iTermProcessInfo *> *childArray = self.children;
+    NSString *children = [[childArray mapWithBlock:^id(id anObject) {
         return [anObject treeStringWithIndent:[indent stringByAppendingString:@"  "]];
     }] componentsJoinedByString:@"\n"];
     _computingTreeString = NO;
-    if (_children.count > 0) {
+    if (childArray.count > 0) {
         children = [@"\n" stringByAppendingString:children];
     }
     return [NSString stringWithFormat:@"%@pid=%@ name=%@ fg=%@%@", indent, @(self.processID), self.name, @(self.isForegroundJob), children];
 }
 
-- (NSMutableArray<iTermProcessInfo *> *)children {
-    if (!_children) {
-        _children = [NSMutableArray array];
-    }
-    return _children;
+- (NSArray<iTermProcessInfo *> *)children {
+    NSMutableArray<iTermProcessInfo *> *result = [NSMutableArray array];
+    [_childProcessIDs enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL * _Nonnull stop) {
+        iTermProcessInfo *child = [_collection infoForProcessID:idx];
+        if (child) {
+            [result addObject:child];
+        }
+    }];
+    return result;
 }
 
 - (NSArray<iTermProcessInfo *> *)sortedChildren {
     return [self.children sortedArrayUsingComparator:^NSComparisonResult(iTermProcessInfo *  _Nonnull obj1, iTermProcessInfo *  _Nonnull obj2) {
         return [@(obj1.processID) compare:@(obj2.processID)];
     }];
+}
+
+- (void)addChildWithProcessID:(pid_t)pid {
+    [_childProcessIDs addIndex:pid];
+}
+
+- (NSDate *)startTime {
+    if (!_startTime) {
+        _startTime = [iTermLSOF startTimeForProcess:self.processID];
+    }
+    return _startTime;
 }
 
 - (iTermProcessInfo *)deepestForegroundJob {
@@ -108,7 +131,7 @@
     NSInteger bestLevel = *levelInOut;
     iTermProcessInfo *bestProcessInfo = nil;
 
-    if (_children.count == 0 && self.isForegroundJob) {
+    if (_childProcessIDs.count == 0 && self.isForegroundJob) {
         _haveDeepestForegroundJob = YES;
         _deepestForegroundJob = self;
         return self;
@@ -116,7 +139,7 @@
         bestProcessInfo = self;
     }
 
-    for (iTermProcessInfo *child in _children) {
+    for (iTermProcessInfo *child in self.children) {
         NSInteger level = *levelInOut + 1;
         iTermProcessInfo *candidate = [child deepestForegroundJob:&level visited:visited cycle:cycle depth:depth + 1];
         if (*cycle) {
@@ -138,7 +161,7 @@
 }
 
 - (NSArray<iTermProcessInfo *> *)flattenedTree {
-    NSArray *flat = [_children flatMapWithBlock:^id(iTermProcessInfo *child) {
+    NSArray *flat = [self.children flatMapWithBlock:^id(iTermProcessInfo *child) {
         return child.flattenedTree;
     }];
     if (flat.count) {
@@ -152,9 +175,27 @@
     if (levels < 0) {
         return [self flattenedTree];
     }
-    return [_children flatMapWithBlock:^id(iTermProcessInfo *child) {
+    return [self.children flatMapWithBlock:^id(iTermProcessInfo *child) {
         return [child descendantsSkippingLevels:levels - 1];
     }];
+}
+
+- (BOOL)enumerateTree:(void (^)(iTermProcessInfo *info, BOOL *stop))block {
+    BOOL stop = NO;
+    block(self, &stop);
+    if (stop) {
+        return YES;
+    }
+    for (iTermProcessInfo *child in self.children) {
+        block(child, &stop);
+        if (stop) {
+            return YES;
+        }
+        if ([child enumerateTree:block]) {
+            return YES;
+        }
+    }
+    return NO;
 }
 
 - (BOOL)shouldInitialize {
@@ -168,11 +209,16 @@
 - (void)doSlowLookup {
     if ([self shouldInitialize]) {
         BOOL fg = NO;
-        // This is the "real" name, not the hacked one with a leading hyphen.
         self.nameValue = [iTermLSOF nameOfProcessWithPid:self->_processID isForeground:&fg];
-        if (fg) {
+        if (fg || [self.parent.name isEqualToString:@"login"] || !self.parent) {
             // Full command line with hacked command name.
-            self.commandLineValue = [iTermLSOF commandForProcess:self->_processID execName:nil];
+            NSArray<NSString *> *argv = [iTermLSOF commandLineArgumentsForProcess:self->_processID execName:NULL];
+            self.commandLineValue = [argv componentsJoinedByString:@" "];
+            if (argv.firstObject.length) {
+                self.argv0Value = argv[0];
+            } else {
+                self.argv0Value = nil;
+            }
         }
         self.isForegroundJobValue = @(fg);
     }
@@ -181,6 +227,11 @@
 - (NSString *)name {
     [self doSlowLookup];
     return self.nameValue;
+}
+
+- (NSString *)argv0 {
+    [self doSlowLookup];
+    return self.argv0Value;
 }
 
 - (NSString *)commandLine {
@@ -235,7 +286,8 @@
 - (iTermProcessInfo *)addProcessWithProcessID:(pid_t)processID
                               parentProcessID:(pid_t)parentProcessID {
     iTermProcessInfo *info = [[iTermProcessInfo alloc] initWithPid:processID
-                                                              ppid:parentProcessID];
+                                                              ppid:parentProcessID
+                                                        collection:self];
     _processes[@(processID)] = info;
     return info;
 }
@@ -243,7 +295,7 @@
 - (void)commit {
     [_processes enumerateKeysAndObjectsUsingBlock:^(NSNumber * _Nonnull processID, iTermProcessInfo * _Nonnull info, BOOL * _Nonnull stop) {
         info.parent = self->_processes[@(info.parentProcessID)];
-        [info.parent.children addObject:info];
+        [info.parent addChildWithProcessID:info.processID];
     }];
 }
 

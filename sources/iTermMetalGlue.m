@@ -29,6 +29,7 @@
 #import "NSStringITerm.h"
 #import "PTYFontInfo.h"
 #import "PTYTextView.h"
+#import "PTYTextView+ARC.h"
 #import "VT100Screen.h"
 #import "VT100ScreenMark.h"
 
@@ -147,6 +148,18 @@ NS_ASSUME_NONNULL_BEGIN
     NSString *filename = @"/tmp/iTerm2-frame-capture.zip";
     [archive writeToFile:filename atomically:NO];
     [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[ [NSURL fileURLWithPath:filename] ]];
+}
+
+- (iTermImageWrapper *)backgroundImage {
+    return [self.delegate metalGlueBackgroundImage];
+}
+
+- (iTermBackgroundImageMode)backroundImageMode {
+    return [self.delegate metalGlueBackgroundImageMode];
+}
+
+- (CGFloat)backgroundImageBlend {
+    return [self.delegate metalGlueBackgroundImageBlend];
 }
 
 @end

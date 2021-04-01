@@ -18,6 +18,10 @@
                 </dict>  
             </dict>  
         </dict> 
+	<key>CFBundleIconFile</key>
+	<string>AppIcon-Nightly</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon-Nightly</string>
         <key>NSHumanReadableCopyright</key>
         <string>GPL v2</string>
         <key>CFBundleDevelopmentRegion</key>
@@ -39,6 +43,18 @@
                 <dict>
                         <key>CFBundleTypeExtensions</key>
                         <array>
+                                <string>its</string>
+                        </array>
+                        <key>CFBundleTypeIconFile</key>
+                        <string>iTerm2Script.icns</string>
+                        <key>CFBundleTypeName</key>
+                        <string>iTerm2 Script</string>
+                        <key>CFBundleTypeRole</key>
+                        <string>Editor</string>
+                </dict>
+                <dict>
+                        <key>CFBundleTypeExtensions</key>
+                        <array>
                                 <string>command</string>
                                 <string>tool</string>
                                 <string>sh</string>
@@ -54,14 +70,14 @@
                         <string>Editor</string>
                 </dict>
                 <dict>
-                        <key>CFBundleTypeOSTypes</key>
-                        <array>
-                                <string>fold</string>
-                        </array>
                         <key>CFBundleTypeName</key>
-                        <string>Folders</string>
+                        <string>Folder</string>
                         <key>CFBundleTypeRole</key>
                         <string>Editor</string>
+                        <key>LSItemContentTypes</key>
+                        <array>
+                            <string>public.folder</string>
+                        </array>
                 </dict>
                 <dict>
                         <key>CFBundleTypeExtensions</key>
@@ -300,15 +316,13 @@
         <string>iTermApplication</string>
         <key>NSSupportsAutomaticGraphicsSwitching</key>
         <true/>
-        <key>SUPublicDSAKeyFile</key>
-        <string>dsa_pub.pem</string>
         <key>SUPublicEDKey</key>
         <string>xdqAa0KXBPhMbUrutVTe87i6U7yWf7WKaCeRG7AAZ0w=</string>
         <key>SUFeedURLForTesting</key>
-        <string>https://iterm2.com/appcasts/nightly_new.xml</string>
+        <string>https://iterm2.com/appcasts/nightly_modern.xml</string>
         <key>SUFeedURLForFinal</key>
-        <string>https://iterm2.com/appcasts/nightly_new.xml</string>
+        <string>https://iterm2.com/appcasts/nightly_modern.xml</string>
         <key>SUFeedURL</key>
-        <string>https://iterm2.com/appcasts/nightly_new.xml</string>
+        <string>https://iterm2.com/appcasts/nightly_modern.xml</string>
 </dict>
 </plist>

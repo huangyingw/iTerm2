@@ -32,9 +32,24 @@
 @protocol PSMTabStyle;
 @class PTYTab;
 @class PTYSession;
+@protocol PTYWindow;
+
+// This is only here so I can still compile the app with the 10.15 SDK.
+#if MAC_OS_X_VERSION_MAX_ALLOWED < 101600
+typedef NS_ENUM(NSUInteger, NSTitlebarSeparatorStyle) {
+    NSTitlebarSeparatorStyleAutomatic,
+    NSTitlebarSeparatorStyleNone,
+    NSTitlebarSeparatorStyleLine,
+    NSTitlebarSeparatorStyleShadow
+};
+@interface NSWindow(Future)
+- (NSTitlebarSeparatorStyle)titlebarSeparatorStyle;
+@end
+#endif
 
 // The key used for a window's arrangement in encoding restorable state.
 extern NSString *const kTerminalWindowStateRestorationWindowArrangementKey;
+extern NSString *const iTermWindowDocumentedEditedDidChange;
 
 // Rate limit title changes since they force a redraw.
 extern const NSTimeInterval iTermWindowTitleChangeMinimumInterval;
@@ -45,6 +60,7 @@ extern const NSTimeInterval iTermWindowTitleChangeMinimumInterval;
 - (BOOL)anyFullScreen;
 - (void)windowWillShowInitial;
 - (void)toggleTraditionalFullScreenMode;
+- (BOOL)terminalWindowShouldHaveTitlebarSeparator NS_AVAILABLE_MAC(10_16);
 
 // Returns the tab a session belongs to.
 - (PTYTab *)tabForSession:(PTYSession *)session;
@@ -56,6 +72,8 @@ extern const NSTimeInterval iTermWindowTitleChangeMinimumInterval;
 - (id<PSMTabStyle>)terminalWindowTabStyle;
 - (NSColor *)terminalWindowDecorationControlColor;
 - (BOOL)terminalWindowUseMinimalStyle;
+// This is called only for the menu item window > move to (screen name)
+- (void)terminalWindowWillMoveToScreen:(NSScreen *)screen;
 
 typedef NS_ENUM(NSUInteger, PTYWindowTitleBarFlavor) {
     PTYWindowTitleBarFlavorDefault,
@@ -64,6 +82,9 @@ typedef NS_ENUM(NSUInteger, PTYWindowTitleBarFlavor) {
 };
 
 - (PTYWindowTitleBarFlavor)ptyWindowTitleBarFlavor;
+
+- (BOOL)ptyWindowIsDraggable:(id<PTYWindow>)window;
+- (void)ptyWindowDidMakeKeyAndOrderFront:(id<PTYWindow>)window;
 @end
 
 // Common methods implemented by terminal windows of both kinds.
@@ -77,6 +98,8 @@ typedef NS_ENUM(NSUInteger, PTYWindowTitleBarFlavor) {
 @property(nonatomic, readonly) BOOL isCompact;
 @property(nonatomic) NSInteger it_openingSheet;
 @property (nonatomic) BOOL it_becomingKey;
+@property (nonatomic) NSInteger it_accessibilityResizing;
+@property(nonatomic) BOOL it_restorableStateInvalid;
 
 - (NSColor *)it_terminalWindowDecorationBackgroundColor;
 - (NSColor *)it_terminalWindowDecorationTextColorForBackgroundColor:(NSColor *)backgroundColor;
@@ -95,6 +118,7 @@ typedef NS_ENUM(NSUInteger, PTYWindowTitleBarFlavor) {
 // Returns the approximate fraction of this window that is occluded by other windows in this app.
 - (double)approximateFractionOccluded;
 - (void)it_setNeedsInvalidateShadow;
+- (void)setUpdatingDividerLayer:(BOOL)value;
 
 @end
 
@@ -118,6 +142,9 @@ typedef NSWindow<iTermWeaklyReferenceable, PTYWindow> iTermTerminalWindow;
 
 // Private NSWindow method, needed to avoid ghosting when using transparency.
 - (BOOL)_setContentHasShadow:(BOOL)contentHasShadow;
+
+// Called when a window gets resized via accessibility.
+- (void)accessibilitySetSizeAttribute:(id)arg1;
 
 @end
 

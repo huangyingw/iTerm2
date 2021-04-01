@@ -2,14 +2,13 @@
 function die {
     echo "$@"
     echo "$@" | mail -s "Nightly build failure" $MY_EMAIL_ADDR
+    echo echo "$@" >> ~/.login
     exit 1
 }
 # Usage: SparkleSign testing.xml template.xml signingkey
 function SparkleSign {
     LENGTH=$(ls -l iTerm2-${NAME}.zip | awk '{print $5}')
-    ruby "../../ThirdParty/SparkleSigningTools/sign_update.rb" iTerm2-${NAME}.zip $PRIVKEY > /tmp/sig.txt || die "Signing failed"
     ../../tools/sign_update iTerm2-${NAME}.zip "$3" > /tmp/newsig.txt || die SparkleSignNew
-    SIG=$(cat /tmp/sig.txt)
     NEWSIG=$(cat /tmp/newsig.txt)
     DATE=$(date +"%a, %d %b %Y %H:%M:%S %z")
     XML=$1
@@ -21,7 +20,6 @@ function SparkleSign {
     sed -e "s/%DATE%/${DATE}/" | \
     sed -e "s/%NAME%/${NAME}/" | \
     sed -e "s/%LENGTH%/$LENGTH/" | \
-    sed -e "s,%SIG%,${SIG}," | \
     sed -e "s,%NEWSIG%,${NEWSIG}," > $SVNDIR/source/appcasts/$1
     cp iTerm2-${NAME}.zip ~/iterm2-website/downloads/beta/
 }
@@ -51,21 +49,39 @@ cd build/Nightly
 # For the purposes of auto-update, the app's folder must be named iTerm.app since Sparkle won't accept a name change.
 rm -rf iTerm.app
 mv iTerm2.app iTerm.app
-zip -ry iTerm2-${NAME}.zip iTerm.app
+
+PRENOTARIZED_ZIP=iTerm2-${NAME}-prenotarized.zip
+zip -ry $PRENOTARIZED_ZIP iTerm.app
+xcrun altool --notarize-app --primary-bundle-id "com.googlecode.iterm2" --username "apple@georgester.com" --password "$NOTPASS" --file $PRENOTARIZED_ZIP > /tmp/upload.out 2>&1 || die "Notarization failed"
+UUID=$(grep RequestUUID /tmp/upload.out | sed -e 's/RequestUUID = //')
+echo "uuid is $UUID"
+xcrun altool --notarization-info $UUID -u "apple@georgester.com" -p "$NOTPASS"
+sleep 1
+while xcrun altool --notarization-info $UUID -u "apple@georgester.com" -p "$NOTPASS" 2>&1 | egrep -i "in progress|Could not find the RequestUUID":
+do
+    echo "Trying again"
+    sleep 1
+done
+NOTARIZED_ZIP=iTerm2-${NAME}.zip
+xcrun stapler staple iTerm.app
+zip -ry $NOTARIZED_ZIP iTerm.app
 
 # Modern
 SparkleSign nightly_modern.xml nightly_modern_template.xml "$SIGNING_KEY"
-# Transitional
-SparkleSign nightly_new.xml nightly_new_template.xml "$SIGNING_KEY"
-# Legacy
-SparkleSign nightly.xml nightly_template.xml "$SIGNING_KEY"
 
 #https://github.com/Homebrew/homebrew-cask-versions/pull/6965
 #cask-repair --cask-url https://www.iterm2.com/nightly/latest -b --cask-version $CASK_VERSION iterm2-nightly < /dev/null
 
-scp  -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no iTerm2-${NAME}.zip gnachman@iterm2.com:iterm2.com/nightly/iTerm2-${NAME}.zip || die "scp zip"
-ssh  -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no gnachman@iterm2.com "./newnightly.sh iTerm2-${NAME}.zip" || die "ssh"
-scp  -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no $SVNDIR/source/appcasts/nightly_changes.txt $SVNDIR/source/appcasts/nightly.xml $SVNDIR/source/appcasts/nightly_new.xml $SVNDIR/source/appcasts/nightly_modern.xml gnachman@iterm2.com:iterm2.com/appcasts/ || die "scp appcasts"
+cp iTerm2-${NAME}.zip ~/Dropbox/NightlyBuilds/
+scp  -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no iTerm2-${NAME}.zip gnachman@bryan.dreamhost.com:iterm2.com/nightly/iTerm2-${NAME}.zip || die "scp zip"
+ssh  -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no gnachman@bryan.dreamhost.com "./newnightly.sh iTerm2-${NAME}.zip" || die "ssh"
+scp  -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no $SVNDIR/source/appcasts/nightly_changes.txt $SVNDIR/source/appcasts/nightly_modern.xml gnachman@bryan.dreamhost.com:iterm2.com/appcasts/ || die "scp appcasts"
+
+curl -v -X POST "https://api.cloudflare.com/client/v4/zones/$CFZONE/purge_cache" \
+     -H "X-Auth-Email: gnachman@gmail.com" \
+     -H "X-Auth-Key: $CFKEY" \
+     -H "Content-Type: application/json" \
+     --data '{"files":["https://iterm2.com/nightly/latest"]}'
 
 cd $SVNDIR
 git add source/appcasts/nightly_changes.txt

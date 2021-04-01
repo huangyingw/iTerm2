@@ -55,16 +55,15 @@
     runner.completion = ^(int status) {
         completion(status == 0);
     };
-    runner.outputHandler = ^(NSData *data) {
+    runner.outputHandler = ^(NSData *data, void (^completion)(void)) {
         DLog(@"%@", [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]);
+        completion();
     };
     DLog(@"Running %@ %@", runner.command, [runner.arguments componentsJoinedByString:@" "]);
     [runner run];
 }
 
-- (instancetype)initWithCommand:(NSString *)command
-                  withArguments:(NSArray<NSString *> *)arguments
-                           path:(NSString *)currentDirectoryPath {
+- (instancetype)init {
     self = [super init];
     if (self) {
         _task = [[NSTask alloc] init];
@@ -73,7 +72,15 @@
         _readingQueue = dispatch_queue_create("com.iterm2.crun-reading", DISPATCH_QUEUE_SERIAL);
         _writingQueue = dispatch_queue_create("com.iterm2.crun-writing", DISPATCH_QUEUE_SERIAL);
         _waitingQueue = dispatch_queue_create("com.iterm2.crun-waiting", DISPATCH_QUEUE_SERIAL);
-        assert(command);
+    }
+    return self;
+}
+
+- (instancetype)initWithCommand:(NSString *)command
+                  withArguments:(NSArray<NSString *> *)arguments
+                           path:(NSString *)currentDirectoryPath {
+    self = [self init];
+    if (self) {
         self.command = command;
         self.arguments = arguments;
         self.currentDirectoryPath = currentDirectoryPath;
@@ -169,7 +176,17 @@
     DLog(@"%@ readAndWait starting", task);
     dispatch_async(_waitingQueue, ^{
         DLog(@"%@ readAndWait calling waitUntilExit", task);
-        [task waitUntilExit];
+
+        DLog(@"Wait for %@", task.executableURL.path);
+        dispatch_group_t group = dispatch_group_create();
+        dispatch_group_enter(group);
+        task.terminationHandler = ^(NSTask *task) {
+            DLog(@"Termination handler run for %@", task.executableURL.path);
+            dispatch_group_leave(group);
+        };
+        dispatch_wait(group, DISPATCH_TIME_FOREVER);
+        DLog(@"Resuming after termination of %@", task.executableURL.path);
+
         DLog(@"%@ readAndWait waitUntilExit returned", task);
         // This makes -availableData return immediately.
         pipe.fileHandleForReading.readabilityHandler = nil;
@@ -190,7 +207,12 @@
     while (inData.length) {
         @autoreleasepool {
             DLog(@"runCommand: Read %@", inData);
-            [self didReadData:inData];
+            dispatch_group_t group = dispatch_group_create();
+            dispatch_group_enter(group);
+            [self didReadData:inData completion:^{
+                dispatch_group_leave(group);
+            }];
+            dispatch_group_wait(group, DISPATCH_TIME_FOREVER);
             if (!self.outputHandler) {
                 DLog(@"%@: %@", [task.arguments componentsJoinedByString:@" "],
                      [[NSString alloc] initWithData:inData encoding:NSUTF8StringEncoding]);
@@ -221,6 +243,7 @@
 - (void)write:(NSData *)data completion:(void (^)(size_t, int))completion {
     int fd = [[_inputPipe fileHandleForWriting] fileDescriptor];
     DLog(@"Planning to write %@ bytes to %@", @(data.length), self);
+
     dispatch_data_t dispatchData = dispatch_data_create(data.bytes, data.length, _writingQueue, ^{
         [data length];  // just ensure data is retained
     });
@@ -233,12 +256,13 @@
     });
 }
 
-- (void)didReadData:(NSData *)inData {
+- (void)didReadData:(NSData *)inData completion:(void (^)(void))completion {
     if (!self.outputHandler) {
+        completion();
         return;
     }
     dispatch_async(dispatch_get_main_queue(), ^{
-        self.outputHandler(inData);
+        self.outputHandler(inData, completion);
     });
 }
 
@@ -248,11 +272,15 @@
     NSMutableData *_output;
 }
 
-- (void)didReadData:(NSData *)inData {
+- (void)didReadData:(NSData *)inData completion:(void (^)(void))completion {
     dispatch_async(dispatch_get_main_queue(), ^{
         [self saveData:inData];
+        if (!self.outputHandler) {
+            completion();
+            return;
+        }
+        self.outputHandler(inData, completion);
     });
-    [super didReadData:inData];
 }
 
 - (void)saveData:(NSData *)inData {

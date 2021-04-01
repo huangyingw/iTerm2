@@ -22,25 +22,35 @@
 // Update window title, tab colors, and redraw view.
 - (void)screenUpdateDisplay:(BOOL)redraw;
 
+// Redraw the find on page view because search results may have been lost.
+- (void)screenRefreshFindOnPageView;
+
 // Called when the screen's size changes.
-- (void)screenSizeDidChange;
+- (void)screenSizeDidChangeWithNewTopLineAt:(int)newTop;
 
 // A change was made to the screen's contents which could cause a trigger to fire.
 - (void)screenTriggerableChangeDidOccur;
 
 // Called when the screen and terminal's attributes are reset
-- (void)screenDidReset;
+- (void)screenDidResetAllowingContentModification:(BOOL)modifyContent;
 
 // Terminal can change title
 - (BOOL)screenAllowTitleSetting;
 
 // Called after text was added to the current line. Can be used to check triggers.
-- (void)screenDidAppendStringToCurrentLine:(NSString *)string;
+- (void)screenDidAppendStringToCurrentLine:(NSString *)string
+                               isPlainText:(BOOL)plainText;
 - (void)screenDidAppendAsciiDataToCurrentLine:(AsciiData *)asciiData;
 
 // Change the cursor's appearance.
 - (void)screenSetCursorBlinking:(BOOL)blink;
 - (void)screenSetCursorType:(ITermCursorType)type;
+
+- (void)screenGetCursorType:(ITermCursorType *)cursorTypeOut
+                   blinking:(BOOL *)blinking;
+
+- (void)screenResetCursorTypeAndBlink;
+
 
 // Returns if the screen is permitted to resize the window.
 - (BOOL)screenShouldInitiateWindowResize;
@@ -173,15 +183,17 @@
 
 // Bounce the dock. Set request to false to cancel.
 - (void)screenRequestAttention:(VT100AttentionRequestType)request;
+- (void)screenDidTryToUseDECRQCRA;
 
 - (void)screenDisinterSession;
 
-- (NSString *)screenCurrentWorkingDirectory;
+- (void)screenGetWorkingDirectoryWithCompletion:(void (^)(NSString *workingDirectory))completion;
 
 // Show/hide the cursor.
 - (void)screenSetCursorVisible:(BOOL)visible;
 
 - (void)screenSetHighlightCursorLine:(BOOL)highlight;
+- (void)screenClearCapturedOutput;
 
 // Only called if the trackCursorLineMovement property is set.
 - (void)screenCursorDidMoveToLine:(int)line;
@@ -195,7 +207,7 @@
 - (void)screenPromptDidStartAtLine:(int)line;
 - (void)screenPromptDidEndAtLine:(int)line;
 
-- (void)screenActivateWindow;
+- (void)screenStealFocus;
 
 - (void)screenSetProfileToProfileNamed:(NSString *)value;
 - (void)screenSetPasteboard:(NSString *)value;
@@ -229,18 +241,20 @@
 
 // Ok to write to shell?
 - (BOOL)screenShouldSendReport;
+- (BOOL)screenShouldSendReportForVariable:(NSString *)name;
 
 // FinalTerm stuff
 - (void)screenCommandDidChangeWithRange:(VT100GridCoordRange)range;
 - (void)screenCommandDidEndWithRange:(VT100GridCoordRange)range;
-- (void)screenCommandDidExitWithCode:(int)code;
+- (void)screenCommandDidExitWithCode:(int)code mark:(VT100ScreenMark *)maybeMark;
 - (BOOL)screenShouldPlacePromptAtFirstColumn;
 
 - (NSString *)screenProfileName;
 
 - (void)screenLogWorkingDirectoryAtLine:(int)line
                           withDirectory:(NSString *)directory
-                                 pushed:(BOOL)pushed;
+                                 pushed:(BOOL)pushed
+                                 timely:(BOOL)timely;
 
 - (void)screenSuggestShellIntegrationUpgrade;
 - (void)screenDidDetectShell:(NSString *)shell;
@@ -255,13 +269,22 @@
 - (void)screenSetLabel:(NSString *)label forKey:(NSString *)keyName;
 - (void)screenPushKeyLabels:(NSString *)value;
 - (void)screenPopKeyLabels:(NSString *)value;
+- (void)screenSendModifiersDidChange;
+- (void)screenKeyReportingFlagsDidChange;
 
 - (void)screenTerminalAttemptedPasteboardAccess;
 - (NSString *)screenValueOfVariableNamed:(NSString *)name;
 - (void)screenReportFocusWillChangeTo:(BOOL)reportFocus;
+- (void)screenReportPasteBracketingWillChangeTo:(BOOL)bracket;
 - (void)screenDidReceiveLineFeed;
 - (void)screenSoftAlternateScreenModeDidChange;
 - (void)screenReportKeyUpDidChange:(BOOL)reportKeyUp;
-- (BOOL)screenConfirmDownloadCanExceedSize:(NSInteger)limit;
+- (BOOL)screenConfirmDownloadNamed:(NSString *)name canExceedSize:(NSInteger)limit;
+- (BOOL)screenConfirmDownloadAllowed:(NSString *)name
+                                size:(NSInteger)size
+                       displayInline:(BOOL)displayInline
+                         promptIfBig:(BOOL *)promptIfBig;
+- (BOOL)screenShouldClearScrollbackBuffer;
+- (VT100GridRange)screenRangeOfVisibleLines;
 
 @end

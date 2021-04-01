@@ -1,7 +1,9 @@
 #import "ProfileModel.h"
 
-#import "iTermProfileHotKey.h"
 #import "iTermAppHotKey.h"
+#import "iTermEncoderAdapter.h"
+#import "iTermGraphEncoder.h"
+#import "iTermProfileHotKey.h"
 #import "NSDictionary+iTerm.h"
 #import "PseudoTerminal.h"
 
@@ -16,7 +18,7 @@
 // restoring legacy hotkey window state.
 extern NSString *const TERMINAL_ARRANGEMENT_PROFILE_GUID;
 
-@interface iTermHotKeyController : NSObject
+@interface iTermHotKeyController : NSObject<iTermGraphCodable>
 
 // Returns the designated hotkey window or nil if there is none.
 @property(nonatomic, readonly) NSArray<PseudoTerminal *> *hotKeyWindowControllers;
@@ -53,8 +55,11 @@ extern NSString *const TERMINAL_ARRANGEMENT_PROFILE_GUID;
 
 - (iTermProfileHotKey *)profileHotKeyForWindowController:(PseudoTerminal *)windowController;
 
-- (NSInteger)createHiddenWindowsFromRestorableStates:(NSArray *)states;
-- (void)createHiddenWindowFromLegacyRestorableState:(NSDictionary *)legacyState;
+- (NSInteger)createHiddenWindowsFromRestorableStates:(NSArray *)states;  // legacy
+- (BOOL)createHiddenWindowsByDecoding:(iTermEncoderGraphRecord *)record;  // sqlite
+
+// Resets invalidation state.
+- (BOOL)anyProfileHotkeyWindowHasInvalidState;
 
 // Auto hide all hotkey windows, if needed and possible.
 - (void)autoHideHotKeyWindows;
@@ -84,8 +89,7 @@ extern NSString *const TERMINAL_ARRANGEMENT_PROFILE_GUID;
 // its own windows, but that's not the case for e.g. tmux windows. Returns the iTermProfileHotKey if
 // the window controller was assigned a shotkey or nil if not.
 - (iTermProfileHotKey *)didCreateWindowController:(PseudoTerminal *)windowController
-                                      withProfile:(Profile *)profile
-                                             show:(BOOL)show;
+                                      withProfile:(Profile *)profile;
 
 // Hide all hotkey windows without animation. Used by Exposé All Tabs.
 - (void)fastHideAllHotKeyWindows;

@@ -9,10 +9,13 @@
 #import "ToolProfiles.h"
 
 #import "DebugLogging.h"
+#import "iTermController.h"
+#import "iTermSessionLauncher.h"
 #import "NSEvent+iTerm.h"
+#import "NSFont+iTerm.h"
+#import "NSImage+iTerm.h"
 #import "ProfileModel.h"
 #import "PseudoTerminal.h"
-#import "iTermController.h"
 
 static const int kVerticalMargin = 5;
 static const int kMargin = 0;
@@ -32,24 +35,36 @@ static NSString *const iTermToolProfilesProfileListViewState = @"iTermToolProfil
     if (self) {
         listView_ = [[ProfileListView alloc] initWithFrame:NSMakeRect(kMargin, 0, frame.size.width - kMargin * 2, frame.size.height - kPopupHeight - kVerticalMargin)
                                                      model:[ProfileModel sharedInstance]
-                                                      font:[NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
+                                                      font:[NSFont it_toolbeltFont]];
         [listView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
         [listView_ setDelegate:self];
         [listView_ disableArrowHandler];
         [listView_ allowMultipleSelections];
         [listView_.tableView setHeaderView:nil];
-        if (@available(macOS 10.14, *)) { } else {
-            listView_.tableView.enclosingScrollView.drawsBackground = NO;
+        listView_.tableView.enclosingScrollView.drawsBackground = NO;
+        if (@available(macOS 10.16, *)) {
+            [listView_ forceOverlayScroller];
+        }
+        if (@available(macOS 10.14, *)) {
+            listView_.tableView.backgroundColor = [NSColor clearColor];
         }
 
         [self addSubview:listView_];
 
         _openButton = [[NSButton alloc] initWithFrame:NSMakeRect(0, frame.size.height - kButtonHeight, frame.size.width, kButtonHeight)];
-        [_openButton setButtonType:NSMomentaryPushInButton];
-        [_openButton setTitle:@"Open"];
+        if (@available(macOS 10.16, *)) {
+            _openButton.bezelStyle = NSBezelStyleRegularSquare;
+            _openButton.bordered = NO;
+            _openButton.image = [NSImage it_imageForSymbolName:@"play" accessibilityDescription:@"Open Profile"];
+            _openButton.imageScaling = NSImageScaleProportionallyUpOrDown;
+            _openButton.imagePosition = NSImageOnly;
+        } else {
+            [_openButton setButtonType:NSButtonTypeMomentaryPushIn];
+            [_openButton setTitle:@"Open"];
+            [_openButton setBezelStyle:NSBezelStyleSmallSquare];
+        }
         [_openButton setTarget:self];
         [_openButton setAction:@selector(open:)];
-        [_openButton setBezelStyle:NSSmallSquareBezelStyle];
         [_openButton sizeToFit];
         [_openButton setAutoresizingMask:NSViewMinYMargin];
         [self addSubview:_openButton];
@@ -81,7 +96,6 @@ static NSString *const iTermToolProfilesProfileListViewState = @"iTermToolProfil
                                                    object:nil];
 
         [popup_ bind:@"enabled" toObject:listView_ withKeyPath:@"hasSelection" options:nil];
-
     }
     return self;
 }
@@ -103,11 +117,28 @@ static NSString *const iTermToolProfilesProfileListViewState = @"iTermToolProfil
 - (void)relayout {
     NSRect frame = self.frame;
     listView_.frame = NSMakeRect(kMargin, 0, frame.size.width - kMargin * 2, frame.size.height - kPopupHeight - kVerticalMargin);
-    popup_.frame = NSMakeRect(0, frame.size.height - kPopupHeight, frame.size.width - _openButton.frame.size.width - kInnerMargin, kPopupHeight);
-    _openButton.frame = NSMakeRect(frame.size.width - _openButton.frame.size.width,
-                                   frame.size.height - kPopupHeight,
-                                   _openButton.frame.size.width,
-                                   _openButton.frame.size.height);
+    if (@available(macOS 10.16, *)) {
+        const CGFloat margin = 0;
+        popup_.frame = NSMakeRect(0,
+                                  frame.size.height - kPopupHeight,
+                                  frame.size.width - NSWidth(_openButton.frame) - margin,
+                                  kPopupHeight);
+        NSRect rect = _openButton.frame;
+        const CGFloat inset = (NSHeight(popup_.frame) - NSHeight(rect)) / 2.0;
+        rect.origin.x = NSMaxX(popup_.frame) + margin;
+        const CGFloat fudgeFactor = 1;
+        rect.origin.y = inset + NSMinY(popup_.frame) - fudgeFactor;
+        _openButton.frame = rect;
+    } else {
+        popup_.frame = NSMakeRect(0,
+                                  frame.size.height - kPopupHeight,
+                                  frame.size.width - _openButton.frame.size.width - kInnerMargin,
+                                  kPopupHeight);
+        _openButton.frame = NSMakeRect(frame.size.width - _openButton.frame.size.width,
+                                       frame.size.height - kPopupHeight,
+                                       _openButton.frame.size.width,
+                                       _openButton.frame.size.height);
+    }
 }
 
 - (BOOL)isFlipped
@@ -120,9 +151,10 @@ static NSString *const iTermToolProfilesProfileListViewState = @"iTermToolProfil
     PseudoTerminal* terminal = [[iTermController sharedInstance] currentTerminal];
     for (NSString* guid in [listView_ selectedGuids]) {
         Profile* bookmark = [[ProfileModel sharedInstance] bookmarkWithGuid:guid];
-        [[iTermController sharedInstance] launchBookmark:bookmark
-                                              inTerminal:terminal
-                                      respectTabbingMode:NO];
+        [iTermSessionLauncher launchBookmark:bookmark
+                                  inTerminal:terminal
+                          respectTabbingMode:NO
+                                  completion:nil];
     }
 }
 
@@ -130,9 +162,10 @@ static NSString *const iTermToolProfilesProfileListViewState = @"iTermToolProfil
 {
     for (NSString* guid in [listView_ selectedGuids]) {
         Profile* bookmark = [[ProfileModel sharedInstance] bookmarkWithGuid:guid];
-        [[iTermController sharedInstance] launchBookmark:bookmark
-                                              inTerminal:nil
-                                      respectTabbingMode:NO];
+        [iTermSessionLauncher launchBookmark:bookmark
+                                  inTerminal:nil
+                          respectTabbingMode:NO
+                                  completion:nil];
     }
 }
 
@@ -140,9 +173,16 @@ static NSString *const iTermToolProfilesProfileListViewState = @"iTermToolProfil
 {
     PseudoTerminal* terminal = [[iTermController sharedInstance] currentTerminal];
     for (NSString* guid in [listView_ selectedGuids]) {
-        [terminal splitVertically:NO
-                 withBookmarkGuid:guid
-                      synchronous:NO];
+        Profile *profile = [[ProfileModel sharedInstance] bookmarkWithGuid:guid];
+        if (!profile) {
+            continue;
+        }
+        [terminal asyncSplitVertically:NO
+                                before:NO
+                               profile:profile
+                         targetSession:[terminal currentSession]
+                            completion:nil
+                                 ready:nil];
     }
 }
 
@@ -150,9 +190,16 @@ static NSString *const iTermToolProfilesProfileListViewState = @"iTermToolProfil
 {
     PseudoTerminal* terminal = [[iTermController sharedInstance] currentTerminal];
     for (NSString* guid in [listView_ selectedGuids]) {
-        [terminal splitVertically:YES
-                 withBookmarkGuid:guid
-                      synchronous:NO];
+        Profile *profile = [[ProfileModel sharedInstance] bookmarkWithGuid:guid];
+        if (!profile) {
+            continue;
+        }
+        [terminal asyncSplitVertically:YES
+                                before:NO
+                               profile:profile
+                         targetSession:[terminal currentSession]
+                            completion:nil
+                                 ready:nil];
     }
 }
 

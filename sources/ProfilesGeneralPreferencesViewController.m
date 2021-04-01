@@ -7,9 +7,12 @@
 //
 
 #import "ProfilesGeneralPreferencesViewController.h"
+
 #import "AdvancedWorkingDirectoryWindowController.h"
+#import "DebugLogging.h"
 #import "ITAddressBookMgr.h"
 #import "iTermAPIHelper.h"
+#import "iTermAdvancedSettingsModel.h"
 #import "iTermBadgeConfigurationWindowController.h"
 #import "iTermFunctionCallTextFieldDelegate.h"
 #import "iTermImageWell.h"
@@ -25,6 +28,7 @@
 #import "iTermVariableScope+Tab.h"
 #import "iTermVariableScope+Window.h"
 #import "NSObject+iTerm.h"
+#import "NSStringITerm.h"
 #import "NSTextField+iTerm.h"
 #import "ProfileListView.h"
 #import "ProfileModel.h"
@@ -32,8 +36,11 @@
 #import "PTYSession.h"
 
 // Tags for _commandType matrix selectedCell.
-static const NSInteger kCommandTypeCustomTag = 0;
-static const NSInteger kCommandTypeLoginShellTag = 1;
+typedef NS_ENUM(NSInteger, iTermGeneralProfilePreferenceCustomCommandTag) {
+    iTermGeneralProfilePreferenceCustomCommandTagCustom = 0,
+    iTermGeneralProfilePreferenceCustomCommandTagLoginShell = 1,
+    iTermGeneralProfilePreferenceCustomCommandTagCustomShell = 2
+};
 
 // Tags for _initialDirectoryType
 static const NSInteger kInitialDirectoryTypeCustomTag = 0;
@@ -76,6 +83,8 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
     IBOutlet NSTextField *_badgeLabel;
     IBOutlet NSTextField *_badgeTextForEditCurrentSession;
     IBOutlet NSButton *_editBadgeButton;
+    iTermFunctionCallTextFieldDelegate *_commandDelegate;
+    iTermFunctionCallTextFieldDelegate *_sendTextAtStartDelegate;
     iTermFunctionCallTextFieldDelegate *_profileNameFieldDelegate;
     iTermFunctionCallTextFieldDelegate *_profileNameFieldForEditCurrentSessionDelegate;
     iTermFunctionCallTextFieldDelegate *_badgeTextFieldDelegate;
@@ -84,13 +93,15 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
     iTermFunctionCallTextFieldDelegate *_windowTitleTextFieldDelegate;
     iTermFunctionCallTextFieldDelegate *_customDirectoryTextFieldDelegate;
     IBOutlet NSPopUpButton *_titleSettingsForEditCurrentSession;
+    IBOutlet NSView *_iconContainer;
     IBOutlet NSPopUpButton *_icon;
     IBOutlet NSTextField *_iconLabel;
     IBOutlet NSImageView *_imageWell;
     IBOutlet NSTextField *_tabTitle;
     IBOutlet NSTextField *_windowTitle;
     IBOutlet NSButton *_allowTitleSetting;
-
+    IBOutlet NSButton *_locked;
+    
     // Controls for Edit Info
     IBOutlet ProfileListView *_profiles;
     IBOutlet iTermShortcutInputView *_sessionHotkeyInputView;
@@ -101,6 +112,8 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
     IBOutlet NSPopUpButton *_titleSettings;
     IBOutlet NSTextField *_titleSettingsLabel;
     IBOutlet NSButton *_customTitleHelp;
+
+    IBOutlet NSButton *_preventAutomaticProfileSwitching;
 
     BOOL _profileNameChangePending;
     iTermRateLimitedUpdate *_rateLimit;
@@ -179,6 +192,11 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
                                                      functionsOnly:NO];
     _profileNameFieldForEditCurrentSession.delegate = _profileNameFieldForEditCurrentSessionDelegate;
 
+    if (@available(macOS 10.13, *)) { } else {
+        // 10.12 code path — I can't get NSTextAttachment to behave itself. For some reason it doesn't
+        // draw the tab graphic at all. I'm ragequitting.
+        _iconContainer.hidden = YES;
+    }
     info = [self defineControl:_icon
                            key:KEY_ICON
                    displayName:@"Profile icon"
@@ -206,13 +224,22 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
 
     [self defineControl:_commandType
                     key:KEY_CUSTOM_COMMAND
-            displayName:@"Profile uses login shell or custom command"
+            displayName:@"Profile uses login shell, custom shell, or custom command"
                    type:kPreferenceInfoTypePopup
          settingChanged:^(id sender) { [weakSelf commandTypeDidChange]; }
                  update:^BOOL { [weakSelf updateCommandType]; return YES; }];
 
     _customCommand.cell.usesSingleLineMode = YES;
     _customCommand.hidden = YES;
+
+    _commandDelegate =
+    [[iTermFunctionCallTextFieldDelegate alloc] initWithPathSource:[iTermVariableHistory pathSourceForContext:iTermVariablesSuggestionContextSession]
+                                                       passthrough:_customCommand.delegate
+                                                     functionsOnly:NO];
+    if ([[self objectForKey:KEY_CUSTOM_COMMAND] isEqual:kProfilePreferenceCommandTypeCustomValue]) {
+        _customCommand.delegate = _commandDelegate;
+    }
+
     info = [self defineControl:_customCommand
                            key:KEY_COMMAND_LINE
                    displayName:@"Profile custom ommand"
@@ -222,13 +249,20 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
         if (!strongSelf) {
             return NO;
         }
-        return strongSelf->_commandType.selectedTag == kCommandTypeCustomTag;
+        return strongSelf->_commandType.selectedTag != iTermGeneralProfilePreferenceCustomCommandTagLoginShell;
     };
 
     [self defineControl:_sendTextAtStart
                     key:KEY_INITIAL_TEXT
             relatedView:_sendTextAtStartLabel
                    type:kPreferenceInfoTypeStringTextField];
+
+    _sendTextAtStartDelegate =
+    [[iTermFunctionCallTextFieldDelegate alloc] initWithPathSource:[iTermVariableHistory pathSourceForContext:iTermVariablesSuggestionContextSession]
+                                                       passthrough:_sendTextAtStart.delegate
+                                                     functionsOnly:NO];
+    _sendTextAtStart.delegate = _sendTextAtStartDelegate;
+
 
     [self defineControl:_initialDirectoryType
                     key:KEY_CUSTOM_DIRECTORY
@@ -243,6 +277,7 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
                                                            iTermVariableKeySessionHostname,
                                                            iTermVariableKeySessionName,
                                                            iTermVariableKeySessionJob,
+                                                           iTermVariableKeySessionProcessTitle,
                                                            iTermVariableKeySessionPath,
                                                            iTermVariableKeySessionJobPid] ];
     _customDirectoryTextFieldDelegate =
@@ -322,7 +357,12 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
                    displayName:@"URL schemes handled by profile"
                        phrases:@[ @"ssh", @"http", @"https" ]
                            key:nil];
-    
+
+    [self defineControl:_preventAutomaticProfileSwitching
+                    key:KEY_PREVENT_APS
+            displayName:nil
+                   type:kPreferenceInfoTypeCheckbox];
+
     [self updateSelectedTitleComponents];
 
     [_profiles selectRowByGuid:[self.delegate profilePreferencesCurrentProfile][KEY_ORIGINAL_GUID]];
@@ -352,7 +392,11 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
 }
 
 - (void)sessionNameDidEndEditing {
-    [self setString:_profileNameFieldForEditCurrentSession.stringValue forKey:KEY_TMUX_PANE_TITLE];
+    if ([self stringForKey:KEY_TMUX_PANE_TITLE]) {
+        [self setString:_profileNameFieldForEditCurrentSession.stringValue forKey:KEY_TMUX_PANE_TITLE];
+    } else {
+        [self setString:_profileNameFieldForEditCurrentSession.stringValue forKey:KEY_NAME];
+    }
     [_rateLimit force];
     [_profileDelegate profilesGeneralPreferencesNameDidEndEditing];
 }
@@ -383,9 +427,10 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
     [panel setAllowedFileTypes:[NSImage imageTypes]];
 
     void (^completion)(NSInteger) = ^(NSInteger result) {
-        if (result == NSFileHandlingPanelOKButton) {
+        if (result == NSModalResponseOK) {
             NSURL *url = [[panel URLs] objectAtIndex:0];
             if (![self loadIconWithFilename:url.path]) {
+                DLog(@"Beep: Failed to load icon at %@", url);
                 NSBeep();
             }
         }
@@ -432,6 +477,33 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
 
 - (void)layoutSubviewsForEditCurrentSessionMode {
     self.view = _editCurrentSessionView;
+
+    PreferenceInfo *info = [self infoForControl:_allowTitleSetting];
+    [self setControl:_locked inPreference:info];
+    __weak __typeof(self) weakSelf = self;
+    info.observer = ^{
+        [weakSelf updateLockImage];
+    };
+    info.customSettingChangedHandler = ^(id sender) {
+        [weakSelf toggleLock];
+    };
+    [self updateLockImage];
+}
+
+- (void)toggleLock {
+    [self setBool:![self boolForKey:KEY_ALLOW_TITLE_SETTING] forKey:KEY_ALLOW_TITLE_SETTING];
+}
+
+- (void)updateLockImage {
+    static NSImage *unlockedImage;
+    static NSImage *lockedImage;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        unlockedImage = [NSImage imageNamed:NSImageNameLockUnlockedTemplate];
+        lockedImage = [NSImage imageNamed:NSImageNameLockLockedTemplate];
+    });
+    const BOOL unlocked = [self boolForKey:KEY_ALLOW_TITLE_SETTING];
+    _locked.image = unlocked ? unlockedImage : lockedImage;
 }
 
 - (void)updateTmuxTabTitle {
@@ -530,7 +602,8 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
 
 - (void)updateEnabledState {
     [super updateEnabledState];
-    if ([[self stringForKey:KEY_CUSTOM_COMMAND] isEqualToString:kProfilePreferenceCommandTypeCustomValue]) {
+    if ([[self stringForKey:KEY_CUSTOM_COMMAND] isEqualToString:kProfilePreferenceCommandTypeCustomValue] ||
+        [[self stringForKey:KEY_CUSTOM_COMMAND] isEqualToString:kProfilePreferenceCommandTypeCustomShellValue]) {
         _customCommand.hidden = NO;
         _customCommand.enabled = YES;
     } else {
@@ -570,14 +643,22 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
 // guid of the profile from which all that data came.n
 - (IBAction)changeProfile:(id)sender {
     NSString *guid = [_profiles selectedGuid];
-    if (guid) {
-        Profile *bookmark = [[ProfileModel sharedInstance] bookmarkWithGuid:guid];
-        Profile *origProfile = [self.delegate profilePreferencesCurrentProfile];
-        NSString* origGuid = origProfile[KEY_GUID];
-        [[ProfileModel sessionsInstance] setProfilePreservingGuidWithGuid:origGuid
-                                                              fromProfile:bookmark];
-        [self reloadProfile];
+    if (!guid) {
+        return;
     }
+    Profile *bookmark = [[ProfileModel sharedInstance] bookmarkWithGuid:guid];
+    Profile *origProfile = [self.delegate profilePreferencesCurrentProfile];
+    NSString* origGuid = origProfile[KEY_GUID];
+    NSDictionary<NSString *, id> *overrides;
+    if ([self boolForKey:KEY_PREVENT_APS]) {
+        overrides = @{ KEY_PREVENT_APS: @YES };
+    } else {
+        overrides = @{};
+    }
+    [[ProfileModel sessionsInstance] setProfilePreservingGuidWithGuid:origGuid
+                                                          fromProfile:bookmark
+                                                            overrides:overrides];
+    [self reloadProfile];
 }
 
 #pragma mark - URL Schemes
@@ -592,7 +673,7 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
 
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem {
     if (menuItem.menu == _urlSchemes.menu) {
-        menuItem.state = [self profileHandlesScheme:menuItem.title] ? NSOnState : NSOffState;
+        menuItem.state = [self profileHandlesScheme:menuItem.title] ? NSControlStateValueOn : NSControlStateValueOff;
     }
     return YES;
 }
@@ -701,10 +782,19 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
 - (void)commandTypeDidChange {
     NSInteger tag = _commandType.selectedTag;
     NSString *value;
-    if (tag == kCommandTypeCustomTag) {
-        value = kProfilePreferenceCommandTypeCustomValue;
-    } else {
-        value = kProfilePreferenceCommandTypeLoginShellValue;
+    switch (tag) {
+        case iTermGeneralProfilePreferenceCustomCommandTagCustom:
+            value = kProfilePreferenceCommandTypeCustomValue;
+            _customCommand.delegate = _commandDelegate;
+            break;
+        case iTermGeneralProfilePreferenceCustomCommandTagLoginShell:
+            value = kProfilePreferenceCommandTypeLoginShellValue;
+            _customCommand.delegate = _commandDelegate.passthrough;
+            break;
+        case iTermGeneralProfilePreferenceCustomCommandTagCustomShell:
+            value = kProfilePreferenceCommandTypeCustomShellValue;
+            _customCommand.delegate = _commandDelegate.passthrough;
+            break;
     }
     [self setString:value forKey:KEY_CUSTOM_COMMAND];
     [self updateEnabledState];
@@ -713,9 +803,16 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
 - (void)updateCommandType {
     NSString *value = [self stringForKey:KEY_CUSTOM_COMMAND];
     if ([value isEqualToString:kProfilePreferenceCommandTypeCustomValue]) {
-        [_commandType selectItemWithTag:kCommandTypeCustomTag];
+        [_commandType selectItemWithTag:iTermGeneralProfilePreferenceCustomCommandTagCustom];
+        _customCommand.placeholderString = @"Enter command to run when a new session is created";
+    } else if ([value isEqualToString:kProfilePreferenceCommandTypeCustomShellValue]) {
+        [_commandType selectItemWithTag:iTermGeneralProfilePreferenceCustomCommandTagCustomShell];
+        _customCommand.placeholderString = @"Enter full path to shell";
+        [self removeWhitespaceFromCustomCommand];
+        [[NSUserDefaults standardUserDefaults] setObject:_customCommand.stringValue
+                                                  forKey:KEY_COMMAND_LINE];
     } else {
-        [_commandType selectItemWithTag:kCommandTypeLoginShellTag];
+        [_commandType selectItemWithTag:iTermGeneralProfilePreferenceCustomCommandTagLoginShell];
     }
     [self updateEnabledState];
 }
@@ -907,7 +1004,7 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
         } else if (item.tag == -1) {
             selected = NO;
         }
-        item.state = selected ? NSOnState : NSOffState;
+        item.state = selected ? NSControlStateValueOn : NSControlStateValueOff;
         if (selected) {
             [parts addObject:item.title];
         }
@@ -993,6 +1090,10 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
     id control = [aNotification object];
     if (control == _profileNameFieldForEditCurrentSession) {
         [self sessionNameDidChange];
+        if ([self boolForKey:KEY_ALLOW_TITLE_SETTING] &&
+            [iTermAdvancedSettingsModel autoLockSessionNameOnEdit]) {
+            [self toggleLock];
+        }
         return;
     }
     if (control == _tabTitle) {
@@ -1002,7 +1103,22 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
     if (control == _windowTitle) {
         [self windowTitleDidChange];
     }
+    if (control == _customCommand) {
+        if ([[self stringForKey:KEY_CUSTOM_COMMAND] isEqualToString:kProfilePreferenceCommandTypeCustomShellValue]) {
+            [self removeWhitespaceFromCustomCommand];
+        }
+    }
     [super controlTextDidChange:aNotification];
+}
+
+- (void)removeWhitespaceFromCustomCommand {
+    while (1) {
+        const NSRange range = [_customCommand.stringValue rangeOfCharacterFromSet:[NSCharacterSet whitespaceCharacterSet]];
+        if (range.location == NSNotFound) {
+            return;
+        }
+        _customCommand.stringValue = [_customCommand.stringValue stringByReplacingCharactersInRange:range withString:@""];
+    }
 }
 
 - (void)sessionNameDidChange {

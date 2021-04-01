@@ -34,6 +34,10 @@
 + (NSDictionary *)dictionaryWithGridWindowedRange:(VT100GridWindowedRange)range;
 - (VT100GridWindowedRange)gridWindowedRange;
 
++ (NSDictionary *)dictionaryWithGridAbsWindowedRange:(VT100GridAbsWindowedRange)range;
+- (VT100GridAbsWindowedRange)gridAbsWindowedRange;
+- (BOOL)hasGridAbsWindowedRange;
+
 + (NSDictionary *)dictionaryWithGridRange:(VT100GridRange)range;
 - (VT100GridRange)gridRange;
 
@@ -52,6 +56,7 @@
 - (NSDictionary *)dictionaryBySettingObject:(ObjectType)object forKey:(KeyType)key;
 - (NSDictionary *)dictionaryByRemovingObjectForKey:(KeyType)key;
 - (NSDictionary<KeyType, ObjectType> *)dictionaryKeepingOnlyKeys:(NSArray<KeyType> *)keys;
+- (NSDictionary<KeyType, ObjectType> *)filteredWithBlock:(BOOL (^NS_NOESCAPE)(KeyType key, ObjectType value))block;
 
 - (NSData *)propertyListData;
 - (NSString *)sizeInfo;
@@ -63,8 +68,8 @@
 // tuple is iTermTuple<KeyType, ObjectType>. Compiler won't let me write this.
 - (NSDictionary *)mapWithBlock:(iTermTuple * (^)(KeyType key, ObjectType object))block;
 - (NSDictionary<id, NSDictionary<KeyType, ObjectType> *> *)classifyWithBlock:(id (^NS_NOESCAPE)(KeyType key, ObjectType object))block;
-- (NSDictionary<KeyType, ObjectType> *)filterWithBlock:(BOOL (^NS_NOESCAPE)(KeyType key, ObjectType object))block;
 
+- (NSData *)it_xmlPropertyList;
 - (BOOL)it_writeToXMLPropertyListAt:(NSString *)path;
 - (id)it_jsonSafeValue;
 

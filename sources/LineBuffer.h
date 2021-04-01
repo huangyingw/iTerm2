@@ -28,11 +28,18 @@
 
 #import <Cocoa/Cocoa.h>
 #import "FindContext.h"
+#import "iTermEncoderAdapter.h"
 #import "iTermFindDriver.h"
 #import "ScreenChar.h"
 #import "LineBufferPosition.h"
 #import "LineBufferHelpers.h"
 #import "VT100GridTypes.h"
+
+@class LineBuffer;
+
+@protocol iTermLineBufferDelegate<NSObject>
+- (void)lineBufferDidDropLines:(LineBuffer *)lineBuffer;
+@end
 
 // A LineBuffer represents an ordered collection of strings of screen_char_t. Each string forms a
 // logical line of text plus color information. Logic is provided for the following major functions:
@@ -49,6 +56,7 @@
 
 // Absolute block number of last block.
 @property(nonatomic, readonly) int largestAbsoluteBlockNumber;
+@property(nonatomic, weak) id<iTermLineBufferDelegate> delegate;
 
 - (LineBuffer*)initWithBlockSize:(int)bs;
 - (LineBuffer *)initWithDictionary:(NSDictionary *)dictionary;
@@ -118,6 +126,10 @@
                      timestamp:(NSTimeInterval *)timestampPtr
                   continuation:(screen_char_t *)continuationPtr;
 
+// Removes the last wrapped lines.
+- (void)removeLastWrappedLines:(int)numberOfLinesToRemove
+                         width:(int)width;
+
 // Get the number of buffer lines at a given width.
 - (int)numLinesWithWidth:(int)width;
 
@@ -148,8 +160,14 @@
 // Returns an array of XYRange values
 - (NSArray*)convertPositions:(NSArray*)resultRanges withWidth:(int)width;
 
-- (LineBufferPosition *)positionForCoordinate:(VT100GridCoord)coord width:(int)width offset:(int)offset;
-- (VT100GridCoord)coordinateForPosition:(LineBufferPosition *)position width:(int)width ok:(BOOL *)ok;
+- (LineBufferPosition *)positionForCoordinate:(VT100GridCoord)coord
+                                        width:(int)width
+                                       offset:(int)offset;
+
+- (VT100GridCoord)coordinateForPosition:(LineBufferPosition *)position
+                                  width:(int)width
+                           extendsRight:(BOOL)extendsRight
+                                     ok:(BOOL *)ok;
 
 - (LineBufferPosition *)firstPosition;
 - (LineBufferPosition *)lastPosition;
@@ -174,7 +192,8 @@
 // Returns a dictionary with the contents of the line buffer. If it is more than 10k lines @ 80 columns
 // then it is truncated. The data is a weak reference and will be invalid if the line buffer is
 // changed.
-- (NSDictionary *)dictionary;
+//- (NSDictionary *)dictionary;
+- (void)encode:(id<iTermEncoderAdapter>)encoder maxLines:(NSInteger)maxLines;
 
 // Append text in reverse video to the end of the line buffer.
 - (void)appendMessage:(NSString *)message;
@@ -186,5 +205,7 @@
 
 - (void)beginResizing;
 - (void)endResizing;
+
+- (void)setPartial:(BOOL)partial;
 
 @end

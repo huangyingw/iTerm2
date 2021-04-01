@@ -35,6 +35,14 @@
     return [self moveInDirection:kPTYTextViewSelectionExtensionDirectionRight unit:kPTYTextViewSelectionExtensionUnitWord];
 }
 
+- (BOOL)moveBackwardBigWord {
+    return [self moveInDirection:kPTYTextViewSelectionExtensionDirectionLeft unit:kPTYTextViewSelectionExtensionUnitBigWord];
+}
+
+- (BOOL)moveForwardBigWord {
+    return [self moveInDirection:kPTYTextViewSelectionExtensionDirectionRight unit:kPTYTextViewSelectionExtensionUnitBigWord];
+}
+
 - (BOOL)moveLeft {
     return [self moveInDirection:kPTYTextViewSelectionExtensionDirectionLeft unit:kPTYTextViewSelectionExtensionUnitCharacter];
 }
@@ -90,7 +98,7 @@
 - (BOOL)moveToBottomOfVisibleArea {
     BOOL moved = NO;
     VT100GridRange range = [_textView rangeOfVisibleLines];
-    int destination = range.location + range.length;
+    int destination = range.location + range.length - 1;
     int n = MAX(0, destination - _coord.y);
     for (int i = 0; i < n; i++) {
         if ([self moveDown]) {
@@ -172,11 +180,12 @@
 - (void)setMode:(iTermSelectionMode)mode {
     _mode = mode;
     if (_selecting && mode == kiTermSelectionModeLine) {
-        [_textView.selection beginSelectionAt:_start
+        const long long overflow = _textView.dataSource.totalScrollbackOverflow;
+        [_textView.selection beginSelectionAtAbsCoord:VT100GridAbsCoordFromCoord(_start, overflow)
                                          mode:_mode
                                        resume:NO
                                        append:NO];
-        [_textView.selection moveSelectionEndpointTo:_coord];
+        [_textView.selection moveSelectionEndpointTo:VT100GridAbsCoordFromCoord(_coord, overflow)];
         [_textView.selection endLiveSelection];
     }
 }
@@ -208,10 +217,11 @@
 
 - (VT100GridCoord)coordFromSelectionEndpoint:(PTYTextViewSelectionEndpoint)endpoint {
     iTermSubSelection *sub = _textView.selection.allSubSelections.firstObject;
+    const long long overflow = _textView.dataSource.totalScrollbackOverflow;
     if (endpoint == kPTYTextViewSelectionEndpointEnd) {
-        return sub.range.coordRange.end;
+        return VT100GridCoordFromAbsCoord(sub.absRange.coordRange.end, overflow, NULL);
     } else {
-        return sub.range.coordRange.start;
+        return VT100GridCoordFromAbsCoord(sub.absRange.coordRange.start, overflow, NULL);
     }
 }
 
@@ -224,20 +234,23 @@
     [extractor restrictToLogicalWindowIncludingCoord:_coord];
     VT100GridWindowedRange windowedRange = [self trivialRange];
     windowedRange.columnWindow = [extractor logicalWindow];
-    VT100GridWindowedRange range = [_textView rangeByExtendingRange:windowedRange
-                                                           endpoint:kPTYTextViewSelectionEndpointStart
-                                                          direction:direction
-                                                          extractor:extractor
-                                                               unit:unit];
-    _coord = range.coordRange.start;
+    const long long overflow = _textView.dataSource.totalScrollbackOverflow;
+    const VT100GridAbsWindowedRange absWindowedRange = VT100GridAbsWindowedRangeFromWindowedRange(windowedRange, overflow);
+    iTermLogicalMovementHelper *helper = [_textView logicalMovementHelperForCursorCoordinate:_textView.cursorCoord];
+    const VT100GridAbsWindowedRange range = [helper absRangeByExtendingRange:absWindowedRange
+                                                                    endpoint:kPTYTextViewSelectionEndpointStart
+                                                                   direction:direction
+                                                                   extractor:extractor
+                                                                        unit:unit];
+    _coord = VT100GridCoordFromAbsCoord(range.coordRange.start, overflow, nil);
 
     // Make a new selection
     if (_selecting) {
-        [_textView.selection beginSelectionAt:_start
-                                         mode:_mode
-                                       resume:NO
-                                       append:NO];
-        [_textView.selection moveSelectionEndpointTo:_coord];
+        [_textView.selection beginSelectionAtAbsCoord:VT100GridAbsCoordFromCoord(_start, overflow)
+                                                 mode:_mode
+                                               resume:NO
+                                               append:NO];
+        [_textView.selection moveSelectionEndpointTo:VT100GridAbsCoordFromCoord(_coord, overflow)];
         [_textView.selection endLiveSelection];
     }
     return !VT100GridCoordEquals(before, _coord);

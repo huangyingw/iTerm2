@@ -15,11 +15,109 @@
 @implementation iTermDelayedPerform
 @end
 
+@interface NSNumber(Approximate)
+@end
+
+@implementation NSNumber(Approximate)
+
+- (BOOL)isApproximatelyEqual:(id)obj epsilon:(double)epsilon {
+    if (self == obj) {
+        return YES;
+    }
+    if ([self isEqual:obj]) {
+        return YES;
+    }
+    NSNumber *other = [NSNumber castFrom:obj];
+    if (!other) {
+        return NO;
+    }
+    return fabs(self.doubleValue - other.doubleValue) < epsilon;
+}
+
+@end
+
+@interface NSDictionary(Approximate)
+@end
+
+@implementation NSDictionary(Approximate)
+
+- (BOOL)isApproximatelyEqual:(id)obj epsilon:(double)epsilon {
+    if (self == obj) {
+        return YES;
+    }
+    if ([self isEqual:obj]) {
+        return YES;
+    }
+    NSDictionary *other = [NSDictionary castFrom:obj];
+    if (!other) {
+        return NO;
+    }
+    if (self.count != other.count) {
+        return NO;
+    }
+    for (NSString *key in self.allKeys) {
+        id myValue = self[key];
+        id otherValue = other[key];
+        if (!otherValue) {
+            return NO;
+        }
+        if (![NSObject object:myValue isApproximatelyEqualToObject:otherValue epsilon:epsilon]) {
+            return NO;
+        }
+    }
+    return YES;
+}
+
+@end
+
+@interface NSArray(Approximate)
+@end
+
+@implementation NSArray(Approximate)
+
+- (BOOL)isApproximatelyEqual:(id)obj epsilon:(double)epsilon {
+    if (self == obj) {
+        return YES;
+    }
+    if ([self isEqual:obj]) {
+        return YES;
+    }
+    NSArray *other = [NSArray castFrom:obj];
+    if (!other) {
+        return NO;
+    }
+    if (self.count != other.count) {
+        return NO;
+    }
+    const NSInteger count = self.count;
+    for (NSInteger i = 0; i < count; i++) {
+        if (![NSObject object:self[i] isApproximatelyEqualToObject:other[i] epsilon:epsilon]) {
+            return NO;
+        }
+    }
+    return YES;
+}
+
+@end
+
 @implementation NSObject (iTerm)
 
 + (BOOL)object:(NSObject *)a isEqualToObject:(NSObject *)b {
     if (a == b) {
         return YES;
+    }
+    return [a isEqual:b];
+}
+
++ (BOOL)object:(__kindof NSObject *)a isApproximatelyEqualToObject:(__kindof NSObject *)b epsilon:(double)epsilon {
+    if (a == b) {
+        return YES;
+    }
+    if ([a respondsToSelector:@selector(isApproximatelyEqual:epsilon:)]) {
+        return [a isApproximatelyEqual:b epsilon:epsilon];
+    }
+    if ([b respondsToSelector:@selector(isApproximatelyEqual:epsilon:)]) {
+        return [b isApproximatelyEqual:a epsilon:epsilon];
     }
     return [a isEqual:b];
 }
@@ -30,6 +128,13 @@
     } else {
         return nil;
     }
+}
+
++ (instancetype)forceCastFrom:(id)object {
+    assert(object);
+    id result = [self castFrom:object];
+    assert(result);
+    return result;
 }
 
 - (void)performSelectorWithObjects:(NSArray *)tuple {
@@ -76,21 +181,21 @@
     }
 }
 
-- (void)it_setAssociatedObject:(id)associatedObject forKey:(void *)key {
+- (void)it_setAssociatedObject:(id)associatedObject forKey:(const void *)key {
     objc_setAssociatedObject(self,
                              key,
                              associatedObject,
                              OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
-- (void)it_setWeakAssociatedObject:(id)associatedObject forKey:(void *)key {
+- (void)it_setWeakAssociatedObject:(id)associatedObject forKey:(const void *)key {
     objc_setAssociatedObject(self,
                              key,
                              associatedObject,
                              OBJC_ASSOCIATION_ASSIGN);
 }
 
-- (id)it_associatedObjectForKey:(void *)key {
+- (id)it_associatedObjectForKey:(const void *)key {
     return objc_getAssociatedObject(self, key);
 }
 
@@ -98,6 +203,12 @@
     IMP imp = [self methodForSelector:selector];
     void (*func)(id, SEL, id) = (void *)imp;
     func(self, selector, object);
+}
+
+- (void)it_performNonObjectReturningSelector:(SEL)selector withObject:(id)object1 object:(id)object2 object:(id)object3 {
+    IMP imp = [self methodForSelector:selector];
+    void (*func)(id, SEL, id, id, id) = (void *)imp;
+    func(self, selector, object1, object2, object3);
 }
 
 - (id)it_performAutoreleasedObjectReturningSelector:(SEL)selector withObject:(id)object {
@@ -196,6 +307,14 @@
 
 - (instancetype)it_weakProxy {
     return (id)[[iTermWeakProxy alloc] initWithObject:self];
+}
+
+- (NSString *)tastefulDescription {
+    return [self description];
+}
+
+- (id)it_jsonSafeValue {
+    return self;
 }
 
 @end

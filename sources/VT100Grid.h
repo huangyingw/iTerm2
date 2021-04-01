@@ -14,6 +14,7 @@
 @class LineBuffer;
 @class VT100LineInfo;
 @class VT100Terminal;
+@protocol iTermEncoderAdapter;
 
 @protocol VT100GridDelegate <NSObject>
 - (screen_char_t)gridForegroundColorCode;
@@ -30,6 +31,7 @@
 @property(nonatomic, assign) int cursorX;
 @property(nonatomic, assign) int cursorY;
 @property(nonatomic, assign) VT100GridCoord cursor;
+@property(nonatomic, readonly) BOOL haveScrollRegion;  // is there a left-right or top-bottom margin?
 @property(nonatomic, assign) VT100GridRange scrollRegionRows;
 @property(nonatomic, assign) VT100GridRange scrollRegionCols;
 @property(nonatomic, assign) BOOL useScrollRegionCols;
@@ -41,11 +43,21 @@
 @property(nonatomic, assign) screen_char_t savedDefaultChar;
 @property(nonatomic, assign) id<VT100GridDelegate> delegate;
 @property(nonatomic, assign) VT100GridCoord preferredCursorPosition;
+// Size of the grid if the cursor is outside the scroll region. Otherwise, size of the scroll region.
+@property(nonatomic, readonly) VT100GridSize sizeRespectingRegionConditionally;
+
+// Did the whole screen scroll up? Won't be reflected in dirty bits.
+@property(nonatomic, assign) BOOL haveScrolled;
 
 // Serialized state, but excludes screen contents.
+// DEPRECATED - use encode: instead.
 @property(nonatomic, readonly) NSDictionary *dictionaryValue;
 
++ (VT100GridSize)sizeInStateDictionary:(NSDictionary *)dict;
+
 - (instancetype)initWithSize:(VT100GridSize)size delegate:(id<VT100GridDelegate>)delegate;
+- (instancetype)initWithDictionary:(NSDictionary *)dictionary
+                          delegate:(id<VT100GridDelegate>)delegate;
 
 - (screen_char_t *)screenCharsAtLineNumber:(int)lineNumber;
 
@@ -211,6 +223,8 @@
 
 // Returns a string for the character at |coord|.
 - (NSString *)stringForCharacterAt:(VT100GridCoord)coord;
+- (VT100GridCoord)successorOf:(VT100GridCoord)coord;
+- (screen_char_t)characterAt:(VT100GridCoord)coord;
 
 // Converts a run into one or more VT100GridRect NSValues.
 - (NSArray *)rectsForRun:(VT100GridRun)run;
@@ -241,6 +255,8 @@
 - (NSString *)compactLineDumpWithContinuationMarks;
 - (NSString *)compactDirtyDump;
 
+- (void)setContinuationMarkOnLine:(int)line to:(unichar)code ;
+
 // Returns the coordinate of the cell before this one. It respects scroll regions and double-width
 // characters.
 // Returns (-1,-1) if there is no previous cell.
@@ -253,6 +269,7 @@
 - (NSArray *)orderedLines;
 
 // Restore saved state excluding screen contents.
+// DEPRECATED - use initWithDictionary:delegate: instead.
 - (void)setStateFromDictionary:(NSDictionary *)dict;
 
 // Reset timestamps to the uninitialized state.
@@ -260,6 +277,9 @@
 
 // If there is a preferred cursor position that is legal, restore it.
 - (void)restorePreferredCursorPositionIfPossible;
+
+// Saves restorable state. Goes with initWithDictionary:delegate:
+- (void)encode:(id<iTermEncoderAdapter>)encoder;
 
 #pragma mark - Testing use only
 

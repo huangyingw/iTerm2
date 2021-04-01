@@ -109,6 +109,7 @@ NSString *const iTermImageDidLoad = @"iTermImageDidLoad";
             [image autorelease];
             [_queuedBlock release];
             _queuedBlock = nil;
+            [_animatedImage autorelease];
             _animatedImage = [[iTermAnimatedImageInfo alloc] initWithImage:image];
             if (!_animatedImage) {
                 _image = [image retain];
@@ -147,28 +148,28 @@ NSString *const iTermImageDidLoad = @"iTermImageDidLoad";
 }
 
 - (void)saveToFile:(NSString *)filename {
-    NSBitmapImageFileType fileType = NSPNGFileType;
+    NSBitmapImageFileType fileType = NSBitmapImageFileTypePNG;
     if ([filename hasSuffix:@".bmp"]) {
-        fileType = NSBMPFileType;
+        fileType = NSBitmapImageFileTypeBMP;
     } else if ([filename hasSuffix:@".gif"]) {
-        fileType = NSGIFFileType;
+        fileType = NSBitmapImageFileTypeGIF;
     } else if ([filename hasSuffix:@".jp2"]) {
-        fileType = NSJPEG2000FileType;
+        fileType = NSBitmapImageFileTypeJPEG2000;
     } else if ([filename hasSuffix:@".jpg"] || [filename hasSuffix:@".jpeg"]) {
-        fileType = NSJPEGFileType;
+        fileType = NSBitmapImageFileTypeJPEG;
     } else if ([filename hasSuffix:@".png"]) {
-        fileType = NSPNGFileType;
+        fileType = NSBitmapImageFileTypePNG;
     } else if ([filename hasSuffix:@".tiff"]) {
-        fileType = NSTIFFFileType;
+        fileType = NSBitmapImageFileTypeTIFF;
     }
 
     NSData *data = nil;
-    NSDictionary *universalTypeToCocoaMap = @{ (NSString *)kUTTypeBMP: @(NSBMPFileType),
-                                               (NSString *)kUTTypeGIF: @(NSGIFFileType),
-                                               (NSString *)kUTTypeJPEG2000: @(NSJPEG2000FileType),
-                                               (NSString *)kUTTypeJPEG: @(NSJPEGFileType),
-                                               (NSString *)kUTTypePNG: @(NSPNGFileType),
-                                               (NSString *)kUTTypeTIFF: @(NSTIFFFileType) };
+    NSDictionary *universalTypeToCocoaMap = @{ (NSString *)kUTTypeBMP: @(NSBitmapImageFileTypeBMP),
+                                               (NSString *)kUTTypeGIF: @(NSBitmapImageFileTypeGIF),
+                                               (NSString *)kUTTypeJPEG2000: @(NSBitmapImageFileTypeJPEG2000),
+                                               (NSString *)kUTTypeJPEG: @(NSBitmapImageFileTypeJPEG),
+                                               (NSString *)kUTTypePNG: @(NSBitmapImageFileTypePNG),
+                                               (NSString *)kUTTypeTIFF: @(NSBitmapImageFileTypeTIFF) };
     NSString *imageType = self.imageType;
     if (self.broken) {
         data = self.data;
@@ -277,7 +278,6 @@ static NSSize iTermImageInfoGetSizeForRegionPreservingAspectRatio(const NSSize r
     NSSize region = NSMakeSize(cellSize.width * _size.width,
                                cellSize.height * _size.height);
     if (!NSEqualSizes(embeddedImage.size, region)) {
-        NSImage *canvas = [[[NSImage alloc] init] autorelease];
         NSSize size;
         NSImage *theImage;
         if (self.animatedImage) {
@@ -290,8 +290,6 @@ static NSSize iTermImageInfoGetSizeForRegionPreservingAspectRatio(const NSSize r
         } else {
             size = region;
         }
-        [canvas setSize:region];
-        [canvas lockFocus];
         NSEdgeInsets inset = _inset;
         inset.top *= cellSize.height;
         inset.bottom *= cellSize.height;
@@ -301,9 +299,7 @@ static NSSize iTermImageInfoGetSizeForRegionPreservingAspectRatio(const NSSize r
                                                   (region.height - size.height) / 2 + inset.bottom,
                                                   MAX(0, size.width - inset.left - inset.right),
                                                   MAX(0, size.height - inset.top - inset.bottom));
-        [theImage drawInRect:destinationRect];
-        [canvas unlockFocus];
-
+        NSImage *canvas = [theImage safelyResizedImageWithSize:size destinationRect:destinationRect];
         self.embeddedImages[@(frame)] = canvas;
     }
     return _embeddedImages[@(frame)];

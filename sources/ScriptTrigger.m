@@ -7,6 +7,9 @@
 
 #import "ScriptTrigger.h"
 #import "DebugLogging.h"
+#import "iTermAdvancedSettingsModel.h"
+#import "iTermBackgroundCommandRunner.h"
+#import "iTermCommandRunnerPool.h"
 #import "PTYSession.h"
 #import "RegexKitLite.h"
 #import "NSStringITerm.h"
@@ -14,6 +17,15 @@
 #include <pwd.h>
 
 @implementation ScriptTrigger
+
++ (iTermBackgroundCommandRunnerPool *)commandRunnerPool {
+    static iTermBackgroundCommandRunnerPool *pool;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        pool = [[iTermBackgroundCommandRunnerPool alloc] initWithCapacity:[iTermAdvancedSettingsModel maximumNumberOfTriggerCommands]];
+    });
+    return pool;
+}
 
 + (NSString *)title
 {
@@ -43,22 +55,22 @@
                                               scope:aSession.variablesScope
                                    useInterpolation:useInterpolation
                                          completion:^(NSString *command) {
-                                             if (!command) {
-                                                 return;
-                                             }
-                                             [NSThread detachNewThreadSelector:@selector(runCommand:)
-                                                                      toTarget:[self class]
-                                                                    withObject:command];
-                                         }];
+        if (!command) {
+            return;
+        }
+        [self runCommand:command session:aSession];
+    }];
     return YES;
 }
 
-+ (void)runCommand:(NSString *)command {
-    @autoreleasepool {
-        // TODO: Use a buried single-purpose window or something somehow less terrible.
-        DLog(@"Invoking command %@", command);
-        system([command UTF8String]);
-    }
+- (void)runCommand:(NSString *)command session:(PTYSession *)session {
+    DLog(@"Invoking command %@", command);
+    iTermBackgroundCommandRunner *runner = [[ScriptTrigger commandRunnerPool] requestBackgroundCommandRunnerWithTerminationBlock:nil];
+    runner.command = command;
+    runner.shell = session.userShell;
+    runner.title = @"Run Command Trigger";
+    runner.notificationTitle = @"Run Command Trigger Failed";
+    [runner run];
 }
 
 @end

@@ -307,6 +307,7 @@ BOOL ITMPromptMonitorMode_IsValidValue(int32_t value__) {
 @dynamic setBroadcastDomainsRequest;
 @dynamic closeRequest;
 @dynamic invokeFunctionRequest;
+@dynamic listPromptsRequest;
 
 typedef struct ITMClientOriginatedMessage__storage_ {
   uint32_t _has_storage_[2];
@@ -343,6 +344,7 @@ typedef struct ITMClientOriginatedMessage__storage_ {
   ITMSetBroadcastDomainsRequest *setBroadcastDomainsRequest;
   ITMCloseRequest *closeRequest;
   ITMInvokeFunctionRequest *invokeFunctionRequest;
+  ITMListPromptsRequest *listPromptsRequest;
   int64_t id_p;
 } ITMClientOriginatedMessage__storage_;
 
@@ -658,6 +660,15 @@ typedef struct ITMClientOriginatedMessage__storage_ {
         .flags = GPBFieldOptional,
         .dataType = GPBDataTypeMessage,
       },
+      {
+        .name = "listPromptsRequest",
+        .dataTypeSpecific.className = GPBStringifySymbol(ITMListPromptsRequest),
+        .number = ITMClientOriginatedMessage_FieldNumber_ListPromptsRequest,
+        .hasIndex = -1,
+        .offset = (uint32_t)offsetof(ITMClientOriginatedMessage__storage_, listPromptsRequest),
+        .flags = GPBFieldOptional,
+        .dataType = GPBDataTypeMessage,
+      },
     };
     GPBDescriptor *localDescriptor =
         [GPBDescriptor allocDescriptorForClass:[ITMClientOriginatedMessage class]
@@ -726,6 +737,7 @@ void ITMClientOriginatedMessage_ClearSubmessageOneOfCase(ITMClientOriginatedMess
 @dynamic setBroadcastDomainsResponse;
 @dynamic closeResponse;
 @dynamic invokeFunctionResponse;
+@dynamic listPromptsResponse;
 @dynamic notification;
 
 typedef struct ITMServerOriginatedMessage__storage_ {
@@ -764,6 +776,7 @@ typedef struct ITMServerOriginatedMessage__storage_ {
   ITMSetBroadcastDomainsResponse *setBroadcastDomainsResponse;
   ITMCloseResponse *closeResponse;
   ITMInvokeFunctionResponse *invokeFunctionResponse;
+  ITMListPromptsResponse *listPromptsResponse;
   ITMNotification *notification;
   int64_t id_p;
 } ITMServerOriginatedMessage__storage_;
@@ -1086,6 +1099,15 @@ typedef struct ITMServerOriginatedMessage__storage_ {
         .number = ITMServerOriginatedMessage_FieldNumber_InvokeFunctionResponse,
         .hasIndex = -1,
         .offset = (uint32_t)offsetof(ITMServerOriginatedMessage__storage_, invokeFunctionResponse),
+        .flags = GPBFieldOptional,
+        .dataType = GPBDataTypeMessage,
+      },
+      {
+        .name = "listPromptsResponse",
+        .dataTypeSpecific.className = GPBStringifySymbol(ITMListPromptsResponse),
+        .number = ITMServerOriginatedMessage_FieldNumber_ListPromptsResponse,
+        .hasIndex = -1,
+        .offset = (uint32_t)offsetof(ITMServerOriginatedMessage__storage_, listPromptsResponse),
         .flags = GPBFieldOptional,
         .dataType = GPBDataTypeMessage,
       },
@@ -3313,12 +3335,14 @@ typedef struct ITMPreferencesRequest__storage_ {
 @dynamic setPreferenceRequest;
 @dynamic getPreferenceRequest;
 @dynamic setDefaultProfileRequest;
+@dynamic getDefaultProfileRequest;
 
 typedef struct ITMPreferencesRequest_Request__storage_ {
   uint32_t _has_storage_[2];
   ITMPreferencesRequest_Request_SetPreference *setPreferenceRequest;
   ITMPreferencesRequest_Request_GetPreference *getPreferenceRequest;
   ITMPreferencesRequest_Request_SetDefaultProfile *setDefaultProfileRequest;
+  ITMPreferencesRequest_Request_GetDefaultProfile *getDefaultProfileRequest;
 } ITMPreferencesRequest_Request__storage_;
 
 // This method is threadsafe because it is initially called
@@ -3351,6 +3375,15 @@ typedef struct ITMPreferencesRequest_Request__storage_ {
         .number = ITMPreferencesRequest_Request_FieldNumber_SetDefaultProfileRequest,
         .hasIndex = -1,
         .offset = (uint32_t)offsetof(ITMPreferencesRequest_Request__storage_, setDefaultProfileRequest),
+        .flags = GPBFieldOptional,
+        .dataType = GPBDataTypeMessage,
+      },
+      {
+        .name = "getDefaultProfileRequest",
+        .dataTypeSpecific.className = GPBStringifySymbol(ITMPreferencesRequest_Request_GetDefaultProfile),
+        .number = ITMPreferencesRequest_Request_FieldNumber_GetDefaultProfileRequest,
+        .hasIndex = -1,
+        .offset = (uint32_t)offsetof(ITMPreferencesRequest_Request__storage_, getDefaultProfileRequest),
         .flags = GPBFieldOptional,
         .dataType = GPBDataTypeMessage,
       },
@@ -3526,6 +3559,37 @@ typedef struct ITMPreferencesRequest_Request_SetDefaultProfile__storage_ {
 
 @end
 
+#pragma mark - ITMPreferencesRequest_Request_GetDefaultProfile
+
+@implementation ITMPreferencesRequest_Request_GetDefaultProfile
+
+
+typedef struct ITMPreferencesRequest_Request_GetDefaultProfile__storage_ {
+  uint32_t _has_storage_[1];
+} ITMPreferencesRequest_Request_GetDefaultProfile__storage_;
+
+// This method is threadsafe because it is initially called
+// in +initialize for each subclass.
++ (GPBDescriptor *)descriptor {
+  static GPBDescriptor *descriptor = nil;
+  if (!descriptor) {
+    GPBDescriptor *localDescriptor =
+        [GPBDescriptor allocDescriptorForClass:[ITMPreferencesRequest_Request_GetDefaultProfile class]
+                                     rootClass:[ITMApiRoot class]
+                                          file:ITMApiRoot_FileDescriptor()
+                                        fields:NULL
+                                    fieldCount:0
+                                   storageSize:sizeof(ITMPreferencesRequest_Request_GetDefaultProfile__storage_)
+                                         flags:GPBDescriptorInitializationFlag_None];
+    [localDescriptor setupContainingMessageClassName:GPBStringifySymbol(ITMPreferencesRequest_Request)];
+    NSAssert(descriptor == nil, @"Startup recursed!");
+    descriptor = localDescriptor;
+  }
+  return descriptor;
+}
+
+@end
+
 #pragma mark - ITMPreferencesResponse
 
 @implementation ITMPreferencesResponse
@@ -3578,6 +3642,7 @@ typedef struct ITMPreferencesResponse__storage_ {
 @dynamic setPreferenceResult;
 @dynamic getPreferenceResult;
 @dynamic setDefaultProfileResult;
+@dynamic getDefaultProfileResult;
 
 typedef struct ITMPreferencesResponse_Result__storage_ {
   uint32_t _has_storage_[2];
@@ -3585,6 +3650,7 @@ typedef struct ITMPreferencesResponse_Result__storage_ {
   ITMPreferencesResponse_Result_SetPreferenceResult *setPreferenceResult;
   ITMPreferencesResponse_Result_GetPreferenceResult *getPreferenceResult;
   ITMPreferencesResponse_Result_SetDefaultProfileResult *setDefaultProfileResult;
+  ITMPreferencesResponse_Result_GetDefaultProfileResult *getDefaultProfileResult;
 } ITMPreferencesResponse_Result__storage_;
 
 // This method is threadsafe because it is initially called
@@ -3626,6 +3692,15 @@ typedef struct ITMPreferencesResponse_Result__storage_ {
         .number = ITMPreferencesResponse_Result_FieldNumber_SetDefaultProfileResult,
         .hasIndex = -1,
         .offset = (uint32_t)offsetof(ITMPreferencesResponse_Result__storage_, setDefaultProfileResult),
+        .flags = GPBFieldOptional,
+        .dataType = GPBDataTypeMessage,
+      },
+      {
+        .name = "getDefaultProfileResult",
+        .dataTypeSpecific.className = GPBStringifySymbol(ITMPreferencesResponse_Result_GetDefaultProfileResult),
+        .number = ITMPreferencesResponse_Result_FieldNumber_GetDefaultProfileResult,
+        .hasIndex = -1,
+        .offset = (uint32_t)offsetof(ITMPreferencesResponse_Result__storage_, getDefaultProfileResult),
         .flags = GPBFieldOptional,
         .dataType = GPBDataTypeMessage,
       },
@@ -3881,6 +3956,50 @@ typedef struct ITMPreferencesResponse_Result_UnrecognizedResult__storage_ {
                                         fields:NULL
                                     fieldCount:0
                                    storageSize:sizeof(ITMPreferencesResponse_Result_UnrecognizedResult__storage_)
+                                         flags:GPBDescriptorInitializationFlag_None];
+    [localDescriptor setupContainingMessageClassName:GPBStringifySymbol(ITMPreferencesResponse_Result)];
+    NSAssert(descriptor == nil, @"Startup recursed!");
+    descriptor = localDescriptor;
+  }
+  return descriptor;
+}
+
+@end
+
+#pragma mark - ITMPreferencesResponse_Result_GetDefaultProfileResult
+
+@implementation ITMPreferencesResponse_Result_GetDefaultProfileResult
+
+@dynamic hasGuid, guid;
+
+typedef struct ITMPreferencesResponse_Result_GetDefaultProfileResult__storage_ {
+  uint32_t _has_storage_[1];
+  NSString *guid;
+} ITMPreferencesResponse_Result_GetDefaultProfileResult__storage_;
+
+// This method is threadsafe because it is initially called
+// in +initialize for each subclass.
++ (GPBDescriptor *)descriptor {
+  static GPBDescriptor *descriptor = nil;
+  if (!descriptor) {
+    static GPBMessageFieldDescription fields[] = {
+      {
+        .name = "guid",
+        .dataTypeSpecific.className = NULL,
+        .number = ITMPreferencesResponse_Result_GetDefaultProfileResult_FieldNumber_Guid,
+        .hasIndex = 0,
+        .offset = (uint32_t)offsetof(ITMPreferencesResponse_Result_GetDefaultProfileResult__storage_, guid),
+        .flags = GPBFieldOptional,
+        .dataType = GPBDataTypeString,
+      },
+    };
+    GPBDescriptor *localDescriptor =
+        [GPBDescriptor allocDescriptorForClass:[ITMPreferencesResponse_Result_GetDefaultProfileResult class]
+                                     rootClass:[ITMApiRoot class]
+                                          file:ITMApiRoot_FileDescriptor()
+                                        fields:fields
+                                    fieldCount:(uint32_t)(sizeof(fields) / sizeof(GPBMessageFieldDescription))
+                                   storageSize:sizeof(ITMPreferencesResponse_Result_GetDefaultProfileResult__storage_)
                                          flags:GPBDescriptorInitializationFlag_None];
     [localDescriptor setupContainingMessageClassName:GPBStringifySymbol(ITMPreferencesResponse_Result)];
     NSAssert(descriptor == nil, @"Startup recursed!");
@@ -5649,10 +5768,11 @@ GPBEnumDescriptor *ITMSavedArrangementRequest_Action_EnumDescriptor(void) {
   static GPBEnumDescriptor *descriptor = NULL;
   if (!descriptor) {
     static const char *valueNames =
-        "Restore\000Save\000";
+        "Restore\000Save\000List\000";
     static const int32_t values[] = {
         ITMSavedArrangementRequest_Action_Restore,
         ITMSavedArrangementRequest_Action_Save,
+        ITMSavedArrangementRequest_Action_List,
     };
     GPBEnumDescriptor *worker =
         [GPBEnumDescriptor allocDescriptorForName:GPBNSStringifySymbol(ITMSavedArrangementRequest_Action)
@@ -5671,6 +5791,7 @@ BOOL ITMSavedArrangementRequest_Action_IsValidValue(int32_t value__) {
   switch (value__) {
     case ITMSavedArrangementRequest_Action_Restore:
     case ITMSavedArrangementRequest_Action_Save:
+    case ITMSavedArrangementRequest_Action_List:
       return YES;
     default:
       return NO;
@@ -5682,10 +5803,12 @@ BOOL ITMSavedArrangementRequest_Action_IsValidValue(int32_t value__) {
 @implementation ITMSavedArrangementResponse
 
 @dynamic hasStatus, status;
+@dynamic namesArray, namesArray_Count;
 
 typedef struct ITMSavedArrangementResponse__storage_ {
   uint32_t _has_storage_[1];
   ITMSavedArrangementResponse_Status status;
+  NSMutableArray *namesArray;
 } ITMSavedArrangementResponse__storage_;
 
 // This method is threadsafe because it is initially called
@@ -5702,6 +5825,15 @@ typedef struct ITMSavedArrangementResponse__storage_ {
         .offset = (uint32_t)offsetof(ITMSavedArrangementResponse__storage_, status),
         .flags = (GPBFieldFlags)(GPBFieldOptional | GPBFieldHasEnumDescriptor),
         .dataType = GPBDataTypeEnum,
+      },
+      {
+        .name = "namesArray",
+        .dataTypeSpecific.className = NULL,
+        .number = ITMSavedArrangementResponse_FieldNumber_NamesArray,
+        .hasIndex = GPBNoHasBit,
+        .offset = (uint32_t)offsetof(ITMSavedArrangementResponse__storage_, namesArray),
+        .flags = GPBFieldRepeated,
+        .dataType = GPBDataTypeString,
       },
     };
     GPBDescriptor *localDescriptor =
@@ -6887,6 +7019,7 @@ BOOL ITMRegisterToolRequest_ToolType_IsValidValue(int32_t value__) {
 @dynamic hasRole, role;
 @dynamic sessionTitleAttributes;
 @dynamic statusBarComponentAttributes;
+@dynamic contextMenuAttributes;
 @dynamic hasDisplayName, displayName;
 
 typedef struct ITMRPCRegistrationRequest__storage_ {
@@ -6899,6 +7032,7 @@ typedef struct ITMRPCRegistrationRequest__storage_ {
   NSString *displayName;
   ITMRPCRegistrationRequest_SessionTitleAttributes *sessionTitleAttributes;
   ITMRPCRegistrationRequest_StatusBarComponentAttributes *statusBarComponentAttributes;
+  ITMRPCRegistrationRequest_ContextMenuAttributes *contextMenuAttributes;
 } ITMRPCRegistrationRequest__storage_;
 
 // This method is threadsafe because it is initially called
@@ -6987,6 +7121,16 @@ typedef struct ITMRPCRegistrationRequest__storage_ {
         .core.flags = GPBFieldOptional,
         .core.dataType = GPBDataTypeMessage,
       },
+      {
+        .defaultValue.valueMessage = nil,
+        .core.name = "contextMenuAttributes",
+        .core.dataTypeSpecific.className = GPBStringifySymbol(ITMRPCRegistrationRequest_ContextMenuAttributes),
+        .core.number = ITMRPCRegistrationRequest_FieldNumber_ContextMenuAttributes,
+        .core.hasIndex = -1,
+        .core.offset = (uint32_t)offsetof(ITMRPCRegistrationRequest__storage_, contextMenuAttributes),
+        .core.flags = GPBFieldOptional,
+        .core.dataType = GPBDataTypeMessage,
+      },
     };
     GPBDescriptor *localDescriptor =
         [GPBDescriptor allocDescriptorForClass:[ITMRPCRegistrationRequest class]
@@ -7021,11 +7165,13 @@ GPBEnumDescriptor *ITMRPCRegistrationRequest_Role_EnumDescriptor(void) {
   static GPBEnumDescriptor *descriptor = NULL;
   if (!descriptor) {
     static const char *valueNames =
-        "Generic\000SessionTitle\000StatusBarComponent\000";
+        "Generic\000SessionTitle\000StatusBarComponent\000"
+        "ContextMenu\000";
     static const int32_t values[] = {
         ITMRPCRegistrationRequest_Role_Generic,
         ITMRPCRegistrationRequest_Role_SessionTitle,
         ITMRPCRegistrationRequest_Role_StatusBarComponent,
+        ITMRPCRegistrationRequest_Role_ContextMenu,
     };
     GPBEnumDescriptor *worker =
         [GPBEnumDescriptor allocDescriptorForName:GPBNSStringifySymbol(ITMRPCRegistrationRequest_Role)
@@ -7045,6 +7191,7 @@ BOOL ITMRPCRegistrationRequest_Role_IsValidValue(int32_t value__) {
     case ITMRPCRegistrationRequest_Role_Generic:
     case ITMRPCRegistrationRequest_Role_SessionTitle:
     case ITMRPCRegistrationRequest_Role_StatusBarComponent:
+    case ITMRPCRegistrationRequest_Role_ContextMenu:
       return YES;
     default:
       return NO;
@@ -7504,6 +7651,61 @@ typedef struct ITMRPCRegistrationRequest_StatusBarComponentAttributes_Icon__stor
 
 @end
 
+#pragma mark - ITMRPCRegistrationRequest_ContextMenuAttributes
+
+@implementation ITMRPCRegistrationRequest_ContextMenuAttributes
+
+@dynamic hasDisplayName, displayName;
+@dynamic hasUniqueIdentifier, uniqueIdentifier;
+
+typedef struct ITMRPCRegistrationRequest_ContextMenuAttributes__storage_ {
+  uint32_t _has_storage_[1];
+  NSString *displayName;
+  NSString *uniqueIdentifier;
+} ITMRPCRegistrationRequest_ContextMenuAttributes__storage_;
+
+// This method is threadsafe because it is initially called
+// in +initialize for each subclass.
++ (GPBDescriptor *)descriptor {
+  static GPBDescriptor *descriptor = nil;
+  if (!descriptor) {
+    static GPBMessageFieldDescription fields[] = {
+      {
+        .name = "displayName",
+        .dataTypeSpecific.className = NULL,
+        .number = ITMRPCRegistrationRequest_ContextMenuAttributes_FieldNumber_DisplayName,
+        .hasIndex = 0,
+        .offset = (uint32_t)offsetof(ITMRPCRegistrationRequest_ContextMenuAttributes__storage_, displayName),
+        .flags = GPBFieldOptional,
+        .dataType = GPBDataTypeString,
+      },
+      {
+        .name = "uniqueIdentifier",
+        .dataTypeSpecific.className = NULL,
+        .number = ITMRPCRegistrationRequest_ContextMenuAttributes_FieldNumber_UniqueIdentifier,
+        .hasIndex = 1,
+        .offset = (uint32_t)offsetof(ITMRPCRegistrationRequest_ContextMenuAttributes__storage_, uniqueIdentifier),
+        .flags = GPBFieldOptional,
+        .dataType = GPBDataTypeString,
+      },
+    };
+    GPBDescriptor *localDescriptor =
+        [GPBDescriptor allocDescriptorForClass:[ITMRPCRegistrationRequest_ContextMenuAttributes class]
+                                     rootClass:[ITMApiRoot class]
+                                          file:ITMApiRoot_FileDescriptor()
+                                        fields:fields
+                                    fieldCount:(uint32_t)(sizeof(fields) / sizeof(GPBMessageFieldDescription))
+                                   storageSize:sizeof(ITMRPCRegistrationRequest_ContextMenuAttributes__storage_)
+                                         flags:GPBDescriptorInitializationFlag_None];
+    [localDescriptor setupContainingMessageClassName:GPBStringifySymbol(ITMRPCRegistrationRequest)];
+    NSAssert(descriptor == nil, @"Startup recursed!");
+    descriptor = localDescriptor;
+  }
+  return descriptor;
+}
+
+@end
+
 #pragma mark - ITMRegisterToolResponse
 
 @implementation ITMRegisterToolResponse
@@ -7675,6 +7877,7 @@ typedef struct ITMKeystrokePattern__storage_ {
 @implementation ITMKeystrokeMonitorRequest
 
 @dynamic patternsToIgnoreArray, patternsToIgnoreArray_Count;
+@dynamic hasAdvanced, advanced;
 
 typedef struct ITMKeystrokeMonitorRequest__storage_ {
   uint32_t _has_storage_[1];
@@ -7695,6 +7898,15 @@ typedef struct ITMKeystrokeMonitorRequest__storage_ {
         .offset = (uint32_t)offsetof(ITMKeystrokeMonitorRequest__storage_, patternsToIgnoreArray),
         .flags = GPBFieldRepeated,
         .dataType = GPBDataTypeMessage,
+      },
+      {
+        .name = "advanced",
+        .dataTypeSpecific.className = NULL,
+        .number = ITMKeystrokeMonitorRequest_FieldNumber_Advanced,
+        .hasIndex = 0,
+        .offset = 1,  // Stored in _has_storage_ to save space.
+        .flags = GPBFieldOptional,
+        .dataType = GPBDataTypeBool,
       },
     };
     GPBDescriptor *localDescriptor =
@@ -8663,10 +8875,12 @@ typedef struct ITMServerOriginatedRPCNotification__storage_ {
 @dynamic modifiersArray, modifiersArray_Count;
 @dynamic hasKeyCode, keyCode;
 @dynamic hasSession, session;
+@dynamic hasAction, action;
 
 typedef struct ITMKeystrokeNotification__storage_ {
   uint32_t _has_storage_[1];
   int32_t keyCode;
+  ITMKeystrokeNotification_Action action;
   NSString *characters;
   NSString *charactersIgnoringModifiers;
   GPBEnumArray *modifiersArray;
@@ -8724,6 +8938,15 @@ typedef struct ITMKeystrokeNotification__storage_ {
         .flags = GPBFieldOptional,
         .dataType = GPBDataTypeString,
       },
+      {
+        .name = "action",
+        .dataTypeSpecific.enumDescFunc = ITMKeystrokeNotification_Action_EnumDescriptor,
+        .number = ITMKeystrokeNotification_FieldNumber_Action,
+        .hasIndex = 4,
+        .offset = (uint32_t)offsetof(ITMKeystrokeNotification__storage_, action),
+        .flags = (GPBFieldFlags)(GPBFieldOptional | GPBFieldHasEnumDescriptor),
+        .dataType = GPBDataTypeEnum,
+      },
     };
     GPBDescriptor *localDescriptor =
         [GPBDescriptor allocDescriptorForClass:[ITMKeystrokeNotification class]
@@ -8745,6 +8968,42 @@ typedef struct ITMKeystrokeNotification__storage_ {
 }
 
 @end
+
+#pragma mark - Enum ITMKeystrokeNotification_Action
+
+GPBEnumDescriptor *ITMKeystrokeNotification_Action_EnumDescriptor(void) {
+  static GPBEnumDescriptor *descriptor = NULL;
+  if (!descriptor) {
+    static const char *valueNames =
+        "KeyDown\000KeyUp\000FlagsChanged\000";
+    static const int32_t values[] = {
+        ITMKeystrokeNotification_Action_KeyDown,
+        ITMKeystrokeNotification_Action_KeyUp,
+        ITMKeystrokeNotification_Action_FlagsChanged,
+    };
+    GPBEnumDescriptor *worker =
+        [GPBEnumDescriptor allocDescriptorForName:GPBNSStringifySymbol(ITMKeystrokeNotification_Action)
+                                       valueNames:valueNames
+                                           values:values
+                                            count:(uint32_t)(sizeof(values) / sizeof(int32_t))
+                                     enumVerifier:ITMKeystrokeNotification_Action_IsValidValue];
+    if (!OSAtomicCompareAndSwapPtrBarrier(nil, worker, (void * volatile *)&descriptor)) {
+      [worker release];
+    }
+  }
+  return descriptor;
+}
+
+BOOL ITMKeystrokeNotification_Action_IsValidValue(int32_t value__) {
+  switch (value__) {
+    case ITMKeystrokeNotification_Action_KeyDown:
+    case ITMKeystrokeNotification_Action_KeyUp:
+    case ITMKeystrokeNotification_Action_FlagsChanged:
+      return YES;
+    default:
+      return NO;
+  }
+}
 
 #pragma mark - ITMScreenUpdateNotification
 
@@ -8927,6 +9186,7 @@ typedef struct ITMPromptNotificationCommandEnd__storage_ {
 @dynamic prompt;
 @dynamic commandStart;
 @dynamic commandEnd;
+@dynamic hasUniquePromptId, uniquePromptId;
 
 typedef struct ITMPromptNotification__storage_ {
   uint32_t _has_storage_[2];
@@ -8934,6 +9194,7 @@ typedef struct ITMPromptNotification__storage_ {
   ITMPromptNotificationPrompt *prompt;
   ITMPromptNotificationCommandStart *commandStart;
   ITMPromptNotificationCommandEnd *commandEnd;
+  NSString *uniquePromptId;
 } ITMPromptNotification__storage_;
 
 // This method is threadsafe because it is initially called
@@ -8977,6 +9238,15 @@ typedef struct ITMPromptNotification__storage_ {
         .offset = (uint32_t)offsetof(ITMPromptNotification__storage_, commandEnd),
         .flags = GPBFieldOptional,
         .dataType = GPBDataTypeMessage,
+      },
+      {
+        .name = "uniquePromptId",
+        .dataTypeSpecific.className = NULL,
+        .number = ITMPromptNotification_FieldNumber_UniquePromptId,
+        .hasIndex = 1,
+        .offset = (uint32_t)offsetof(ITMPromptNotification__storage_, uniquePromptId),
+        .flags = GPBFieldOptional,
+        .dataType = GPBDataTypeString,
       },
     };
     GPBDescriptor *localDescriptor =
@@ -9651,10 +9921,12 @@ BOOL ITMGetBufferResponse_Status_IsValidValue(int32_t value__) {
 @implementation ITMGetPromptRequest
 
 @dynamic hasSession, session;
+@dynamic hasUniquePromptId, uniquePromptId;
 
 typedef struct ITMGetPromptRequest__storage_ {
   uint32_t _has_storage_[1];
   NSString *session;
+  NSString *uniquePromptId;
 } ITMGetPromptRequest__storage_;
 
 // This method is threadsafe because it is initially called
@@ -9669,6 +9941,15 @@ typedef struct ITMGetPromptRequest__storage_ {
         .number = ITMGetPromptRequest_FieldNumber_Session,
         .hasIndex = 0,
         .offset = (uint32_t)offsetof(ITMGetPromptRequest__storage_, session),
+        .flags = GPBFieldOptional,
+        .dataType = GPBDataTypeString,
+      },
+      {
+        .name = "uniquePromptId",
+        .dataTypeSpecific.className = NULL,
+        .number = ITMGetPromptRequest_FieldNumber_UniquePromptId,
+        .hasIndex = 1,
+        .offset = (uint32_t)offsetof(ITMGetPromptRequest__storage_, uniquePromptId),
         .flags = GPBFieldOptional,
         .dataType = GPBDataTypeString,
       },
@@ -9699,15 +9980,21 @@ typedef struct ITMGetPromptRequest__storage_ {
 @dynamic hasOutputRange, outputRange;
 @dynamic hasWorkingDirectory, workingDirectory;
 @dynamic hasCommand, command;
+@dynamic hasPromptState, promptState;
+@dynamic hasExitStatus, exitStatus;
+@dynamic hasUniquePromptId, uniquePromptId;
 
 typedef struct ITMGetPromptResponse__storage_ {
   uint32_t _has_storage_[1];
   ITMGetPromptResponse_Status status;
+  ITMGetPromptResponse_State promptState;
+  uint32_t exitStatus;
   ITMCoordRange *promptRange;
   ITMCoordRange *commandRange;
   ITMCoordRange *outputRange;
   NSString *workingDirectory;
   NSString *command;
+  NSString *uniquePromptId;
 } ITMGetPromptResponse__storage_;
 
 // This method is threadsafe because it is initially called
@@ -9770,6 +10057,33 @@ typedef struct ITMGetPromptResponse__storage_ {
         .flags = GPBFieldOptional,
         .dataType = GPBDataTypeString,
       },
+      {
+        .name = "promptState",
+        .dataTypeSpecific.enumDescFunc = ITMGetPromptResponse_State_EnumDescriptor,
+        .number = ITMGetPromptResponse_FieldNumber_PromptState,
+        .hasIndex = 6,
+        .offset = (uint32_t)offsetof(ITMGetPromptResponse__storage_, promptState),
+        .flags = (GPBFieldFlags)(GPBFieldOptional | GPBFieldHasEnumDescriptor),
+        .dataType = GPBDataTypeEnum,
+      },
+      {
+        .name = "exitStatus",
+        .dataTypeSpecific.className = NULL,
+        .number = ITMGetPromptResponse_FieldNumber_ExitStatus,
+        .hasIndex = 7,
+        .offset = (uint32_t)offsetof(ITMGetPromptResponse__storage_, exitStatus),
+        .flags = GPBFieldOptional,
+        .dataType = GPBDataTypeUInt32,
+      },
+      {
+        .name = "uniquePromptId",
+        .dataTypeSpecific.className = NULL,
+        .number = ITMGetPromptResponse_FieldNumber_UniquePromptId,
+        .hasIndex = 8,
+        .offset = (uint32_t)offsetof(ITMGetPromptResponse__storage_, uniquePromptId),
+        .flags = GPBFieldOptional,
+        .dataType = GPBDataTypeString,
+      },
     };
     GPBDescriptor *localDescriptor =
         [GPBDescriptor allocDescriptorForClass:[ITMGetPromptResponse class]
@@ -9820,6 +10134,195 @@ BOOL ITMGetPromptResponse_Status_IsValidValue(int32_t value__) {
     case ITMGetPromptResponse_Status_SessionNotFound:
     case ITMGetPromptResponse_Status_RequestMalformed:
     case ITMGetPromptResponse_Status_PromptUnavailable:
+      return YES;
+    default:
+      return NO;
+  }
+}
+
+#pragma mark - Enum ITMGetPromptResponse_State
+
+GPBEnumDescriptor *ITMGetPromptResponse_State_EnumDescriptor(void) {
+  static GPBEnumDescriptor *descriptor = NULL;
+  if (!descriptor) {
+    static const char *valueNames =
+        "Editing\000Running\000Finished\000";
+    static const int32_t values[] = {
+        ITMGetPromptResponse_State_Editing,
+        ITMGetPromptResponse_State_Running,
+        ITMGetPromptResponse_State_Finished,
+    };
+    GPBEnumDescriptor *worker =
+        [GPBEnumDescriptor allocDescriptorForName:GPBNSStringifySymbol(ITMGetPromptResponse_State)
+                                       valueNames:valueNames
+                                           values:values
+                                            count:(uint32_t)(sizeof(values) / sizeof(int32_t))
+                                     enumVerifier:ITMGetPromptResponse_State_IsValidValue];
+    if (!OSAtomicCompareAndSwapPtrBarrier(nil, worker, (void * volatile *)&descriptor)) {
+      [worker release];
+    }
+  }
+  return descriptor;
+}
+
+BOOL ITMGetPromptResponse_State_IsValidValue(int32_t value__) {
+  switch (value__) {
+    case ITMGetPromptResponse_State_Editing:
+    case ITMGetPromptResponse_State_Running:
+    case ITMGetPromptResponse_State_Finished:
+      return YES;
+    default:
+      return NO;
+  }
+}
+
+#pragma mark - ITMListPromptsRequest
+
+@implementation ITMListPromptsRequest
+
+@dynamic hasSession, session;
+@dynamic hasFirstUniqueId, firstUniqueId;
+@dynamic hasLastUniqueId, lastUniqueId;
+
+typedef struct ITMListPromptsRequest__storage_ {
+  uint32_t _has_storage_[1];
+  NSString *session;
+  NSString *firstUniqueId;
+  NSString *lastUniqueId;
+} ITMListPromptsRequest__storage_;
+
+// This method is threadsafe because it is initially called
+// in +initialize for each subclass.
++ (GPBDescriptor *)descriptor {
+  static GPBDescriptor *descriptor = nil;
+  if (!descriptor) {
+    static GPBMessageFieldDescription fields[] = {
+      {
+        .name = "session",
+        .dataTypeSpecific.className = NULL,
+        .number = ITMListPromptsRequest_FieldNumber_Session,
+        .hasIndex = 0,
+        .offset = (uint32_t)offsetof(ITMListPromptsRequest__storage_, session),
+        .flags = GPBFieldOptional,
+        .dataType = GPBDataTypeString,
+      },
+      {
+        .name = "firstUniqueId",
+        .dataTypeSpecific.className = NULL,
+        .number = ITMListPromptsRequest_FieldNumber_FirstUniqueId,
+        .hasIndex = 1,
+        .offset = (uint32_t)offsetof(ITMListPromptsRequest__storage_, firstUniqueId),
+        .flags = GPBFieldOptional,
+        .dataType = GPBDataTypeString,
+      },
+      {
+        .name = "lastUniqueId",
+        .dataTypeSpecific.className = NULL,
+        .number = ITMListPromptsRequest_FieldNumber_LastUniqueId,
+        .hasIndex = 2,
+        .offset = (uint32_t)offsetof(ITMListPromptsRequest__storage_, lastUniqueId),
+        .flags = GPBFieldOptional,
+        .dataType = GPBDataTypeString,
+      },
+    };
+    GPBDescriptor *localDescriptor =
+        [GPBDescriptor allocDescriptorForClass:[ITMListPromptsRequest class]
+                                     rootClass:[ITMApiRoot class]
+                                          file:ITMApiRoot_FileDescriptor()
+                                        fields:fields
+                                    fieldCount:(uint32_t)(sizeof(fields) / sizeof(GPBMessageFieldDescription))
+                                   storageSize:sizeof(ITMListPromptsRequest__storage_)
+                                         flags:GPBDescriptorInitializationFlag_None];
+    NSAssert(descriptor == nil, @"Startup recursed!");
+    descriptor = localDescriptor;
+  }
+  return descriptor;
+}
+
+@end
+
+#pragma mark - ITMListPromptsResponse
+
+@implementation ITMListPromptsResponse
+
+@dynamic hasStatus, status;
+@dynamic uniquePromptIdArray, uniquePromptIdArray_Count;
+
+typedef struct ITMListPromptsResponse__storage_ {
+  uint32_t _has_storage_[1];
+  ITMListPromptsResponse_Status status;
+  NSMutableArray *uniquePromptIdArray;
+} ITMListPromptsResponse__storage_;
+
+// This method is threadsafe because it is initially called
+// in +initialize for each subclass.
++ (GPBDescriptor *)descriptor {
+  static GPBDescriptor *descriptor = nil;
+  if (!descriptor) {
+    static GPBMessageFieldDescription fields[] = {
+      {
+        .name = "status",
+        .dataTypeSpecific.enumDescFunc = ITMListPromptsResponse_Status_EnumDescriptor,
+        .number = ITMListPromptsResponse_FieldNumber_Status,
+        .hasIndex = 0,
+        .offset = (uint32_t)offsetof(ITMListPromptsResponse__storage_, status),
+        .flags = (GPBFieldFlags)(GPBFieldOptional | GPBFieldHasDefaultValue | GPBFieldHasEnumDescriptor),
+        .dataType = GPBDataTypeEnum,
+      },
+      {
+        .name = "uniquePromptIdArray",
+        .dataTypeSpecific.className = NULL,
+        .number = ITMListPromptsResponse_FieldNumber_UniquePromptIdArray,
+        .hasIndex = GPBNoHasBit,
+        .offset = (uint32_t)offsetof(ITMListPromptsResponse__storage_, uniquePromptIdArray),
+        .flags = GPBFieldRepeated,
+        .dataType = GPBDataTypeString,
+      },
+    };
+    GPBDescriptor *localDescriptor =
+        [GPBDescriptor allocDescriptorForClass:[ITMListPromptsResponse class]
+                                     rootClass:[ITMApiRoot class]
+                                          file:ITMApiRoot_FileDescriptor()
+                                        fields:fields
+                                    fieldCount:(uint32_t)(sizeof(fields) / sizeof(GPBMessageFieldDescription))
+                                   storageSize:sizeof(ITMListPromptsResponse__storage_)
+                                         flags:GPBDescriptorInitializationFlag_None];
+    NSAssert(descriptor == nil, @"Startup recursed!");
+    descriptor = localDescriptor;
+  }
+  return descriptor;
+}
+
+@end
+
+#pragma mark - Enum ITMListPromptsResponse_Status
+
+GPBEnumDescriptor *ITMListPromptsResponse_Status_EnumDescriptor(void) {
+  static GPBEnumDescriptor *descriptor = NULL;
+  if (!descriptor) {
+    static const char *valueNames =
+        "Ok\000SessionNotFound\000";
+    static const int32_t values[] = {
+        ITMListPromptsResponse_Status_Ok,
+        ITMListPromptsResponse_Status_SessionNotFound,
+    };
+    GPBEnumDescriptor *worker =
+        [GPBEnumDescriptor allocDescriptorForName:GPBNSStringifySymbol(ITMListPromptsResponse_Status)
+                                       valueNames:valueNames
+                                           values:values
+                                            count:(uint32_t)(sizeof(values) / sizeof(int32_t))
+                                     enumVerifier:ITMListPromptsResponse_Status_IsValidValue];
+    if (!OSAtomicCompareAndSwapPtrBarrier(nil, worker, (void * volatile *)&descriptor)) {
+      [worker release];
+    }
+  }
+  return descriptor;
+}
+
+BOOL ITMListPromptsResponse_Status_IsValidValue(int32_t value__) {
+  switch (value__) {
+    case ITMListPromptsResponse_Status_Ok:
+    case ITMListPromptsResponse_Status_SessionNotFound:
       return YES;
     default:
       return NO;

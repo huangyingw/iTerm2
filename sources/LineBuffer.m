@@ -34,7 +34,10 @@
 #import "iTermAdvancedSettingsModel.h"
 #import "iTermLineBlockArray.h"
 #import "iTermMalloc.h"
+#import "iTermOrderedDictionary.h"
 #import "LineBlock.h"
+#import "NSArray+iTerm.h"
+#import "NSData+iTerm.h"
 #import "RegexKitLite.h"
 
 static NSString *const kLineBufferVersionKey = @"Version";
@@ -47,6 +50,7 @@ static NSString *const kLineBufferNumDroppedBlocksKey = @"Num Dropped Blocks";
 static NSString *const kLineBufferDroppedCharsKey = @"Dropped Chars";
 static NSString *const kLineBufferTruncatedKey = @"Truncated";
 static NSString *const kLineBufferMayHaveDWCKey = @"May Have Double Width Character";
+static NSString *const kLineBufferBlockWrapperKey = @"Block Wrapper";
 
 static const int kLineBufferVersion = 1;
 static const NSInteger kUnicodeVersion = 9;
@@ -134,7 +138,11 @@ static const NSInteger kUnicodeVersion = 9;
         max_lines = [dictionary[kLineBufferMaxLinesKey] intValue];
         num_dropped_blocks = [dictionary[kLineBufferNumDroppedBlocksKey] intValue];
         droppedChars = [dictionary[kLineBufferDroppedCharsKey] longLongValue];
-        for (NSDictionary *blockDictionary in dictionary[kLineBufferBlocksKey]) {
+        for (NSDictionary *maybeWrapper in dictionary[kLineBufferBlocksKey]) {
+            NSDictionary *blockDictionary = maybeWrapper;
+            if (maybeWrapper[kLineBufferBlockWrapperKey]) {
+                blockDictionary = maybeWrapper[kLineBufferBlockWrapperKey];
+            }
             LineBlock *block = [LineBlock blockWithDictionary:blockDictionary];
             if (!block) {
                 [self autorelease];
@@ -192,7 +200,7 @@ static int RawNumLines(LineBuffer* buffer, int width) {
 
             int block_lines = [block getNumLinesWithWrapWidth: width];
 #if ITERM_DEBUG
-            NSAssert(block_lines > 0, @"Empty leading block");
+            ITAssertWithMessage(block_lines > 0, @"Empty leading block");
 #endif
             int toDrop = block_lines;
             if (toDrop > extra_lines) {
@@ -216,6 +224,7 @@ static int RawNumLines(LineBuffer* buffer, int width) {
 #if ITERM_DEBUG
     assert(totalDropped == (nl - RawNumLines(self, width)));
 #endif
+    [_delegate lineBufferDidDropLines:self];
     return totalDropped;
 }
 
@@ -245,6 +254,10 @@ static int RawNumLines(LineBuffer* buffer, int width) {
     for (int i = 0; i < n; i++) {
         screen_char_t continuation;
         ScreenCharArray *line = [self wrappedLineAtIndex:i width:width continuation:&continuation];
+        if (!line) {
+            [s appendFormat:@"(nil)"];
+            continue;
+        }
         [s appendFormat:@"%@", ScreenCharArrayToStringDebug(line.line, line.length)];
         for (int j = line.length; j < width; j++) {
             [s appendString:@"."];
@@ -342,7 +355,7 @@ static int RawNumLines(LineBuffer* buffer, int width) {
             assert(ok);
             prefix = (screen_char_t*)iTermMalloc(MAX(1, prefix_len) * sizeof(screen_char_t));
             memcpy(prefix, temp, prefix_len * sizeof(screen_char_t));
-            NSAssert(ok, @"hasPartial but pop failed.");
+            ITAssertWithMessage(ok, @"hasPartial but pop failed.");
         }
         if ([block isEmpty]) {
             // The buffer is empty but it's not large enough to hold a whole line. It must be grown.
@@ -377,7 +390,7 @@ static int RawNumLines(LineBuffer* buffer, int width) {
                             width:width
                         timestamp:prefixTimestamp
                      continuation:continuation];
-            NSAssert(ok, @"append can't fail here");
+            ITAssertWithMessage(ok, @"append can't fail here");
             free(prefix);
         }
         // Finally, append this line to the new block. We know it'll fit because we made
@@ -389,7 +402,7 @@ static int RawNumLines(LineBuffer* buffer, int width) {
                         width:width
                     timestamp:timestamp
                  continuation:continuation];
-        NSAssert(ok, @"append can't fail here");
+        ITAssertWithMessage(ok, @"append can't fail here");
     } else if (num_wrapped_lines_width == width) {
         // Straightforward addition of a line to an existing block. Update the
         // wrapped lines cache.
@@ -430,7 +443,7 @@ static int RawNumLines(LineBuffer* buffer, int width) {
     ITBetaAssert(remainder >= 0, @"Negative lineNum BEFORE consuming block_lines");
     if (!block) {
         NSLog(@"Couldn't find line %d", lineNum);
-        NSAssert(NO, @"Tried to get non-existent line");
+        ITAssertWithMessage(NO, @"Tried to get non-existent line");
         return NO;
     }
 
@@ -451,7 +464,7 @@ static int RawNumLines(LineBuffer* buffer, int width) {
     if (continuationPtr) {
         *continuationPtr = continuation;
     }
-    NSAssert(length <= width, @"Length too long");
+    ITAssertWithMessage(length <= width, @"Length too long");
     memcpy((char*) buffer, (char*) p, length * sizeof(screen_char_t));
     [self extendContinuation:continuation inBuffer:buffer ofLength:length toWidth:width];
 
@@ -489,7 +502,8 @@ static int RawNumLines(LineBuffer* buffer, int width) {
     int remainder = 0;
     LineBlock *block = [_lineBlocks blockContainingLineNumber:lineNum width:width remainder:&remainder];
     if (!block) {
-        ITAssertWithMessage(NO, @"Failed to find line %@ with width %@", @(lineNum), @(width));
+        ITAssertWithMessage(NO, @"Failed to find line %@ with width %@. Cache is: %@", @(lineNum), @(width),
+                            [[[[_lineBlocks dumpForCrashlog] dataUsingEncoding:NSUTF8StringEncoding] it_compressedData] it_hexEncoded]);
         return nil;
     }
 
@@ -503,12 +517,12 @@ static int RawNumLines(LineBuffer* buffer, int width) {
     if (result.line) {
         result.length = length;
         result.eol = eol;
-        NSAssert(result.length <= width, @"Length too long");
+        ITAssertWithMessage(result.length <= width, @"Length too long");
         return result;
     }
 
     NSLog(@"Couldn't find line %d", lineNum);
-    NSAssert(NO, @"Tried to get non-existent line");
+    ITAssertWithMessage(NO, @"Tried to get non-existent line");
     return nil;
 }
 
@@ -537,6 +551,26 @@ static int RawNumLines(LineBuffer* buffer, int width) {
         return 0;
     }
     return RawNumLines(self, width);
+}
+
+- (void)removeLastWrappedLines:(int)numberOfLinesToRemove
+                         width:(int)width {
+    // Invalidate the cache
+    num_wrapped_lines_width = -1;
+
+    int linesToRemoveRemaining = numberOfLinesToRemove;
+    while (linesToRemoveRemaining > 0 && _lineBlocks.count > 0) {
+        LineBlock *block = _lineBlocks.lastBlock;
+        const int numberOfLinesInBlock = [block getNumLinesWithWrapWidth:width];
+        if (numberOfLinesInBlock > linesToRemoveRemaining) {
+            // Keep part of block
+            [block removeLastWrappedLines:linesToRemoveRemaining width:width];
+            return;
+        }
+        // Remove the whole block and try again.
+        [_lineBlocks removeLastBlock];
+        linesToRemoveRemaining -= numberOfLinesInBlock;
+    }
 }
 
 - (BOOL)popAndCopyLastLineInto:(screen_char_t*)ptr
@@ -569,9 +603,9 @@ static int RawNumLines(LineBuffer* buffer, int width) {
     if (continuationPtr) {
         *continuationPtr = continuation;
     }
-    NSAssert(ok, @"Unexpected empty block");
-    NSAssert(length <= width, @"Length too large");
-    NSAssert(length >= 0, @"Negative length");
+    ITAssertWithMessage(ok, @"Unexpected empty block");
+    ITAssertWithMessage(length <= width, @"Length too large");
+    ITAssertWithMessage(length >= 0, @"Negative length");
 
     // Copy into the provided buffer.
     memcpy(ptr, temp, sizeof(screen_char_t) * length);
@@ -660,6 +694,7 @@ NS_INLINE int TotalNumberOfRawLines(LineBuffer *self) {
                    options:(FindOptions)options
                       mode:(iTermFindMode)mode
                withContext:(FindContext*)context {
+    DLog(@"Prepare to search for %@", substring);
     context.substring = substring;
     context.options = options;
     if (options & FindOptBackwards) {
@@ -774,7 +809,7 @@ NS_INLINE int TotalNumberOfRawLines(LineBuffer *self) {
 }
 
 // Returns an array of XRange values
-- (NSArray*)convertPositions:(NSArray*)resultRanges withWidth:(int)width {
+- (NSArray*)convertPositions:(NSArray *)resultRanges withWidth:(int)width {
     if (width <= 0) {
         return nil;
     }
@@ -820,6 +855,7 @@ NS_INLINE int TotalNumberOfRawLines(LineBuffer *self) {
             assert(used == [block rawSpaceUsed]);
             BOOL isOk = [block convertPosition:position - passed
                                      withWidth:width
+                                     wrapOnEOL:YES
                                            toX:&x
                                            toY:&y];
             assert(x < 2000);
@@ -876,6 +912,12 @@ NS_INLINE int TotalNumberOfRawLines(LineBuffer *self) {
                          withWidth:width
                            yOffset:&yOffset
                            extends:&extends];
+    if (pos == 0 && yOffset == 1) {
+        // getPositionOfLine:… will set yOffset to 1 when returning the first cell of a raw line to
+        // disambiguate the position. That's the right thing to do except for the very first cell
+        // in a block, where the position is unambiguous.
+        yOffset = 0;
+    }
     if (pos < 0) {
         DLog(@"failed to get position of line %@", @(line));
         return nil;
@@ -889,7 +931,10 @@ NS_INLINE int TotalNumberOfRawLines(LineBuffer *self) {
 
     // Make sure position is valid (might not be because of offset).
     BOOL ok;
-    [self coordinateForPosition:result width:width ok:&ok];
+    [self coordinateForPosition:result
+                          width:width
+                   extendsRight:YES  // doesn't matter for deciding if the result is valid
+                             ok:&ok];
     if (ok) {
         return result;
     } else {
@@ -899,6 +944,7 @@ NS_INLINE int TotalNumberOfRawLines(LineBuffer *self) {
 
 - (VT100GridCoord)coordinateForPosition:(LineBufferPosition *)position
                                   width:(int)width
+                           extendsRight:(BOOL)extendsRight
                                      ok:(BOOL *)ok {
     if (position.absolutePosition == self.lastPosition.absolutePosition) {
         VT100GridCoord result;
@@ -914,12 +960,14 @@ NS_INLINE int TotalNumberOfRawLines(LineBuffer *self) {
         result.x = lastLine.length;
         if (position.yOffset > 0) {
             result.x = 0;
-            result.y += position.yOffset;
+            result.y += position.yOffset + 1;
         } else {
             result.x = lastLine.length;
         }
         if (position.extendsToEndOfLine) {
-            result.x = width - 1;
+            if (extendsRight) {
+                result.x = width - 1;
+            }
         }
         if (ok) {
             *ok = YES;
@@ -945,17 +993,24 @@ NS_INLINE int TotalNumberOfRawLines(LineBuffer *self) {
     int x;
     BOOL positionIsValid = [block convertPosition:p
                                         withWidth:width
+                                        wrapOnEOL:NO  //  using extendsRight here is wrong because extension happens below
                                               toX:&x
                                               toY:&y];
     if (ok) {
         *ok = positionIsValid;
     }
     if (position.yOffset > 0) {
-        x = 0;
+        if (!position.extendsToEndOfLine) {
+            x = 0;
+        }
         y += position.yOffset;
     }
     if (position.extendsToEndOfLine) {
-        x = width - 1;
+        if (extendsRight) {
+            x = width - 1;
+        } else {
+            x = 0;
+        }
     }
     return VT100GridCoordMake(x, y + yoffset);
 }
@@ -981,7 +1036,7 @@ NS_INLINE int TotalNumberOfRawLines(LineBuffer *self) {
         }
         return findContext.offset + droppedChars + [_lineBlocks rawSpaceUsedInRangeOfBlocks:NSMakeRange(0, _lineBlocks.count)];
     }
-    int numBlocks = findContext.absBlockNum - num_dropped_blocks;
+    const int numBlocks = MIN(_lineBlocks.count, findContext.absBlockNum - num_dropped_blocks);
     const NSInteger rawSpaceUsed = numBlocks > 0 ? [_lineBlocks rawSpaceUsedInRangeOfBlocks:NSMakeRange(0, numBlocks)] : 0;
     return droppedChars + rawSpaceUsed + findContext.offset;
 }
@@ -1061,36 +1116,61 @@ NS_INLINE int TotalNumberOfRawLines(LineBuffer *self) {
     return _lineBlocks.count + num_dropped_blocks;
 }
 
-- (NSArray *)codedBlocks:(BOOL *)truncated {
-    *truncated = NO;
-    NSMutableArray *codedBlocks = [NSMutableArray array];
-    int numLines = 0;
-    for (LineBlock *block in [_lineBlocks.blocks reverseObjectEnumerator]) {
-        [codedBlocks insertObject:[block dictionary] atIndex:0];
+// Returns whether we truncated lines.
+- (BOOL)encodeBlocks:(id<iTermEncoderAdapter>)encoder
+            maxLines:(NSInteger)maxLines {
+    __block BOOL truncated = NO;
+    __block NSInteger numLines = 0;
 
-        // This caps the amount of data at a reasonable but arbitrary size.
-        numLines += [block getNumLinesWithWrapWidth:80];
-        if (numLines >= 10000) {
-            *truncated = YES;
-            break;
-        }
-    }
-    return codedBlocks;
+    iTermOrderedDictionary<NSString *, LineBlock *> *index =
+    [iTermOrderedDictionary byMappingEnumerator:_lineBlocks.blocks.reverseObjectEnumerator
+                                          block:^id _Nonnull(NSUInteger index,
+                                                             LineBlock *_Nonnull block) {
+        DLog(@"Maybe encode block %p with guid %@", block, block.stringUniqueIdentifier);
+        return block.stringUniqueIdentifier;
+    }];
+    [encoder encodeArrayWithKey:kLineBufferBlocksKey
+                    identifiers:index.keys
+                     generation:iTermGenerationAlwaysEncode
+                        options:iTermGraphEncoderArrayOptionsReverse
+                          block:^BOOL(id<iTermEncoderAdapter> _Nonnull encoder,
+                                      NSInteger i,
+                                      NSString * _Nonnull identifier,
+                                      BOOL *stop) {
+        LineBlock *block = index[identifier];
+        DLog(@"Encode %@ with identifier %@ and generation %@", block, identifier, @(block.generation));
+        return [encoder encodeDictionaryWithKey:kLineBufferBlockWrapperKey
+                                     generation:block.generation
+                                          block:^BOOL(id<iTermEncoderAdapter>  _Nonnull encoder) {
+            assert(!truncated);
+            DLog(@"Really encode block %p with guid %@", block, block.stringUniqueIdentifier);
+            [encoder mergeDictionary:block.dictionary]; 
+            // This caps the amount of data at a reasonable but arbitrary size.
+            numLines += [block getNumLinesWithWrapWidth:80];
+            if (numLines >= maxLines) {
+                truncated = YES;
+                *stop = YES;
+            }
+            return YES;
+        }];
+    }];
+
+    return truncated;
 }
 
-- (NSDictionary *)dictionary {
-    BOOL truncated;
-    NSArray *codedBlocks = [self codedBlocks:&truncated];
-    return @{ kLineBufferVersionKey: @(kLineBufferVersion),
-              kLineBufferBlocksKey: codedBlocks,
-              kLineBufferTruncatedKey: @(truncated),
-              kLineBufferBlockSizeKey: @(block_size),
-              kLineBufferCursorXKey: @(cursor_x),
-              kLineBufferCursorRawlineKey: @(cursor_rawline),
-              kLineBufferMaxLinesKey: @(max_lines),
-              kLineBufferNumDroppedBlocksKey: @(num_dropped_blocks),
-              kLineBufferDroppedCharsKey: @(droppedChars),
-              kLineBufferMayHaveDWCKey: @(_mayHaveDoubleWidthCharacter) };
+- (void)encode:(id<iTermEncoderAdapter>)encoder maxLines:(NSInteger)maxLines {
+    const BOOL truncated = [self encodeBlocks:encoder maxLines:maxLines];
+
+    [encoder mergeDictionary:
+     @{ kLineBufferVersionKey: @(kLineBufferVersion),
+        kLineBufferTruncatedKey: @(truncated),
+        kLineBufferBlockSizeKey: @(block_size),
+        kLineBufferCursorXKey: @(cursor_x),
+        kLineBufferCursorRawlineKey: @(cursor_rawline),
+        kLineBufferMaxLinesKey: @(max_lines),
+        kLineBufferNumDroppedBlocksKey: @(num_dropped_blocks),
+        kLineBufferDroppedCharsKey: @(droppedChars),
+        kLineBufferMayHaveDWCKey: @(_mayHaveDoubleWidthCharacter) }];
 }
 
 - (void)appendMessage:(NSString *)message {
@@ -1206,6 +1286,10 @@ NS_INLINE int TotalNumberOfRawLines(LineBuffer *self) {
 - (void)endResizing {
     assert(_lineBlocks.resizing);
     _lineBlocks.resizing = NO;
+}
+
+- (void)setPartial:(BOOL)partial {
+    [_lineBlocks.lastBlock setPartial:partial];
 }
 
 @end

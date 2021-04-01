@@ -34,6 +34,7 @@
 
 #import <Cocoa/Cocoa.h>
 
+#import "iTermOrderedDictionary.h"
 #import "iTermTuple.h"
 
 @class iTermVariableScope;
@@ -77,15 +78,17 @@ int decode_utf8_char(const unsigned char * restrict datap,
 - (NSUInteger)numberOfLines;
 // May use single quotes by user preference. Only safe to use with user's default shell.
 - (NSString *)stringWithEscapedShellCharactersIncludingNewlines:(BOOL)includingNewlines;
+
+// foo' -> $'foo\\x27'
+// Suitable for use as bash -c 'escaped string'
+- (NSString *)stringEscapedForBash;
+
 // Always uses backslash.
 - (NSString *)stringWithBackslashEscapedShellCharactersIncludingNewlines:(BOOL)includingNewlines;
 - (NSString *)stringWithEscapedShellCharactersExceptTabAndNewline;
 
 // Replaces tab with ^V + tab.
 - (NSString *)stringWithShellEscapedTabs;
-
-// Properly escapes chars for a string to stick in a URL query param.
-- (NSString*)stringWithPercentEscape;
 
 // Convert DOS-style and \n newlines to \r newlines.
 - (NSString*)stringWithLinefeedNewlines;
@@ -104,9 +107,12 @@ int decode_utf8_char(const unsigned char * restrict datap,
 - (NSString *)stringByReplacingEscapedChar:(unichar)echar withString:(NSString *)s;
 - (NSString *)stringByReplacingEscapedHexValuesWithChars;
 - (NSString *)stringByEscapingQuotes;
+- (NSString *)stringByReplacingCommonlyEscapedCharactersWithControls;
+- (NSString *)stringByEscapingControlCharactersAndBackslash;
 
 // Convert a string of hex values (an even number of [0-9A-Fa-f]) into data.
 - (NSData *)dataFromHexValues;
+- (NSData *)dataFromWhitespaceDelimitedHexValues;
 
 // Always returns a non-null value, but it may contain replacement chars for
 // malformed utf-8 sequences.
@@ -152,10 +158,7 @@ int decode_utf8_char(const unsigned char * restrict datap,
 
 - (NSString *)stringByRemovingEnclosingBrackets;
 
-- (NSString *)stringByEscapingForURL;
 - (NSString *)stringByCapitalizingFirstLetter;
-
-- (NSArray<NSString *> *)helpfulSynonyms;
 
 // String starts with http:// or https://. Used to tell if a custom prefs
 // location is a path or URL.
@@ -225,10 +228,13 @@ int decode_utf8_char(const unsigned char * restrict datap,
                                               BOOL *stop))block;
 
 - (NSString *)firstComposedCharacter:(NSString **)rest;
+- (NSString *)lastComposedCharacter;
+- (NSInteger)numberOfComposedCharacters;
+- (NSString *)byTruncatingComposedCharactersInCenter:(NSInteger)count;
 
 // It is safe to modify, delete, or insert characters in `range` within `block`.
 - (void)reverseEnumerateSubstringsEqualTo:(NSString *)query
-                                    block:(void (^)(NSRange range))block;
+                                    block:(void (^ NS_NOESCAPE)(NSRange range))block;
 
 - (NSUInteger)iterm_unsignedIntegerValue;
 
@@ -243,7 +249,7 @@ int decode_utf8_char(const unsigned char * restrict datap,
 // A fast, non-crypto-quality hash.
 - (NSUInteger)hashWithDJB2;
 
-- (NSUInteger)firstCharacter;
+- (UTF32Char)firstCharacter;
 // Is this a phrase enclosed in quotation marks?
 - (BOOL)isInQuotationMarks;
 
@@ -266,6 +272,8 @@ int decode_utf8_char(const unsigned char * restrict datap,
 
 // Contains only digits?
 - (BOOL)isNumeric;
+// Accepts strings like .2, 1, 1.2
+- (BOOL)isNonnegativeFractionalNumber;
 
 // First character is a digit?
 - (BOOL)startsWithDigit;
@@ -303,12 +311,31 @@ int decode_utf8_char(const unsigned char * restrict datap,
 - (NSString *)it_twoPartVersionNumber;
 - (NSString *)stringByEscapingForSandboxLiteral;
 - (NSString *)stringByDroppingLastCharacters:(NSInteger)count;
+- (NSString *)stringByKeepingLastCharacters:(NSInteger)count;
+- (NSString *)stringByTrimmingOrphanedSurrogates;
 
 - (NSString *)stringByAppendingVariablePathComponent:(NSString *)component;
+- (NSString *)stringByAppendingPathComponents:(NSArray<NSString *> *)pathComponents;
 - (NSArray<NSString *> *)it_normalizedTokens;
 - (double)it_localizedDoubleValue;
 - (NSString *)it_contentHash;
 - (NSString *)it_unescapedTmuxWindowName;
+- (NSString *)it_substringToIndex:(NSInteger)index;
+- (NSString *)it_escapedForRegex;
+- (NSString *)it_compressedString;
+
+// Use this in #!/usr/bin/env -S "%@"
+// Important! It assumes you put the value in double quotes. Amusingly, the man page for env
+// trolls you by explaining that single-quoted values only need to escape ' and \ but neglects to
+// mention that other characters simple won't work at all, escaped or otherwise.
+- (NSString *)it_escapedForEnv;
+
+// Perform substitutions in order.
+- (NSString *)stringByPerformingOrderedSubstitutions:(iTermOrderedDictionary<NSString *, NSString *> *)substitutions;
+- (NSString *)stringByReplacingCharactersAtIndices:(NSIndexSet *)indexSet
+                               withStringFromBlock:(NSString *(^ NS_NOESCAPE)(void))replacement;
+- (BOOL)caseInsensitiveHasPrefix:(NSString *)prefix;
+- (NSString *)removingHTMLFromTabTitleIfNeeded;
 @end
 
 @interface NSMutableString (iTerm)
@@ -320,7 +347,11 @@ int decode_utf8_char(const unsigned char * restrict datap,
 - (void)escapeShellCharactersWithBackslashIncludingNewlines:(BOOL)includingNewlines;
 - (void)escapeShellCharactersExceptTabAndNewline;
 
+// foo' -> $'foo\\x27'
+- (void)escapeShellCharactersForBash;
+
 // Convenience method to append a single character.
 - (void)appendCharacter:(unichar)c;
+- (void)escapeCharacters:(NSString *)charsToEscape;
 
 @end

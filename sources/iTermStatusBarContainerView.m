@@ -8,6 +8,8 @@
 #import "iTermStatusBarContainerView.h"
 
 #import "DebugLogging.h"
+#import "iTermAdvancedSettingsModel.h"
+#import "iTermStatusBarBaseComponent.h"
 #import "iTermUnreadCountView.h"
 #import "NSDictionary+iTerm.h"
 #import "NSEvent+iTerm.h"
@@ -19,6 +21,15 @@
 const CGFloat iTermStatusBarViewControllerIconWidth = 17;
 
 NS_ASSUME_NONNULL_BEGIN
+
+const CGFloat iTermGetStatusBarHeight() {
+    static CGFloat height;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        height = [iTermAdvancedSettingsModel statusBarHeight];
+    });
+    return height;
+}
 
 @implementation iTermStatusBarContainerView {
     NSTimer *_timer;
@@ -33,7 +44,7 @@ NS_ASSUME_NONNULL_BEGIN
     if (icon) {
         preferredWidth += iTermStatusBarViewControllerIconWidth;
     }
-    self = [super initWithFrame:NSMakeRect(0, 0, preferredWidth, 21)];
+    self = [super initWithFrame:NSMakeRect(0, 0, preferredWidth, iTermGetStatusBarHeight())];
     if (self) {
         self.wantsLayer = YES;
         if (@available(macOS 10.14, *)) {
@@ -53,7 +64,10 @@ NS_ASSUME_NONNULL_BEGIN
 
         if ([component statusBarComponentHandlesClicks]) {
             NSClickGestureRecognizer *recognizer = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(clickRecognized:)];
-            [_view addGestureRecognizer:recognizer];
+            if ([component statusBarComponentHandlesMouseDown]) {
+                recognizer.delaysPrimaryMouseButtonEvents = NO;
+            }
+            [self addGestureRecognizer:recognizer];
         }
         [self updateIconIfNeeded];
         _unreadCountView = [[iTermUnreadCountView alloc] init];
@@ -81,7 +95,7 @@ NS_ASSUME_NONNULL_BEGIN
         [_iconImageView it_setTintColor:tintColor];
         [_iconImageView sizeToFit];
         [self addSubview:_iconImageView];
-        NSRect area = NSMakeRect(0, 0, iTermStatusBarViewControllerIconWidth, 21);
+        NSRect area = NSMakeRect(0, 0, iTermStatusBarViewControllerIconWidth, iTermGetStatusBarHeight());
         NSRect frame;
         frame.size = NSMakeSize(icon.size.width, icon.size.height);
         frame.origin.x = 0;
@@ -99,10 +113,14 @@ NS_ASSUME_NONNULL_BEGIN
 }
 
 - (CGFloat)minimumWidthIncludingIcon {
+    const CGFloat minPreferred = self.component.statusBarComponentMinimumWidth;
+    NSDictionary *knobValues = self.component.configuration[iTermStatusBarComponentConfigurationKeyKnobValues];
+    NSNumber *knobValue = knobValues[iTermStatusBarMinimumWidthKey];
+    const CGFloat minExIcon = knobValue ? MAX(minPreferred, knobValue.doubleValue) : minPreferred;
     if (self.component.statusBarComponentIcon) {
-        return self.component.statusBarComponentMinimumWidth + iTermStatusBarViewControllerIconWidth + iTermStatusBarViewControllerMargin;
+        return minExIcon + iTermStatusBarViewControllerIconWidth + iTermStatusBarViewControllerMargin;
     } else {
-        return self.component.statusBarComponentMinimumWidth + iTermStatusBarViewControllerMargin;
+        return minExIcon + iTermStatusBarViewControllerMargin;
     }
 }
 
@@ -126,6 +144,7 @@ NS_ASSUME_NONNULL_BEGIN
 }
 
 - (void)reevaluateTimer:(NSTimer *)timer {
+    DLog(@"Timer fired with interval %@", @(timer.timeInterval));
     [self setNeedsUpdate];
 }
 
@@ -133,6 +152,7 @@ NS_ASSUME_NONNULL_BEGIN
     if (_needsUpdate) {
         return;
     }
+    DLog(@"setNeedsUpdate:%@\n%@", self.component, [NSThread callStackSymbols]);
     _needsUpdate = YES;
     dispatch_async(dispatch_get_main_queue(), ^{
         [self updateIfNeeded];
@@ -208,6 +228,18 @@ NS_ASSUME_NONNULL_BEGIN
     return [super hitTest:point];
 }
 
+- (BOOL)mouseDownCanMoveWindow {
+    return NO;
+}
+
+- (void)mouseDown:(NSEvent *)event {
+    if ([_component statusBarComponentHandlesMouseDown]) {
+        [_component statusBarComponentMouseDownWithView:_view];
+    } else {
+        [super mouseDown:event];
+    }
+}
+
 - (void)mouseUp:(NSEvent *)event {
     if (event.clickCount != 1 || !(event.it_modifierFlags & NSEventModifierFlagControl)) {
         [super mouseUp:event];
@@ -222,6 +254,24 @@ NS_ASSUME_NONNULL_BEGIN
         return;
     }
     [self showContextMenuForEvent:event];
+}
+
+- (void)mouseDragged:(NSEvent *)event {
+    if ([self shouldDragWindowForEvent:event]) {
+        [self.window performWindowDragWithEvent:event];
+        return;
+    }
+    [super mouseDragged:event];
+}
+
+- (BOOL)shouldDragWindowForEvent:(NSEvent *)event {
+    if ((event.modifierFlags & NSEventModifierFlagOption) != 0) {
+        return YES;
+    }
+    if ([_component statusBarComponentHandlesMouseDown]) {
+        return NO;
+    }
+    return [self.delegate statusBarContainerViewCanDragWindow:self];
 }
 
 - (void)showContextMenuForEvent:(NSEvent *)event {
@@ -252,7 +302,7 @@ NS_ASSUME_NONNULL_BEGIN
             }
             NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:knob.labelText action:@selector(toggleKnob:) keyEquivalent:@""];
             item.identifier = knob.key;
-            item.state = [[NSNumber castFrom:values[knob.key]] boolValue] ? NSOnState : NSOffState;
+            item.state = [[NSNumber castFrom:values[knob.key]] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
             [menu addItem:item];
         }
     }];

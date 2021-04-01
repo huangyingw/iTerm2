@@ -11,7 +11,13 @@
 #import "iTermRateLimitedUpdate.h"
 #import <MetalKit/MetalKit.h>
 
-@implementation iTermMetalClipView
+@interface NSClipView(Private)
+- (BOOL)_shouldShowOverlayScrollersForScrollToPoint:(CGPoint)point;
+@end
+
+@implementation iTermMetalClipView {
+    NSInteger _disableShowingOverlayScrollers;
+}
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
     self = [super initWithFrame:frameRect];
@@ -25,7 +31,22 @@
     [super scrollToPoint:newOrigin];
     if (_useMetal) {
         [_metalView setNeedsDisplay:YES];
+    } else {
+        [_legacyView setNeedsDisplay:YES];
     }
+}
+
+- (void)performBlockWithoutShowingOverlayScrollers:(void (^ NS_NOESCAPE)(void))block {
+    _disableShowingOverlayScrollers += 1;
+    block();
+    _disableShowingOverlayScrollers -= 1;
+}
+
+- (BOOL)_shouldShowOverlayScrollersForScrollToPoint:(CGPoint)point {
+    if (_disableShowingOverlayScrollers) {
+        return NO;
+    }
+    return [super _shouldShowOverlayScrollersForScrollToPoint:point];
 }
 
 @end

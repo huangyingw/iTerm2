@@ -57,6 +57,11 @@ typedef NS_ENUM(NSInteger, iTermScriptFilterControlTag) {
 }
 
 - (void)awakeFromNib {
+#ifdef MAC_OS_X_VERSION_10_16
+    if (@available(macOS 10.16, *)) {
+        _tableView.style = NSTableViewStyleInset;
+    }
+#endif
     _callsView.textColor = [NSColor textColor];
     NSScrollView *scrollView = _callsView.enclosingScrollView;
     scrollView.horizontalScrollElasticity = NSScrollElasticityNone;
@@ -299,25 +304,25 @@ typedef NS_ENUM(NSInteger, iTermScriptFilterControlTag) {
                                                                    object:entry
                                                                     queue:nil
                                                                usingBlock:^(NSNotification * _Nonnull note) {
-                                                                   __typeof(self) strongSelf = weakSelf;
-                                                                   if (!strongSelf) {
-                                                                       return;
-                                                                   }
-                                                                   if (note.userInfo) {
-                                                                       NSString *delta = note.userInfo[iTermScriptHistoryEntryDelta];
-                                                                       NSString *property = note.userInfo[iTermScriptHistoryEntryFieldKey];
-                                                                       if ([property isEqualToString:iTermScriptHistoryEntryFieldLogsValue]) {
-                                                                           [strongSelf appendLogs:delta];
-                                                                           [strongSelf scrollLogsToBottomIfNeeded];
-                                                                       } else if ([property isEqualToString:iTermScriptHistoryEntryFieldRPCValue]) {
-                                                                           [strongSelf appendCalls:delta];
-                                                                           [strongSelf scrollCallsToBottomIfNeeded];
-                                                                       }
-                                                                   } else {
-                                                                       [strongSelf->_tableView reloadDataForRowIndexes:[NSIndexSet indexSetWithIndex:row]
-                                                                                                         columnIndexes:[NSIndexSet indexSetWithIndex:0]];
-                                                                   }
-                                                               }];
+            __typeof(self) strongSelf = weakSelf;
+            if (!strongSelf) {
+                return;
+            }
+            if (note.userInfo) {
+                NSString *delta = note.userInfo[iTermScriptHistoryEntryDelta];
+                NSString *property = note.userInfo[iTermScriptHistoryEntryFieldKey];
+                if ([property isEqualToString:iTermScriptHistoryEntryFieldLogsValue]) {
+                    [strongSelf appendLogs:delta];
+                    [strongSelf scrollLogsToBottomIfNeeded];
+                } else if ([property isEqualToString:iTermScriptHistoryEntryFieldRPCValue]) {
+                    [strongSelf appendCalls:delta];
+                    [strongSelf scrollCallsToBottomIfNeeded];
+                }
+            } else {
+                [strongSelf->_tableView reloadDataForRowIndexes:[NSIndexSet indexSetWithIndex:row]
+                                                  columnIndexes:[NSIndexSet indexSetWithIndex:0]];
+            }
+        }];
     }
 }
 
@@ -338,13 +343,13 @@ typedef NS_ENUM(NSInteger, iTermScriptFilterControlTag) {
 }
 
 - (void)scrollLogsToBottomIfNeeded {
-    if (_scrollToBottomOnUpdate.state == NSOnState && _tabView.selectedTabViewItem.view == _logsView.enclosingScrollView) {
+    if (_scrollToBottomOnUpdate.state == NSControlStateValueOn && _tabView.selectedTabViewItem.view == _logsView.enclosingScrollView) {
         [_logsView scrollRangeToVisible: NSMakeRange(_logsView.string.length, 0)];
     }
 }
 
 - (void)scrollCallsToBottomIfNeeded {
-    if (_scrollToBottomOnUpdate.state == NSOnState && _tabView.selectedTabViewItem.view == _callsView.enclosingScrollView) {
+    if (_scrollToBottomOnUpdate.state == NSControlStateValueOn && _tabView.selectedTabViewItem.view == _callsView.enclosingScrollView) {
         [_callsView scrollRangeToVisible: NSMakeRange(_callsView.string.length, 0)];
     }
 }
@@ -434,7 +439,7 @@ typedef NS_ENUM(NSInteger, iTermScriptFilterControlTag) {
     }
     entry.pids = notification.userInfo[@"pids"];
     [[iTermScriptHistory sharedInstance] addHistoryEntry:entry];
-    [entry addOutput:notification.userInfo[@"reason"]];
+    [entry addOutput:notification.userInfo[@"reason"] completion:^{}];
     [entry stopRunning];
 }
 
@@ -463,7 +468,8 @@ typedef NS_ENUM(NSInteger, iTermScriptFilterControlTag) {
         [[iTermScriptHistory sharedInstance] addHistoryEntry:entry];
     }
     entry.websocketConnection = notification.userInfo[@"websocket"];
-    [entry addOutput:[NSString stringWithFormat:@"Connection accepted: %@\n", notification.userInfo[@"reason"]]];
+    [entry addOutput:[NSString stringWithFormat:@"Connection accepted: %@\n", notification.userInfo[@"reason"]]
+          completion:^{}];
 }
 
 - (void)connectionClosed:(NSNotification *)notification {
@@ -473,7 +479,7 @@ typedef NS_ENUM(NSInteger, iTermScriptFilterControlTag) {
     if (!entry) {
         return;
     }
-    [entry addOutput:@"\nConnection closed."];
+    [entry addOutput:@"\nConnection closed.\n" completion:^{}];
     [entry stopRunning];
 }
 

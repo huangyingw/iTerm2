@@ -8,15 +8,16 @@
 
 #import "GeneralPreferencesViewController.h"
 
-#import "iTermAPIAuthorizationController.h"
 #import "iTermAPIHelper.h"
-#import "iTermAPIPermissionsWindowController.h"
 #import "iTermAdvancedGPUSettingsViewController.h"
 #import "iTermApplicationDelegate.h"
 #import "iTermNotificationCenter.h"
+#import "iTermPreferenceDidChangeNotification.h"
 #import "iTermRemotePreferences.h"
 #import "iTermShellHistoryController.h"
+#import "iTermUserDefaultsObserver.h"
 #import "iTermWarning.h"
+#import "NSTextField+iTerm.h"
 #import "PasteboardHistory.h"
 #import "RegexKitLite.h"
 #import "WindowArrangements.h"
@@ -62,7 +63,7 @@ enum {
     iTermAdvancedGPUSettingsWindowController *_advancedGPUWindowController;
 
     IBOutlet NSButton *_enableAPI;
-    IBOutlet NSButton *_resetAPIPermissions;
+    IBOutlet NSPopUpButton *_apiPermission;
 
     // Enable bonjour
     IBOutlet NSButton *_enableBonjour;
@@ -79,13 +80,20 @@ enum {
     IBOutlet NSImageView *_prefsDirWarning;  // Image shown when path is not writable
     IBOutlet NSButton *_browseCustomFolder;  // Push button to open file browser
     IBOutlet NSButton *_pushToCustomFolder;  // Push button to copy local to remote
-    IBOutlet NSButton *_autoSaveOnQuit;  // Save settings to folder on quit
+    IBOutlet NSPopUpButton *_saveChanges;  // Save settings to folder when
+    IBOutlet NSTextField *_saveChangesLabel;
 
     // Copy to clipboard on selection
     IBOutlet NSButton *_selectionCopiesText;
 
     // Copy includes trailing newline
     IBOutlet NSButton *_copyLastNewline;
+
+    // Triple click selects full, wrapped lines.
+    IBOutlet NSButton *_tripleClickSelectsFullLines;
+
+    // Double click perform smart selection
+    IBOutlet NSButton *_doubleClickPerformsSmartSelection;
 
     // Allow clipboard access by terminal applications
     IBOutlet NSButton *_allowClipboardAccessFromTerminal;
@@ -103,6 +111,8 @@ enum {
     // Zoom vertically only
     IBOutlet NSButton *_maxVertically;
 
+    IBOutlet NSButton *_separateWindowTitlePerTab;
+
     // Lion-style fullscreen
     IBOutlet NSButton *_lionStyleFullscreen;
 
@@ -116,9 +126,15 @@ enum {
     IBOutlet NSButton *_useTmuxProfile;
     IBOutlet NSButton *_useTmuxStatusBar;
 
+    IBOutlet NSTextField *_tmuxPauseModeAgeLimit;
+    IBOutlet NSButton *_unpauseTmuxAutomatically;
+    IBOutlet NSButton *_tmuxWarnBeforePausing;
+
     IBOutlet NSTabView *_tabView;
 
-    iTermAPIPermissionsWindowController *_apiPermissionsWindowController;
+    IBOutlet NSButton *_enterCopyModeAutomatically;
+    IBOutlet NSButton *_warningButton;
+    iTermUserDefaultsObserver *_observer;
 }
 
 - (instancetype)initWithNibName:(NSString *)nibNameOrNil bundle:(NSBundle *)nibBundleOrNil {
@@ -128,7 +144,15 @@ enum {
                                                  selector:@selector(savedArrangementChanged:)
                                                      name:kSavedArrangementDidChangeNotification
                                                    object:nil];
-
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(didRevertPythonAuthenticationMethod:)
+                                                     name:iTermAPIHelperDidDetectChangeOfPythonAuthMethodNotification
+                                                   object:nil];
+        _observer = [[iTermUserDefaultsObserver alloc] init];
+        __weak __typeof(self) weakSelf = self;
+        [_observer observeKey:@"NSQuitAlwaysKeepsWindows" block:^{
+            [weakSelf updateEnabledState];
+        }];
     }
     return self;
 }
@@ -167,6 +191,7 @@ enum {
                      [strongSelf setBool:YES forKey:kPreferenceKeyOpenNoWindowsAtStartup];
                      break;
              }
+             [strongSelf updateEnabledState];
          } update:^BOOL{
              __strong __typeof(weakSelf) strongSelf = weakSelf;
              if (!strongSelf) {
@@ -180,6 +205,7 @@ enum {
              } else {
                  [strongSelf->_openWindowsAtStartup selectItemWithTag:kUseSystemWindowRestorationSettingTag];
              }
+             [strongSelf updateEnabledState];
              return YES;
          }];
     [_openDefaultWindowArrangementItem setEnabled:[WindowArrangements count] > 0];
@@ -230,7 +256,7 @@ enum {
         };
     } else {
         _gpuRendering.enabled = NO;
-        _gpuRendering.state = NSOffState;
+        _gpuRendering.state = NSControlStateValueOff;
         [self updateAdvancedGPUEnabled];
     }
 
@@ -246,13 +272,28 @@ enum {
                                                   if ([notification.key isEqualToString:kPreferenceKeyEnableAPIServer]) {
                                                       __typeof(self) strongSelf = weakSelf;
                                                       if (strongSelf) {
-                                                          strongSelf->_enableAPI.state = NSOnState;
-                                                          [strongSelf updateAPIEnabled];
+                                                          strongSelf->_enableAPI.state = NSControlStateValueOn;
                                                       }
                                                   }
                                               }];
-    [self updateAPIEnabled];
 
+    info = [self defineControl:_apiPermission
+                           key:kPreferenceKeyAPIAuthentication
+                   displayName:@"Authentication method for Python API"
+                          type:kPreferenceInfoTypePopup];
+    info.syntheticGetter = ^id{
+        return @([iTermAPIHelper requireApplescriptAuth] ? 0 : 1);
+    };
+    info.syntheticSetter = ^(NSNumber *newValue) {
+        const BOOL useApplescript = (newValue.intValue == 0);
+        [iTermAPIHelper setRequireApplescriptAuth:useApplescript
+                                           window:self.view.window];
+        [weakSelf updateAPIEnabledState];
+    };
+    info.shouldBeEnabled = ^BOOL{
+        return [weakSelf boolForKey:kPreferenceKeyEnableAPIServer];
+    };
+    
     _advancedGPUWindowController = [[iTermAdvancedGPUSettingsWindowController alloc] initWithWindowNibName:@"iTermAdvancedGPUSettingsWindowController"];
     [_advancedGPUWindowController window];
     _advancedGPUWindowController.viewController.disableWhenDisconnected.target = self;
@@ -321,25 +362,19 @@ enum {
     info.onChange = ^() { [self loadPrefsFromCustomFolderDidChange]; };
     info.observer = ^() { [self updateRemotePrefsViews]; };
 
-    info = [self defineControl:_autoSaveOnQuit
-                           key:@"NoSyncNeverRemindPrefsChangesLostForFile_selection"
-                   relatedView:nil
-                          type:kPreferenceInfoTypeCheckbox];
+    info = [self defineControl:_saveChanges
+                           key:kPreferenceKeyNeverRemindPrefsChangesLostForFileSelection
+                   relatedView:_saveChangesLabel
+                          type:kPreferenceInfoTypePopup];
     // Called when user interacts with control
     info.customSettingChangedHandler = ^(id sender) {
         __strong __typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) {
             return;
         }
-        [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"NoSyncNeverRemindPrefsChangesLostForFile"];
-        NSNumber *value;
-        if ([strongSelf->_autoSaveOnQuit state] == NSOnState) {
-            value = @0;
-        } else {
-            value = @1;
-        }
-        [[NSUserDefaults standardUserDefaults] setObject:value
-                                                  forKey:@"NoSyncNeverRemindPrefsChangesLostForFile_selection"];
+        [[NSUserDefaults standardUserDefaults] setBool:YES forKey:kPreferenceKeyNeverRemindPrefsChangesLostForFileHaveSelection];
+        [[NSUserDefaults standardUserDefaults] setObject:@([strongSelf->_saveChanges selectedTag])
+                                                  forKey:kPreferenceKeyNeverRemindPrefsChangesLostForFileSelection];
     };
 
     // Called on programmatic change (e.g., selecting a different profile. Returns YES to avoid
@@ -350,14 +385,11 @@ enum {
             return NO;
         }
         NSUserDefaults *userDefaults = [NSUserDefaults standardUserDefaults];
-        NSCellStateValue state;
-        if ([userDefaults boolForKey:@"NoSyncNeverRemindPrefsChangesLostForFile"] &&
-            [userDefaults integerForKey:@"NoSyncNeverRemindPrefsChangesLostForFile_selection"] == 0) {
-            state = NSOnState;
-        } else {
-            state = NSOffState;
+        NSUInteger tag = iTermPreferenceSavePrefsModeNever;
+        if ([userDefaults boolForKey:kPreferenceKeyNeverRemindPrefsChangesLostForFileHaveSelection]) {
+            tag = [userDefaults integerForKey:kPreferenceKeyNeverRemindPrefsChangesLostForFileSelection];
         }
-        strongSelf->_autoSaveOnQuit.state = state;
+        [strongSelf->_saveChanges selectItemWithTag:tag];
         return YES;
     };
     info.onUpdate();
@@ -396,6 +428,27 @@ enum {
             relatedView:_wordCharsLabel
                    type:kPreferenceInfoTypeStringTextField];
 
+    [self defineControl:_tripleClickSelectsFullLines
+                    key:kPreferenceKeyTripleClickSelectsFullWrappedLines
+            relatedView:nil
+                   type:kPreferenceInfoTypeCheckbox];
+    info = [self defineControl:_doubleClickPerformsSmartSelection
+                           key:kPreferenceKeyDoubleClickPerformsSmartSelection
+                   relatedView:nil
+                          type:kPreferenceInfoTypeCheckbox];
+    info.observer = ^{
+        __strong __typeof(self) strongSelf = weakSelf;
+        if (!strongSelf) {
+            return;
+        }
+        strongSelf->_wordChars.enabled = ![strongSelf boolForKey:kPreferenceKeyDoubleClickPerformsSmartSelection];
+        strongSelf->_wordCharsLabel.labelEnabled = ![strongSelf boolForKey:kPreferenceKeyDoubleClickPerformsSmartSelection];
+    };
+    [self defineControl:_enterCopyModeAutomatically
+                    key:kPreferenceKeyEnterCopyModeAutomatically
+            relatedView:nil
+                   type:kPreferenceInfoTypeCheckbox];
+
     [self defineControl:_smartPlacement
                     key:kPreferenceKeySmartWindowPlacement
             relatedView:nil
@@ -413,6 +466,11 @@ enum {
 
     [self defineControl:_lionStyleFullscreen
                     key:kPreferenceKeyLionStyleFullscreen
+            relatedView:nil
+                   type:kPreferenceInfoTypeCheckbox];
+
+    [self defineControl:_separateWindowTitlePerTab
+                    key:kPreferenceKeySeparateWindowTitlePerTab
             relatedView:nil
                    type:kPreferenceInfoTypeCheckbox];
 
@@ -435,12 +493,38 @@ enum {
                     key:kPreferenceKeyUseTmuxStatusBar
             relatedView:nil
                    type:kPreferenceInfoTypeCheckbox];
+
+    [self defineControl:_tmuxPauseModeAgeLimit
+                    key:kPreferenceKeyTmuxPauseModeAgeLimit
+            displayName:@"Pause a tmux pane if it would take more than this many seconds to catch up."
+                   type:kPreferenceInfoTypeUnsignedIntegerTextField];
+    [self defineControl:_unpauseTmuxAutomatically
+                    key:kPreferenceKeyTmuxUnpauseAutomatically
+            displayName:nil
+                   type:kPreferenceInfoTypeCheckbox];
+    [self defineControl:_tmuxWarnBeforePausing
+                    key:kPreferenceKeyTmuxWarnBeforePausing
+            displayName:nil
+                   type:kPreferenceInfoTypeCheckbox];
+    
+    [self updateEnabledState];
+    [self commitControls];
+}
+
+- (void)updateAPIEnabledState {
+    _enableAPI.state = [self boolForKey:kPreferenceKeyEnableAPIServer];
+    [_apiPermission selectItemWithTag:[iTermAPIHelper requireApplescriptAuth] ? 0 : 1];
     [self updateEnabledState];
 }
 
 - (void)updateEnabledState {
     [super updateEnabledState];
+    [_apiPermission selectItemWithTag:[iTermAPIHelper requireApplescriptAuth] ? 0 : 1];
     _evenIfThereAreNoWindows.enabled = [self boolForKey:kPreferenceKeyPromptOnQuit];
+    const BOOL useSystemWindowRestoration = (![self boolForKey:kPreferenceKeyOpenArrangementAtStartup] &&
+                                             ![self boolForKey:kPreferenceKeyOpenNoWindowsAtStartup]);
+    const BOOL systemRestorationEnabled = [[NSUserDefaults standardUserDefaults] boolForKey:@"NSQuitAlwaysKeepsWindows"];
+    _warningButton.hidden = (!useSystemWindowRestoration || systemRestorationEnabled);
 }
 
 - (void)updateAdvancedGPUEnabled {
@@ -452,7 +536,13 @@ enum {
 }
 
 - (BOOL)enableAPISettingDidChange {
-    const BOOL enabled = _enableAPI.state == NSOnState;
+    const BOOL result = [self reallyEnableAPISettingDidChange];
+    [self updateEnabledState];
+    return result;
+}
+
+- (BOOL)reallyEnableAPISettingDidChange {
+    const BOOL enabled = _enableAPI.state == NSControlStateValueOn;
     if (enabled) {
         // Prompt the user. If they agree, or have permanently agreed, set the user default to YES.
         if ([iTermAPIHelper confirmShouldStartServerAndUpdateUserDefaultsForced:YES]) {
@@ -463,24 +553,27 @@ enum {
     } else {
         [iTermAPIHelper setEnabled:NO];
     }
-    [self updateAPIEnabled];
     if (enabled && ![iTermAPIHelper isEnabled]) {
-        _enableAPI.state = NSOffState;
+        _enableAPI.state = NSControlStateValueOff;
         return NO;
     }
     return YES;
 }
 
-- (void)updateAPIEnabled {
-    _resetAPIPermissions.enabled = [iTermAPIHelper isEnabled];
-}
-
 #pragma mark - Actions
 
-- (IBAction)editAPIPermissions:(id)sender {
-    _apiPermissionsWindowController = [[iTermAPIPermissionsWindowController alloc] initWithWindowNibName:@"iTermAPIPermissionsWindowController"];
-    [self.view.window beginSheet:_apiPermissionsWindowController.window
-               completionHandler:^(NSModalResponse returnCode) {}];
+- (IBAction)warning:(id)sender {
+    const iTermWarningSelection selection =
+    [iTermWarning showWarningWithTitle:@"System window restoration has been disabled, which prevents iTerm2 from respecting this setting. Disable System Preferences > General > Close windows when quitting an app to enable window restoration."
+                               actions:@[ @"Open System Preferences", @"OK" ]
+                             accessory:nil
+                            identifier:@"NoSyncWindowRestorationDisabled"
+                           silenceable:kiTermWarningTypePersistent
+                               heading:@"Window Restoration Disabled"
+                                window:self.view.window];
+    if (selection == kiTermWarningSelection0) {
+        [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:@"/System/Library/PreferencePanes/Appearance.prefPane"]];
+    }
 }
 
 - (IBAction)browseCustomFolder:(id)sender {
@@ -496,12 +589,21 @@ enum {
     }];
 }
 
+- (IBAction)pythonAPIAuthHelp:(id)sender {
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"https://iterm2.com/python-api-auth.html"]];
+}
+
 #pragma mark - Notifications
 
 - (void)savedArrangementChanged:(id)sender {
     PreferenceInfo *info = [self infoForControl:_openWindowsAtStartup];
     [self updateValueForInfo:info];
     [_openDefaultWindowArrangementItem setEnabled:[WindowArrangements count] > 0];
+}
+
+// The API helper just noticed that the file's contents changed.
+- (void)didRevertPythonAuthenticationMethod:(NSNotification *)notification {
+    [self updateAPIEnabledState];
 }
 
 #pragma mark - Remote Prefs
@@ -527,7 +629,8 @@ enum {
     BOOL isValidFile = (shouldLoadRemotePrefs &&
                         remoteLocationIsValid &&
                         ![[iTermRemotePreferences sharedInstance] remoteLocationIsURL]);
-    [_autoSaveOnQuit setEnabled:isValidFile];
+    [_saveChanges setEnabled:isValidFile];
+    [_saveChangesLabel setLabelEnabled:isValidFile];
     [_pushToCustomFolder setEnabled:isValidFile];
 }
 

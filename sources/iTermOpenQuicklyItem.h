@@ -58,3 +58,12 @@
 @property(nonatomic, copy) NSString *presetName;
 @end
 
+@class iTermAction;
+@interface iTermOpenQuicklyActionItem : iTermOpenQuicklyItem
+@property(nonatomic, strong) iTermAction *action;
+@end
+
+@class iTermSnippet;
+@interface iTermOpenQuicklySnippetItem : iTermOpenQuicklyItem
+@property(nonatomic, strong) iTermSnippet *snippet;
+@end

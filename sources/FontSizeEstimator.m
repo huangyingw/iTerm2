@@ -63,8 +63,18 @@
     return [[[NSTextContainer alloc] initWithContainerSize:NSMakeSize(FLT_MAX, FLT_MAX)] autorelease];
 }
 
++ (BOOL)useGenerousRoundingForFont:(NSFont *)aFont {
+    for (NSString *family in [[iTermAdvancedSettingsModel fontsForGenerousRounding] componentsSeparatedByString:@","]) {
+        if ([[[aFont familyName] lowercaseStringWithLocale:[NSLocale localeWithLocaleIdentifier:@"en_US"]] containsString:family]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
 + (id)fontSizeEstimatorForFont:(NSFont *)aFont
 {
+    assert(aFont != nil);
     FontSizeEstimator* fse = [[[FontSizeEstimator alloc] init] autorelease];
     if (fse) {
         NSMutableDictionary *dic = [NSMutableDictionary dictionary];
@@ -95,7 +105,11 @@
 
         CGFontRelease(cgfont);
 
-        size.height = [aFont ascender] - [aFont descender];
+        if ([self useGenerousRoundingForFont:aFont]) {
+            size.height = ceil([aFont ascender]) - floor([aFont descender]);
+        } else {
+            size.height = [aFont ascender] - [aFont descender];
+        }
 
         // Things go very badly indeed if the size is 0.
         size.width = MAX(1, size.width);

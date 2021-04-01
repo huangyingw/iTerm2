@@ -34,6 +34,7 @@ typedef NS_ENUM(NSInteger, PreferenceInfoType) {
 @property(nonatomic, strong) NSControl *control;
 @property(nonatomic) NSRange range;  // For integer fields, the range of legal values.
 @property(nonatomic, readonly) NSArray<NSString *> *searchKeywords;
+@property(nonatomic, strong) NSStepper *associatedStepper;
 
 // If set to YES, don't process changes until keyboard focus exits the control. Defaults to NO.
 // Only supported on controls of type kPreferenceInfoTypeIntegerTextField.
@@ -79,6 +80,10 @@ typedef NS_ENUM(NSInteger, PreferenceInfoType) {
 
 // For text controls, this is called when editing ends.
 @property(nonatomic, copy) void (^controlTextDidEndEditing)(NSNotification *notification);
+
+// Use this when the value is not backed by user defaults.
+@property(nonatomic, copy) id (^syntheticGetter)(void);
+@property(nonatomic, copy) void (^syntheticSetter)(id newValue);
 
 + (instancetype)infoForPreferenceWithKey:(NSString *)key
                                     type:(PreferenceInfoType)type

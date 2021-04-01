@@ -20,6 +20,13 @@
 #import "NSTextField+iTerm.h"
 #import "PreferencePanel.h"
 
+// On macOS 10.13, we see that blur over 26 can turn red (issue 6138).
+// On macOS 10.14, we have evidence that it's safe up to 64 (issue 9438).
+// On macOS 10.15, this doesn't seem to be a problem and it works up to 64 (issue 9229).
+CGFloat iTermMaxBlurRadius(void) {
+    return 64;
+}
+
 @interface ProfilesWindowPreferencesViewController ()<iTermImageWellDelegate>
 
 @property(nonatomic, copy) NSString *backgroundImageFilename;
@@ -54,7 +61,12 @@
     IBOutlet NSButton *_useCustomWindowTitle;
     IBOutlet NSTextField *_customWindowTitle;
     IBOutlet NSView *_settingsForNewWindows;
+    IBOutlet NSTextField *_largeBlurRadiusWarning;
     iTermFunctionCallTextFieldDelegate *_customWindowTitleDelegate;
+
+    IBOutlet NSButton *_useCustomTabTitle;
+    IBOutlet NSTextField *_customTabTitle;
+    iTermFunctionCallTextFieldDelegate *_customTabTitleDelegate;
 }
 
 - (void)dealloc {
@@ -98,13 +110,19 @@
         if (!strongSelf) {
             return;
         }
-        strongSelf->_blurRadius.enabled = (strongSelf->_useBlur.state == NSOnState);
+        strongSelf->_blurRadius.enabled = (strongSelf->_useBlur.state == NSControlStateValueOn);
+        [strongSelf updateBlurRadiusWarning];
     };
 
-    [self defineControl:_blurRadius
-                    key:KEY_BLUR_RADIUS
-            displayName:@"Blur radius"
-                   type:kPreferenceInfoTypeSlider];
+    _blurRadius.maxValue = iTermMaxBlurRadius();
+    info = [self defineControl:_blurRadius
+                           key:KEY_BLUR_RADIUS
+                   displayName:@"Blur radius"
+                          type:kPreferenceInfoTypeSlider];
+    info.observer = ^{
+        [weakSelf updateBlurRadiusWarning];
+    };
+    [self updateBlurRadiusWarning];
 
     info = [self defineControl:_backgroundImageMode
                            key:KEY_BACKGROUND_IMAGE_MODE
@@ -148,13 +166,13 @@
                            key:KEY_COLUMNS
                    displayName:@"Window width in columns"
                           type:kPreferenceInfoTypeIntegerTextField];
-    info.range = NSMakeRange(1, 100000);  // An arbitrary but hopefully reasonable limit.
+    info.range = NSMakeRange(1, iTermMaxInitialSessionSize);
 
     info = [self defineControl:_rowsField
                            key:KEY_ROWS
                    displayName:@"Window height in rows"
                           type:kPreferenceInfoTypeIntegerTextField];
-    info.range = NSMakeRange(1, 100000);  // An arbitrary but hopefully reasonable limit.
+    info.range = NSMakeRange(1, iTermMaxInitialSessionSize);
 
     [self defineControl:_hideAfterOpening
                     key:KEY_HIDE_AFTER_OPENING
@@ -202,31 +220,71 @@
             relatedView:nil
                    type:kPreferenceInfoTypeCheckbox];
 
-    info = [self defineControl:_useCustomWindowTitle
-                           key:KEY_USE_CUSTOM_WINDOW_TITLE
-                   displayName:@"Enable custom window title for new windows"
-                          type:kPreferenceInfoTypeCheckbox];
-    info.onChange = ^{
-        [weakSelf updateCustomWindowTitleEnabled];
-    };
-    
+    // Custom window title
+    {
+        info = [self defineControl:_useCustomWindowTitle
+                               key:KEY_USE_CUSTOM_WINDOW_TITLE
+                       displayName:@"Enable custom window title for new windows"
+                              type:kPreferenceInfoTypeCheckbox];
+        info.onChange = ^{
+            [weakSelf updateCustomWindowTitleEnabled];
+        };
+
+        _customWindowTitleDelegate = [[iTermFunctionCallTextFieldDelegate alloc] initWithPathSource:[iTermVariableHistory pathSourceForContext:iTermVariablesSuggestionContextWindow]
+                                                                                        passthrough:self
+                                                                                      functionsOnly:NO];
+        _customWindowTitle.delegate = _customWindowTitleDelegate;
+        [self defineControl:_customWindowTitle
+                        key:KEY_CUSTOM_WINDOW_TITLE
+                displayName:@"Custom window title for new windows"
+                       type:kPreferenceInfoTypeStringTextField];
+        [self updateCustomWindowTitleEnabled];
+    }
+
+    // Custom tab title
+    {
+        info = [self defineControl:_useCustomTabTitle
+                               key:KEY_USE_CUSTOM_TAB_TITLE
+                       displayName:@"Enable custom tab title for new tabs"
+                              type:kPreferenceInfoTypeCheckbox];
+        info.onChange = ^{
+            [weakSelf updateCustomTabTitleEnabled];
+        };
+
+        _customTabTitleDelegate = [[iTermFunctionCallTextFieldDelegate alloc] initWithPathSource:[iTermVariableHistory pathSourceForContext:iTermVariablesSuggestionContextTab]
+                                                                                        passthrough:self
+                                                                                      functionsOnly:NO];
+        _customTabTitle.delegate = _customTabTitleDelegate;
+        [self defineControl:_customTabTitle
+                        key:KEY_CUSTOM_TAB_TITLE
+                displayName:@"Custom tab title for new tabs"
+                       type:kPreferenceInfoTypeStringTextField];
+        [self updateCustomTabTitleEnabled];
+    }
+
     [self addViewToSearchIndex:_useBackgroundImage
                    displayName:@"Background image enabled"
                        phrases:@[]
                            key:nil];
-    _customWindowTitleDelegate = [[iTermFunctionCallTextFieldDelegate alloc] initWithPathSource:[iTermVariableHistory pathSourceForContext:iTermVariablesSuggestionContextWindow]
-                                                                                    passthrough:self
-                                                                                  functionsOnly:NO];
-    _customWindowTitle.delegate = _customWindowTitleDelegate;
-    [self defineControl:_customWindowTitle
-                    key:KEY_CUSTOM_WINDOW_TITLE
-            displayName:@"Custom window title for new windows"
-                   type:kPreferenceInfoTypeStringTextField];
-    [self updateCustomWindowTitleEnabled];
+}
+
+- (void)updateBlurRadiusWarning {
+    if (@available(macOS 10.15, *)) {
+        // It seems to get slow around this point on some machines circa 2017.
+        if ([self boolForKey:KEY_BLUR] && [self floatForKey:KEY_BLUR_RADIUS] > 26) {
+            _largeBlurRadiusWarning.hidden = NO;
+            return;
+        }
+    }
+    _largeBlurRadiusWarning.hidden = YES;
 }
 
 - (void)updateCustomWindowTitleEnabled {
     _customWindowTitle.enabled = [self boolForKey:KEY_USE_CUSTOM_WINDOW_TITLE];
+}
+
+- (void)updateCustomTabTitleEnabled {
+    _customTabTitle.enabled = [self boolForKey:KEY_USE_CUSTOM_TAB_TITLE];
 }
 
 - (void)layoutSubviewsForEditCurrentSessionMode {
@@ -249,13 +307,14 @@
     [super reloadProfile];
     [self loadBackgroundImageWithFilename:[self stringForKey:KEY_BACKGROUND_IMAGE_LOCATION]];
     [self updateCustomWindowTitleEnabled];
+    [self updateCustomTabTitleEnabled];
 }
 
 #pragma mark - Actions
 
 // Opens a file picker and updates views and state.
 - (IBAction)useBackgroundImageDidChange:(id)sender {
-    if ([_useBackgroundImage state] == NSOnState) {
+    if ([_useBackgroundImage state] == NSControlStateValueOn) {
         [self openFilePicker];
     } else {
         [self loadBackgroundImageWithFilename:nil];
@@ -271,7 +330,7 @@
     [panel setAllowedFileTypes:[NSImage imageTypes]];
 
     void (^completion)(NSInteger) = ^(NSInteger result) {
-        if (result == NSFileHandlingPanelOKButton) {
+        if (result == NSModalResponseOK) {
             NSURL *url = [[panel URLs] objectAtIndex:0];
             [self loadBackgroundImageWithFilename:[url path]];
             [self setString:self.backgroundImageFilename forKey:KEY_BACKGROUND_IMAGE_LOCATION];
@@ -302,11 +361,11 @@
     NSImage *anImage = filename.length > 0 ? [[NSImage alloc] initWithContentsOfFile:filename] : nil;
     if (anImage) {
         [_backgroundImagePreview setImage:anImage];
-        [_useBackgroundImage setState:NSOnState];
+        [_useBackgroundImage setState:NSControlStateValueOn];
         self.backgroundImageFilename = filename;
     } else {
         [_backgroundImagePreview setImage:nil];
-        [_useBackgroundImage setState:NSOffState];
+        [_useBackgroundImage setState:NSControlStateValueOff];
         self.backgroundImageFilename = nil;
     }
 }

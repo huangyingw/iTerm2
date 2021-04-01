@@ -1,7 +1,9 @@
 #import "iTermCursorRenderer.h"
 
+#import "DebugLogging.h"
 #import "iTermAdvancedSettingsModel.h"
 #import "iTermMetalBufferPool.h"
+#import "iTermSharedImageStore.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -89,7 +91,7 @@ NS_ASSUME_NONNULL_BEGIN
     return size;
 }
 
-- (NSImage *)newImage {
+- (iTermImageWrapper *)newImage {
     CGSize size = self.size;
     NSImage *image = [[NSImage alloc] initWithSize:size];
 
@@ -122,7 +124,7 @@ NS_ASSUME_NONNULL_BEGIN
     [path stroke];
     [image unlockFocus];
 
-    return image;
+    return [iTermImageWrapper withImage:image];
 }
 
 - (void)setSelecting:(BOOL)selecting {
@@ -146,7 +148,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @implementation iTermFrameCursorRendererTransientState
 
-- (NSImage *)newImage {
+- (iTermImageWrapper *)newImage {
     NSImage *image = [[NSImage alloc] initWithSize:self.cellConfiguration.cellSize];
 
     [image lockFocus];
@@ -166,7 +168,7 @@ NS_ASSUME_NONNULL_BEGIN
 
     [image unlockFocus];
 
-    return image;
+    return [iTermImageWrapper withImage:image];
 }
 
 - (void)setColor:(NSColor *)color {
@@ -313,6 +315,14 @@ NS_ASSUME_NONNULL_BEGIN
             1
         }
     };
+    if ([iTermAdvancedSettingsModel hdrCursor] &&
+        tState.color.redComponent == 1 &&
+        tState.color.greenComponent == 1 &&
+        tState.color.blueComponent == 1 &&
+        tState.color.alphaComponent == 1) {
+        CGFloat maxValue = tState.configuration.maximumExtendedDynamicRangeColorComponentValue;
+        description.color = simd_make_float4(maxValue, maxValue, maxValue, 1);
+    }
     return description;
 }
 
@@ -524,8 +534,14 @@ static id<MTLBuffer> iTermNewVertexBufferWithBlockCursorQuad(iTermCursorRenderer
     id<MTLBuffer> descriptionBuffer = [_descriptionPool requestBufferFromContext:tState.poolContext
                                                                        withBytes:&description
                                                                   checkIfChanged:YES];
+    ITAssertWithMessage(descriptionBuffer != nil, @"Nil description buffer of size %@", @(_descriptionPool.bufferSize));
+    ITAssertWithMessage(tState.vertexBuffer != nil, @"Nil vertex buffer");
+    ITAssertWithMessage(tState.offsetBuffer != nil, @"Nil offset buffer");
+
     if (!_texture) {
-        _texture = [self.cellRenderer textureFromImage:[[NSBundle bundleForClass:self.class] imageForResource:@"key"] context:nil];
+        _texture = [self.cellRenderer textureFromImage:[iTermImageWrapper withImage:[[NSBundle bundleForClass:self.class] imageForResource:@"key"]]
+                                               context:nil];
+        ITAssertWithMessage(_texture != nil, @"Failed to load key image");
     }
     [_cellRenderer drawWithTransientState:tState
                             renderEncoder:frameData.renderEncoder

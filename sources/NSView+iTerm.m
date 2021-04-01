@@ -8,11 +8,58 @@
 
 #import "NSView+iTerm.h"
 #import "DebugLogging.h"
+#import "iTermApplication.h"
+#import "NSWindow+iTerm.h"
+
+static NSInteger gTakingSnapshot;
 
 @implementation NSView (iTerm)
 
++ (BOOL)iterm_takingSnapshot {
+    return gTakingSnapshot > 0;
+}
+
++ (NSView *)viewAtScreenCoordinate:(NSPoint)point {
+    const NSRect mouseRect = {
+        .origin = point,
+        .size = NSZeroSize
+    };
+    NSArray<NSWindow *> *frontToBackWindows = [[iTermApplication sharedApplication] orderedWindowsPlusVisibleHotkeyPanels];
+    for (NSWindow *window in frontToBackWindows) {
+        if (!window.isOnActiveSpace) {
+            continue;
+        }
+        if (!window.isVisible) {
+            continue;
+        }
+        NSPoint pointInWindow = [window convertRectFromScreen:mouseRect].origin;
+        if ([window isTerminalWindow]) {
+            DLog(@"Consider window %@", window.title);
+            NSView *view = [window.contentView hitTest:pointInWindow];
+            if (view) {
+                return view;
+            } else {
+                DLog(@"%@ failed hit test", window.title);
+            }
+        }
+    }
+    return nil;
+}
+
 - (NSImage *)snapshot {
-    return [[NSImage alloc] initWithData:[self dataWithPDFInsideRect:[self bounds]]];
+    return [self snapshotOfRect:self.bounds];
+}
+
+- (NSImage *)snapshotOfRect:(NSRect)rect {
+    gTakingSnapshot += 1;
+
+    NSBitmapImageRep *rep = [self bitmapImageRepForCachingDisplayInRect:rect];
+    [self cacheDisplayInRect:self.bounds toBitmapImageRep:rep];
+    NSImage *image = [[NSImage alloc] initWithSize:rect.size];
+    [image addRepresentation:rep];
+
+    gTakingSnapshot -= 1;
+    return image;
 }
 
 - (void)insertSubview:(NSView *)subview atIndex:(NSInteger)index {
@@ -102,6 +149,9 @@
 
 - (CGFloat)retinaRound:(CGFloat)value {
     NSWindow *window = self.window;
+    if (!window) {
+        return round(value);
+    }
     CGFloat scale = window.backingScaleFactor;
     if (!scale) {
         scale = [[NSScreen mainScreen] backingScaleFactor];
@@ -114,6 +164,9 @@
 
 - (CGFloat)retinaRoundUp:(CGFloat)value {
     NSWindow *window = self.window;
+    if (!window) {
+        return ceil(value);
+    }
     CGFloat scale = window.backingScaleFactor;
     if (!scale) {
         scale = [[NSScreen mainScreen] backingScaleFactor];
@@ -139,6 +192,10 @@
         }
     }
     return NO;
+}
+
+- (NSColor *)it_backgroundColorOfEnclosingTerminalIfBackgroundColorViewHidden {
+    return [self.superview it_backgroundColorOfEnclosingTerminalIfBackgroundColorViewHidden];
 }
 
 @end

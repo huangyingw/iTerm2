@@ -12,17 +12,21 @@
 #import "iTermRateLimitedUpdate.h"
 #import "iTermTmuxOptionMonitor.h"
 
+typedef void (^iTermWorkingDirectoryPollerClosure)(NSString * _Nullable);
+
 @implementation iTermWorkingDirectoryPoller {
     iTermRateLimitedUpdate *_pwdPollRateLimit;
     BOOL _okToPollForWorkingDirectoryChange;
     BOOL _haveFoundInitialDirectory;
     BOOL _wantsPoll;
     NSInteger _generation;
+    NSMutableArray<iTermWorkingDirectoryPollerClosure> *_completions;
 }
 
 - (instancetype)init {
     self = [super init];
     if (self) {
+        _completions = [NSMutableArray array];
         _pwdPollRateLimit = [[iTermRateLimitedUpdate alloc] init];
         _pwdPollRateLimit.minimumInterval = 1;
     }
@@ -35,6 +39,7 @@
     self = [self init];
     if (self) {
         __weak __typeof(self) weakSelf = self;
+        _completions = [NSMutableArray array];
         _tmuxOptionMonitor = [[iTermTmuxOptionMonitor alloc] initWithGateway:gateway
                                                                        scope:scope
                                                         fallbackVariableName:nil
@@ -62,6 +67,7 @@
 }
 
 - (void)poll {
+    DLog(@"Poll");
     [self pollForWorkingDirectory];
 }
 
@@ -72,6 +78,7 @@
 #pragma mark - Private
 
 - (void)pollIfNeeded {
+    DLog(@"pollIfNeeded. wantsPoll=%@", @(_wantsPoll));
     if (_wantsPoll) {
         _wantsPoll = NO;
         [self pollForWorkingDirectory];
@@ -93,9 +100,8 @@
 }
 
 - (void)pollForWorkingDirectory {
-    DLog(@"polling");
+    DLog(@"pollForWorkingDirectory");
     _okToPollForWorkingDirectoryChange = NO;
-    DLog(@"polling");
     if (_tmuxOptionMonitor) {
         [_tmuxOptionMonitor updateOnce];
         return;
@@ -107,21 +113,32 @@
     }
     __weak __typeof(self) weakSelf = self;
     NSInteger generation = _generation;
-    [iTermLSOF asyncWorkingDirectoryOfProcess:pid block:^(NSString *pwd) {
+    [iTermLSOF asyncWorkingDirectoryOfProcess:pid queue:dispatch_get_main_queue() block:^(NSString *pwd) {
         DLog(@"Got: %@", pwd);
         [weakSelf setDirectory:pwd generation:generation];
     }];
 }
 
+- (void)addOneTimeCompletion:(void (^)(NSString * _Nullable))completion {
+    [_completions addObject:completion];
+}
+
 - (void)setDirectory:(NSString *)directory generation:(NSInteger)generation {
+    DLog(@"setDirectory:%@ generation:%@", directory, @(generation));
     [self didInferWorkingDirectory:directory valid:generation == _generation];
     [self pollIfNeeded];
 }
 
 - (void)didInferWorkingDirectory:(NSString *)pwd valid:(BOOL)valid {
+    DLog(@"didInferWorkingDirectory:%@ valid:%@", pwd, @(valid));
     if (pwd) {
         _haveFoundInitialDirectory = YES;
     }
+    NSArray<iTermWorkingDirectoryPollerClosure> *completions = [_completions copy];
+    [_completions removeAllObjects];
+    [completions enumerateObjectsUsingBlock:^(iTermWorkingDirectoryPollerClosure  _Nonnull completion, NSUInteger idx, BOOL * _Nonnull stop) {
+        completion(pwd);
+    }];
     [self.delegate workingDirectoryPollerDidFindWorkingDirectory:pwd
                                                      invalidated:!valid];
 }

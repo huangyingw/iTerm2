@@ -7,6 +7,7 @@
 #import "iTermApplicationDelegate.h"
 #import "iTermCarbonHotKeyController.h"
 #import "iTermController.h"
+#import "iTermOrderedDictionary.h"
 #import "iTermPreferences.h"
 #import "iTermPreviousState.h"
 #import "iTermProfilePreferences.h"
@@ -151,8 +152,9 @@ NSString *const TERMINAL_ARRANGEMENT_PROFILE_GUID = @"Hotkey Profile GUID";
         if ([hotkey isKindOfClass:[iTermProfileHotKey class]]) {
             iTermProfileHotKey *profileHotKey = hotkey;
             if ([profileHotKey loadRestorableStateFromArray:states]) {
-                [profileHotKey createWindow];
-                [profileHotKey.windowController.window orderOut:nil];  // Issue 4065
+                [profileHotKey createWindowWithCompletion:^{
+                    [profileHotKey.windowController.window orderOut:nil];  // Issue 4065
+                }];
                 count++;
             }
         }
@@ -160,18 +162,56 @@ NSString *const TERMINAL_ARRANGEMENT_PROFILE_GUID = @"Hotkey Profile GUID";
     return count;
 }
 
-- (void)createHiddenWindowFromLegacyRestorableState:(NSDictionary *)legacyState {
-    for (__kindof iTermBaseHotKey *hotkey in _hotKeys) {
-        if ([hotkey isKindOfClass:[iTermProfileHotKey class]]) {
-            iTermProfileHotKey *profileHotKey = hotkey;
-            legacyState = [legacyState dictionaryBySettingObject:profileHotKey.profile[KEY_GUID]
-                                                          forKey:TERMINAL_ARRANGEMENT_PROFILE_GUID];
-            [profileHotKey setLegacyState:legacyState];
-            [profileHotKey createWindow];
-            [profileHotKey.windowController.window orderOut:nil];  // Issue 4065
-            break;
+- (BOOL)createHiddenWindowsByDecoding:(iTermEncoderGraphRecord *)record {
+    iTermOrderedDictionary<NSString *, iTermProfileHotKey *> *index = [self profileHotkeyWindowsIndex];
+    NSMutableArray<NSDictionary *> *restorableStates = [NSMutableArray array];
+
+    [record enumerateArrayWithKey:@"windows" block:^(NSString * _Nonnull guid,
+                                                     NSInteger i,
+                                                     id obj,
+                                                     BOOL * _Nonnull stop) {
+        iTermProfileHotKey *profileHotKey = index[guid];
+        if (!profileHotKey) {
+            return;
         }
-    }
+        [restorableStates addObject:obj];
+    }];
+
+    return [self createHiddenWindowsFromRestorableStates:restorableStates] > 0;
+}
+
+- (iTermOrderedDictionary<NSString *, iTermProfileHotKey *> *)profileHotkeyWindowsIndex {
+    return [iTermOrderedDictionary byMapping:_hotKeys block:^id _Nullable(NSUInteger index, __kindof iTermBaseHotKey *hotkey) {
+        iTermProfileHotKey *profileHotKey = [iTermProfileHotKey castFrom:hotkey];
+        if (!profileHotKey) {
+            return nil;
+        }
+        return profileHotKey.profileGuid;
+    }];
+}
+
+- (BOOL)encodeGraphWithEncoder:(iTermGraphEncoder *)encoder {
+    iTermOrderedDictionary<NSString *, iTermProfileHotKey *> *index = [self profileHotkeyWindowsIndex];
+    [encoder encodeArrayWithKey:@"windows"
+                     generation:iTermGenerationAlwaysEncode
+                    identifiers:index.keys
+                        options:0
+                          block:^BOOL(NSString * _Nonnull identifier,
+                                      NSInteger i,
+                                      iTermGraphEncoder * _Nonnull subencoder,
+                                      BOOL *stop) {
+        iTermProfileHotKey *profileHotKey = index[identifier];
+        return [profileHotKey encodeGraphWithEncoder:subencoder];
+    }];
+    return YES;
+}
+
+- (BOOL)anyProfileHotkeyWindowHasInvalidState {
+    return [[[self profileHotkeyWindowsIndex] values] filteredArrayUsingBlock:^BOOL(iTermProfileHotKey *obj) {
+        const BOOL result = obj.windowController.ptyWindow.it_restorableStateInvalid;
+        obj.windowController.ptyWindow.it_restorableStateInvalid = NO;
+        return result;
+    }].count == 0;
 }
 
 - (NSArray *)restorableStates {
@@ -259,6 +299,10 @@ NSString *const TERMINAL_ARRANGEMENT_PROFILE_GUID = @"Hotkey Profile GUID";
             DLog(@"Currently rolling in %@ so not auto-hiding it", hotKeyWindowController);
             continue;
         }
+        if (hotKeyWindowController.isReplacingWindow) {
+            DLog(@"Currently replacing window for %@ so not auto-hiding it", hotKeyWindowController);
+            continue;
+        }
 
         DLog(@"Auto-hiding %@", hotKeyWindowController);
         DLog(@"%@", [NSThread callStackSymbols]);
@@ -318,6 +362,11 @@ NSString *const TERMINAL_ARRANGEMENT_PROFILE_GUID = @"Hotkey Profile GUID";
 - (BOOL)dockIconClicked {
     __block BOOL handled = NO;
     if (self.visibleWindowControllers.count > 0) {
+        if ([[iTermApplication sharedApplication] it_justBecameActive]) {
+            DLog(@"Just became active. Ignoring dock click.");
+            return YES;
+        }
+        DLog(@"Closing hotkey windows in response to dock click.");
         [self.profileHotKeys enumerateObjectsUsingBlock:^(iTermProfileHotKey  *_Nonnull profileHotKey,
                                                           NSUInteger idx,
                                                           BOOL *_Nonnull stop) {
@@ -364,8 +413,7 @@ NSString *const TERMINAL_ARRANGEMENT_PROFILE_GUID = @"Hotkey Profile GUID";
 }
 
 - (iTermProfileHotKey *)didCreateWindowController:(PseudoTerminal *)windowController
-                                      withProfile:(Profile *)profile
-                                             show:(BOOL)show {
+                                      withProfile:(Profile *)profile {
     iTermProfileHotKey *profileHotKey = [_hotKeys objectOfClass:[iTermProfileHotKey class]
                                                     passingTest:^BOOL(id element, NSUInteger index, BOOL *stop) {
                                                         return [[element profile][KEY_GUID] isEqualToString:profile[KEY_GUID]];
@@ -384,9 +432,6 @@ NSString *const TERMINAL_ARRANGEMENT_PROFILE_GUID = @"Hotkey Profile GUID";
             hotkeyWindowType = iTermHotkeyWindowTypeRegular;
         }
         windowController.hotkeyWindowType = hotkeyWindowType;
-        if (show) {
-            [profileHotKey showHotKeyWindow];
-        }
         return profileHotKey;
     } else {
         return nil;
@@ -442,8 +487,8 @@ NSString *const TERMINAL_ARRANGEMENT_PROFILE_GUID = @"Hotkey Profile GUID";
             // dock stays up. Looks like the OS doesn't respect the window's
             // presentation option when switching from a fullscreen app, so we have
             // to toggle it after the switch is complete.
-            [term showMenuBar];
-            [term hideMenuBar];
+            [[iTermPresentationController sharedInstance] forceShowMenuBarAndDock];
+            [[iTermPresentationController sharedInstance] update];
         }
     }
 }

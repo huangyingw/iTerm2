@@ -13,6 +13,8 @@
 #import "iTermSecureKeyboardEntryController.h"
 #import "iTermToolWrapper.h"
 #import "NSDateFormatterExtras.h"
+#import "NSFont+iTerm.h"
+#import "NSImage+iTerm.h"
 #import "NSTableColumn+iTerm.h"
 #import "NSTextField+iTerm.h"
 #import "PseudoTerminal.h"
@@ -39,12 +41,20 @@ static const CGFloat kMargin = 4;
         _paragraphStyle.allowsDefaultTighteningForTruncation = NO;
 
         clear_ = [[NSButton alloc] initWithFrame:NSMakeRect(0, frame.size.height - kButtonHeight, frame.size.width, kButtonHeight)];
-        [clear_ setButtonType:NSMomentaryPushInButton];
-        [clear_ setTitle:@"Clear All"];
+        if (@available(macOS 10.16, *)) {
+            clear_.bezelStyle = NSBezelStyleRegularSquare;
+            clear_.bordered = NO;
+            clear_.image = [NSImage it_imageForSymbolName:@"trash" accessibilityDescription:@"Delete All"];
+            clear_.imagePosition = NSImageOnly;
+            clear_.frame = NSMakeRect(0, 0, 22, 22);
+        } else {
+            [clear_ setButtonType:NSButtonTypeMomentaryPushIn];
+            [clear_ setTitle:@"Clear All"];
+            [clear_ setBezelStyle:NSBezelStyleSmallSquare];
+            [clear_ sizeToFit];
+        }
         [clear_ setTarget:self];
         [clear_ setAction:@selector(clear:)];
-        [clear_ setBezelStyle:NSSmallSquareBezelStyle];
-        [clear_ sizeToFit];
         [clear_ setAutoresizingMask:NSViewMinYMargin];
         [self addSubview:clear_];
 
@@ -60,14 +70,22 @@ static const CGFloat kMargin = 4;
         scrollView_ = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, frame.size.width, frame.size.height - kButtonHeight - kMargin)];
         [scrollView_ setHasVerticalScroller:YES];
         [scrollView_ setHasHorizontalScroller:NO];
-        [scrollView_ setBorderType:NSBezelBorder];
+        if (@available(macOS 10.16, *)) {
+            [scrollView_ setBorderType:NSLineBorder];
+            scrollView_.scrollerStyle = NSScrollerStyleOverlay;
+        } else {
+            [scrollView_ setBorderType:NSBezelBorder];
+        }
         NSSize contentSize = [scrollView_ contentSize];
         [scrollView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-        if (@available(macOS 10.14, *)) { } else {
-            scrollView_.drawsBackground = NO;
-        }
-        
+        scrollView_.drawsBackground = NO;
+
         tableView_ = [[NSTableView alloc] initWithFrame:NSMakeRect(0, 0, contentSize.width, contentSize.height)];
+#ifdef MAC_OS_X_VERSION_10_16
+        if (@available(macOS 10.16, *)) {
+            tableView_.style = NSTableViewStyleInset;
+        }
+#endif
         NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"contents"];
         [col setEditable:NO];
         [tableView_ addTableColumn:col];
@@ -80,6 +98,9 @@ static const CGFloat kMargin = 4;
 
         [tableView_ setDoubleAction:@selector(doubleClickOnTableView:)];
         [tableView_ setAutoresizingMask:NSViewWidthSizable];
+        if (@available(macOS 10.14, *)) {
+            tableView_.backgroundColor = [NSColor clearColor];
+        }
 
         [scrollView_ setDocumentView:tableView_];
         [self addSubview:scrollView_];
@@ -126,10 +147,22 @@ static const CGFloat kMargin = 4;
     return size;
 }
 
+- (void)resizeSubviewsWithOldSize:(NSSize)oldSize {
+    [super resizeSubviewsWithOldSize:oldSize];
+    [self relayout];
+}
+
 - (void)relayout {
     NSRect frame = self.frame;
-    [clear_ sizeToFit];
-    [clear_ setFrame:NSMakeRect(frame.size.width - clear_.frame.size.width, frame.size.height - kButtonHeight, clear_.frame.size.width, kButtonHeight)];
+    if (@available(macOS 10.16, *)){
+        clear_.frame = NSMakeRect(frame.size.width - clear_.frame.size.width,
+                                  frame.size.height - clear_.frame.size.height,
+                                  clear_.frame.size.width,
+                                  clear_.frame.size.height);
+    } else {
+        [clear_ sizeToFit];
+        [clear_ setFrame:NSMakeRect(frame.size.width - clear_.frame.size.width, frame.size.height - kButtonHeight, clear_.frame.size.width, kButtonHeight)];
+    }
 
     _secureKeyboardEntryWarning.hidden = [iTermAdvancedSettingsModel saveToPasteHistoryWhenSecureInputEnabled] || ![[iTermSecureKeyboardEntryController sharedInstance] isEnabled];
     _secureKeyboardEntryWarning.frame = NSMakeRect(0, 0, frame.size.width, _secureKeyboardEntryWarning.frame.size.height);
@@ -146,6 +179,9 @@ static const CGFloat kMargin = 4;
 }
 
 - (NSTableRowView *)tableView:(NSTableView *)tableView rowViewForRow:(NSInteger)row {
+    if (@available(macOS 10.16, *)) {
+        return [[iTermBigSurTableRowView alloc] initWithFrame:NSZeroRect];
+    }
     return [[iTermCompetentTableRowView alloc] initWithFrame:NSZeroRect];
 }
 
@@ -168,9 +204,16 @@ static const CGFloat kMargin = 4;
     return result;
 }
 
+- (id <NSPasteboardWriting>)tableView:(NSTableView *)tableView pasteboardWriterForRow:(NSInteger)row {
+    NSPasteboardItem *pbItem = [[NSPasteboardItem alloc] init];
+    PasteboardEntry* entry = pasteHistory_.entries[row];
+    [pbItem setString:entry.mainValue forType:(NSString *)kUTTypeUTF8PlainText];
+    return pbItem;
+}
+
 - (NSAttributedString *)attributedStringForTableColumn:(NSTableColumn *)aTableColumn row:(NSInteger)rowIndex {
     return [[NSAttributedString alloc] initWithString:[self stringForTableColumn:aTableColumn row:rowIndex]
-                                           attributes:@{NSFontAttributeName: [NSFont fontWithName:@"Menlo" size:11],
+                                           attributes:@{NSFontAttributeName: [NSFont it_toolbeltFont],
                                                         NSParagraphStyleAttributeName: _paragraphStyle }];
 }
 
@@ -227,17 +270,24 @@ static const CGFloat kMargin = 4;
     }
     PasteboardEntry* entry = pasteHistory_.entries[selectedIndex];
     NSPasteboard* thePasteboard = [NSPasteboard generalPasteboard];
-    [thePasteboard declareTypes:[NSArray arrayWithObject:NSStringPboardType] owner:nil];
-    [thePasteboard setString:[entry mainValue] forType:NSStringPboardType];
+    [thePasteboard declareTypes:[NSArray arrayWithObject:NSPasteboardTypeString] owner:nil];
+    [thePasteboard setString:[entry mainValue] forType:NSPasteboardTypeString];
     PTYTextView *textView = [[iTermController sharedInstance] frontTextView];
     [textView paste:nil];
     [textView.window makeFirstResponder:textView];
 }
 
 - (void)clear:(id)sender {
-    [pasteHistory_ eraseHistory];
-    [pasteHistory_ clear];
-    [tableView_ reloadData];
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = @"Erase Paste History";
+    alert.informativeText = @"Paste history will be erased. Continue?";
+    [alert addButtonWithTitle:@"OK"];
+    [alert addButtonWithTitle:@"Cancel"];
+    if ([alert runModal] == NSAlertFirstButtonReturn) {
+        [pasteHistory_ eraseHistory];
+        [pasteHistory_ clear];
+        [tableView_ reloadData];
+    }
     // Updating the table data causes the cursor to change into an arrow!
     [self performSelector:@selector(fixCursor) withObject:nil afterDelay:0];
 }

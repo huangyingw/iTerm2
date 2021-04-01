@@ -3,12 +3,13 @@
 #import "iTermPopupWindowController.h"
 #import "DebugLogging.h"
 #import "iTermAdvancedSettingsModel.h"
+#import "iTermPreferences.h"
 #import "NSTextField+iTerm.h"
+#import "NSView+iTerm.h"
 #import "NSWindow+PSM.h"
 #import "PopupEntry.h"
 #import "PopupModel.h"
 #import "PopupWindow.h"
-#import "PTYTextView.h"
 #import "SolidColorView.h"
 #import "VT100Screen.h"
 
@@ -48,13 +49,12 @@
 
     NSString *footerString_;
     NSTextField *footerView_;
+    NSView *_footerBackground;
 }
 
 - (instancetype)initWithWindowNibName:(NSString*)nibName tablePtr:(NSTableView**)table model:(PopupModel*)model {
     self = [super initWithWindowNibName:nibName];
     if (self) {
-        [self window];
-
         if (table) {
             tableView_ = [*table retain];
         }
@@ -77,35 +77,48 @@
     [tableView_ release];
     [footerString_ release];
     [footerView_ release];
+    [_footerBackground release];
     [super dealloc];
 }
 
 - (void)awakeFromNib {
     [super awakeFromNib];
+    NSVisualEffectView *vev = [[NSVisualEffectView alloc] init];
+    vev.wantsLayer = YES;
+    vev.layer.cornerRadius = 4;
+    vev.material = NSVisualEffectMaterialSheet;
+    [self.window.contentView insertSubview:vev atIndex:0];
+    vev.frame = self.window.contentView.bounds;
+    vev.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+
     footerString_ = [[self footerString] copy];
     if (!footerString_) {
         return;
     }
 
     footerView_ = [NSTextField newLabelStyledTextField];
-    [self updateBackgroundColor];
     footerView_.stringValue = footerString_;
     [self.window.contentView addSubview:footerView_];
     [footerView_ sizeToFit];
     const CGFloat footerHeight = footerView_.frame.size.height;
-    footerView_.frame = NSMakeRect(0, 0, self.window.contentView.frame.size.width - footerHeight, footerHeight);
+    footerView_.frame = NSMakeRect(0, self.footerMargin, self.window.contentView.frame.size.width - footerHeight, footerHeight);
     footerView_.autoresizingMask = (NSViewWidthSizable | NSViewMaxYMargin);
+
+    _footerBackground = [[NSView alloc] init];
+    _footerBackground.wantsLayer = YES;
+    [_footerBackground makeBackingLayer];
+    _footerBackground.layer.backgroundColor = [[NSColor colorWithWhite:0.5 alpha:1] CGColor];
+    _footerBackground.layer.opacity = 0.2;
+    _footerBackground.layer.cornerRadius = 4;
+    _footerBackground.layer.maskedCorners = (kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner);
+    _footerBackground.frame = NSMakeRect(0, 0, self.window.contentView.frame.size.width, footerHeight + self.footerMargin * 1.5);
+    _footerBackground.autoresizingMask = NSViewWidthSizable;
+    [self.window.contentView insertSubview:_footerBackground atIndex:1];
 
     NSRect frame = [[tableView_ enclosingScrollView] frame];
     frame.size.height = MAX(0, frame.size.height - footerHeight);
     frame.origin.y += footerHeight;
     [[tableView_ enclosingScrollView] setFrame:frame];
-}
-
-- (void)updateBackgroundColor {
-    if (footerString_) {
-        self.window.backgroundColor = [NSColor whiteColor];
-    }
 }
 
 - (void)shutdown
@@ -123,7 +136,6 @@
 - (void)setTableView:(NSTableView *)table {
     [tableView_ autorelease];
     tableView_ = [table retain];
-    [self updateBackgroundColor];
 }
 
 - (BOOL)disableFocusFollowsMouse
@@ -135,10 +147,11 @@
     return (PopupWindow *)self.window;
 }
 
-- (void)popWithDelegate:(id<PopupDelegate>)delegate {
+- (void)popWithDelegate:(id<PopupDelegate>)delegate
+               inWindow:(NSWindow *)owningWindow {
     self.delegate = delegate;
 
-    [self.popupWindow setOwningWindow:delegate.popupWindowController.window];
+    [self.popupWindow setOwningWindow:owningWindow];
 
     static const NSTimeInterval kAnimationDuration = 0.15;
     self.window.alphaValue = 0;
@@ -150,8 +163,8 @@
         self.window.level = NSPopUpMenuWindowLevel;
         [self.window makeKeyAndOrderFront:nil];
     } else {
-        [self showWindow:delegate.popupWindowController];
-        [[self window] makeKeyAndOrderFront:delegate.popupWindowController];
+        [self showWindow:nil];
+        [[self window] makeKeyAndOrderFront:nil];
     }
     [NSAnimationContext beginGrouping];
     [[NSAnimationContext currentContext] setDuration:kAnimationDuration];
@@ -270,10 +283,18 @@
     timer_ = nil;
 }
 
+- (CGFloat)footerMargin {
+    return 4;
+}
+
 - (CGFloat)desiredHeight {
     CGFloat height = [[tableView_ headerView] frame].size.height + MIN(20, [model_ count]) * ([tableView_ rowHeight] + [tableView_ intercellSpacing].height);
+    if (@available(macOS 10.16, *)) {
+        // Fudge factor
+        height += 20;
+    }
     if (footerView_) {
-        height += footerView_.frame.size.height;
+        height += footerView_.frame.size.height + self.footerMargin * 2;
     }
     return height;
 }
@@ -282,27 +303,22 @@
 {
     BOOL onTop = NO;
 
-    VT100Screen* screen = [self.delegate popupVT100Screen];
-    int cx = [screen cursorX] - 1;
-    int cy = [screen cursorY];
+    id<iTermPopupWindowPresenter> presenter = [self.delegate popupPresenter];
+    [presenter popupWindowWillPresent:self];
 
-    PTYTextView* tv = [self.delegate popupVT100TextView];
-    [tv scrollEnd];
     NSRect frame = [[self window] frame];
     frame.size.height = self.desiredHeight;
 
-    NSPoint p = NSMakePoint([iTermAdvancedSettingsModel terminalMargin] + cx * [tv charWidth],
-                            ([screen numberOfLines] - [screen height] + cy) * [tv lineHeight]);
-    p = [tv convertPoint:p toView:nil];
-    p = [[tv window] pointToScreenCoords:p];
+    const NSRect cursorRect = [presenter popupWindowOriginRectInScreenCoords];
+    NSPoint p = cursorRect.origin;
     p.y -= frame.size.height;
 
-    NSRect monitorFrame = [[[[self.delegate popupWindowController] window] screen] visibleFrame];
+    NSRect monitorFrame = [self.delegate popupScreenVisibleFrame];
 
     if (canChangeSide) {
         // p.y gives the bottom of the frame relative to the bottom of the screen, assuming it's below the cursor.
         float bottomOverflow = monitorFrame.origin.y - p.y;
-        float topOverflow = p.y + 2 * frame.size.height + [tv lineHeight] - (monitorFrame.origin.y + monitorFrame.size.height);
+        float topOverflow = p.y + 2 * frame.size.height + NSHeight(cursorRect) - (monitorFrame.origin.y + monitorFrame.size.height);
         if (bottomOverflow > 0 && topOverflow < bottomOverflow) {
             onTop = YES;
         }
@@ -310,7 +326,7 @@
         onTop = onTop_;
     }
     if (onTop) {
-        p.y += frame.size.height + [tv lineHeight];
+        p.y += frame.size.height + NSHeight(cursorRect);
     }
     float rightX = monitorFrame.origin.x + monitorFrame.size.width;
     if (p.x + frame.size.width > rightX) {
@@ -474,7 +490,7 @@
     } else {
         textColor = [NSColor labelColor];
     }
-    NSColor* lightColor = [textColor colorWithAlphaComponent:0.4];
+    NSColor* lightColor = [textColor colorWithAlphaComponent:0.7];
     NSDictionary* lightAttributes = @{ NSFontAttributeName: sysFont,
                                        NSForegroundColorAttributeName: lightColor,
                                        NSParagraphStyleAttributeName: paragraphStyle };

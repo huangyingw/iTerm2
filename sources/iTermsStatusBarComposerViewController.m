@@ -9,10 +9,11 @@
 
 #import "iTermStatusBarLargeComposerViewController.h"
 #import "NSImage+iTerm.h"
+#import "NSTextField+iTerm.h"
 
 static NSString *const iTermComposerComboBoxDidBecomeFirstResponder = @"iTermComposerComboBoxDidBecomeFirstResponder";
 
-@interface iTermsStatusBarComposerViewController ()<iTermComposerTextViewDelegate, NSComboBoxDelegate, NSPopoverDelegate>
+@interface iTermsStatusBarComposerViewController ()<NSComboBoxDelegate>
 @end
 
 @interface iTermComposerComboBox : NSComboBox
@@ -32,8 +33,6 @@ static NSString *const iTermComposerComboBoxDidBecomeFirstResponder = @"iTermCom
     BOOL _open;
     BOOL _wantsReload;
     IBOutlet NSComboBox *_comboBox;
-    IBOutlet iTermStatusBarLargeComposerViewController *_popoverVC;
-    IBOutlet NSPopover *_popover;
     IBOutlet NSButton *_button;
 }
 
@@ -50,47 +49,39 @@ static NSString *const iTermComposerComboBoxDidBecomeFirstResponder = @"iTermCom
     [self reallyReloadData];
 }
 
+- (void)makeFirstResponder {
+    if ([_comboBox textFieldIsFirstResponder]) {
+        [_delegate statusBarComposerRevealComposer:self];
+        return;
+    }
+    [_comboBox.window makeFirstResponder:_comboBox];
+}
+
 - (void)setTintColor:(NSColor *)tintColor {
-    NSImage *image = [NSImage it_imageNamed:@"PopoverIcon" forClass:self.class];
+    NSImage *image = [NSImage it_imageNamed:@"StatusBarComposerExpand" forClass:self.class];
     _button.image = [image it_imageWithTintColor:tintColor];
 }
 
-- (void)awakeFromNib {
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(comboBoxDidBecomeFirstResponder:)
-                                                 name:iTermComposerComboBoxDidBecomeFirstResponder
-                                               object:_comboBox];
+- (NSString *)stringValue {
+    return _comboBox.stringValue;
 }
-#pragma mark - Private
 
-- (void)comboBoxDidBecomeFirstResponder:(NSNotification *)notification {
-    [_popover close];
+- (void)setStringValue:(NSString *)stringValue {
+    _comboBox.stringValue = stringValue;
 }
+
+- (void)setHost:(VT100RemoteHost *)host {
+}
+
+#pragma mark - Private
 
 - (IBAction)send:(id)sender {
 }
 
-- (IBAction)showPopover:(id)sender {
-    _popover.behavior = NSPopoverBehaviorSemitransient;
-    _popover.delegate = self;
-    [_popoverVC view];
-    if ([self.delegate statusBarComposerShouldForceDarkAppearance:self]) {
-        if (@available(macOS 10.14, *)) {
-            _popoverVC.view.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
-        }
-    } else {
-        if (@available(macOS 10.14, *)) {
-            _popoverVC.view.appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
-        }
-    }
-    _popoverVC.textView.string = _comboBox.stringValue;
-    _popoverVC.textView.font = [self.delegate statusBarComposerFont:self];
-    _popoverVC.textView.composerDelegate = self;
-    [_popover showRelativeToRect:_comboBox.frame
-                          ofView:self.view
-                   preferredEdge:NSRectEdgeMaxY];
-
+- (IBAction)revealComposer:(id)sender {
+    [self.delegate statusBarComposerRevealComposer:self];
 }
+
 - (void)reallyReloadData {
     _wantsReload = NO;
     [_comboBox removeAllItems];
@@ -115,11 +106,12 @@ static NSString *const iTermComposerComboBoxDidBecomeFirstResponder = @"iTermCom
     }
 }
 
-#pragma mark - NSPopoverDelegate
+- (void)controlTextDidEndEditing:(NSNotification *)obj {
+    [self.delegate statusBarComposerDidEndEditing:self];
+}
 
-- (void)popoverDidClose:(NSNotification *)notification {
-    _comboBox.stringValue = _popoverVC.textView.string ?: @"";
-
+- (void)cancelOperation:(id)sender {
+    [self.delegate statusBarComposerDidEndEditing:self];
 }
 
 - (BOOL)control:(NSControl *)control
@@ -137,14 +129,6 @@ doCommandBySelector:(SEL)commandSelector {
     } else {
         return NO;
     }
-}
-
-#pragma mark - iTermComposerTextViewDelegate
-
-- (void)composerTextViewDidFinish {
-    _comboBox.stringValue = _popoverVC.textView.string ?: @"";
-    [self.delegate statusBarComposer:self sendCommand:_comboBox.stringValue];
-    _popoverVC.textView.string = @"";
 }
 
 @end

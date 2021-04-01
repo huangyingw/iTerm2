@@ -8,10 +8,13 @@
 
 #import "ToolJobs.h"
 
+#import "DebugLogging.h"
 #import "iTermCompetentTableRowView.h"
 #import "iTermProcessCache.h"
 #import "iTermToolWrapper.h"
 #import "NSArray+iTerm.h"
+#import "NSFont+iTerm.h"
+#import "NSImage+iTerm.h"
 #import "NSTableColumn+iTerm.h"
 #import "NSTextField+iTerm.h"
 #import "PseudoTerminal.h"
@@ -77,7 +80,7 @@ static const CGFloat kMargin = 4;
         [self setDataSource:self];
 
         [[self cell] setControlSize:NSControlSizeSmall];
-        [[self cell] setFont:[NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
+        [[self cell] setFont:[NSFont it_toolbeltFont]];
     }
     return self;
 }
@@ -192,20 +195,7 @@ static const CGFloat kMargin = 4;
     if (self) {
         _processInfos = @[];
 
-        kill_ = [[[NSButton alloc] initWithFrame:NSMakeRect(0,
-                                                            frame.size.height - kButtonHeight,
-                                                            frame.size.width,
-                                                            kButtonHeight)] autorelease];
-        [kill_ setButtonType:NSMomentaryPushInButton];
-        [kill_ setTitle:@"Send Signal"];
-        [kill_ setTarget:self];
-        [kill_ setAction:@selector(kill:)];
-        [kill_ setBezelStyle:NSSmallSquareBezelStyle];
-        [kill_ sizeToFit];
-        [kill_ setAutoresizingMask:NSViewMinYMargin | NSViewMaxXMargin];
-        [self addSubview:kill_];
-        [kill_ bind:@"enabled" toObject:self withKeyPath:@"killable" options:nil];
-        signal_ = [[SignalPicker alloc] initWithFrame:NSMakeRect(kill_.frame.size.width + kMargin,
+        signal_ = [[SignalPicker alloc] initWithFrame:NSMakeRect(0,
                                                                  frame.size.height - kButtonHeight + 1,
                                                                  frame.size.width - kill_.frame.size.width - 2*kMargin,
                                                                  kButtonHeight)];
@@ -214,17 +204,48 @@ static const CGFloat kMargin = 4;
         [signal_ sizeToFit];
         [self addSubview:signal_];
 
+        kill_ = [[[NSButton alloc] initWithFrame:NSMakeRect(0,
+                                                            frame.size.height - kButtonHeight,
+                                                            frame.size.width,
+                                                            kButtonHeight)] autorelease];
+        if (@available(macOS 10.16, *)) {
+            kill_.bezelStyle = NSBezelStyleRegularSquare;
+            kill_.bordered = NO;
+            kill_.image = [NSImage it_imageForSymbolName:@"play" accessibilityDescription:@"Clear"];
+            kill_.imagePosition = NSImageOnly;
+            kill_.frame = NSMakeRect(signal_.frame.size.width + kMargin, 0, 22, 22);
+        } else {
+            [kill_ setButtonType:NSButtonTypeMomentaryPushIn];
+            [kill_ setTitle:@"Send Signal"];
+            [kill_ setBezelStyle:NSBezelStyleSmallSquare];
+            [kill_ sizeToFit];
+            kill_.frame = NSMakeRect(signal_.frame.size.width + kMargin, 0, kill_.frame.size.width, kill_.frame.size.height);
+        }
+        [kill_ setTarget:self];
+        [kill_ setAction:@selector(kill:)];
+        [kill_ setAutoresizingMask:NSViewMinYMargin | NSViewMaxXMargin];
+        [self addSubview:kill_];
+        [kill_ bind:@"enabled" toObject:self withKeyPath:@"killable" options:nil];
+
         scrollView_ = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, frame.size.width, frame.size.height - kButtonHeight - kMargin)];
         [scrollView_ setHasVerticalScroller:YES];
         [scrollView_ setHasHorizontalScroller:NO];
-        [scrollView_ setBorderType:NSBezelBorder];
+        if (@available(macOS 10.16, *)) {
+            [scrollView_ setBorderType:NSLineBorder];
+            scrollView_.scrollerStyle = NSScrollerStyleOverlay;
+        } else {
+            [scrollView_ setBorderType:NSBezelBorder];
+        }
         NSSize contentSize = [scrollView_ contentSize];
         [scrollView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-        if (@available(macOS 10.14, *)) { } else {
-            scrollView_.drawsBackground = NO;
-        }
+        scrollView_.drawsBackground = NO;
 
         tableView_ = [[NSTableView alloc] initWithFrame:NSMakeRect(0, 0, contentSize.width, contentSize.height)];
+#ifdef MAC_OS_X_VERSION_10_16
+        if (@available(macOS 10.16, *)) {
+            tableView_.style = NSTableViewStyleInset;
+        }
+#endif
         NSTableColumn *col;
         col = [[NSTableColumn alloc] initWithIdentifier:@"name"];
         [col setEditable:NO];
@@ -245,9 +266,12 @@ static const CGFloat kMargin = 4;
         [tableView_ setDelegate:self];
         tableView_.intercellSpacing = NSMakeSize(tableView_.intercellSpacing.width, 0);
         tableView_.rowHeight = 15;
-
+        tableView_.headerView = nil;
+        
         [tableView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-
+        if (@available(macOS 10.14, *)) {
+            tableView_.backgroundColor = [NSColor clearColor];
+        }
 
         [scrollView_ setDocumentView:tableView_];
         [self addSubview:scrollView_];
@@ -271,16 +295,28 @@ static const CGFloat kMargin = 4;
     return self;
 }
 
-- (void)relayout
-{
+- (void)resizeSubviewsWithOldSize:(NSSize)oldSize {
+    [super resizeSubviewsWithOldSize:oldSize];
+    [self relayout];
+}
+
+- (void)relayout {
     NSRect frame = self.frame;
-    kill_.frame = NSMakeRect(0, frame.size.height - kButtonHeight, frame.size.width, kButtonHeight);
-    [kill_ sizeToFit];
-    signal_.frame = NSMakeRect(kill_.frame.size.width + kMargin,
+    signal_.frame = NSMakeRect(0,
                                frame.size.height - kButtonHeight + 1,
                                signal_.frame.size.width,
                                kButtonHeight);
     [signal_ sizeToFit];
+
+    if (@available(macOS 10.16, *)) {
+        NSRect rect = kill_.frame;
+        rect.origin.x = NSMaxX(signal_.frame);
+        rect.origin.y = frame.size.height - kButtonHeight + (kButtonHeight - rect.size.height) / 2;
+        kill_.frame = rect;
+    } else {
+        kill_.frame = NSMakeRect(NSMaxX(signal_.frame) + kMargin, frame.size.height - kButtonHeight, frame.size.width, kButtonHeight);
+        [kill_ sizeToFit];
+    }
     scrollView_.frame = NSMakeRect(0, 0, frame.size.width, frame.size.height - kButtonHeight - kMargin);
 }
 
@@ -391,6 +427,9 @@ static const CGFloat kMargin = 4;
 }
 
 - (NSTableRowView *)tableView:(NSTableView *)tableView rowViewForRow:(NSInteger)row {
+    if (@available(macOS 10.16, *)) {
+        return [[[iTermBigSurTableRowView alloc] initWithFrame:NSZeroRect] autorelease];
+    }
     return [[[iTermCompetentTableRowView alloc] initWithFrame:NSZeroRect] autorelease];
 }
 
@@ -409,7 +448,8 @@ static const CGFloat kMargin = 4;
 
     NSString *value = [self stringForTableColumn:tableColumn row:row];
     result.stringValue = value ?: @"";
-
+    result.font = [NSFont it_toolbeltFont];
+    
     return result;
 }
 
@@ -417,7 +457,7 @@ static const CGFloat kMargin = 4;
                                row:(NSInteger)rowIndex {
     if ([[aTableColumn identifier] isEqualToString:@"name"]) {
         // name
-        return _processInfos[rowIndex].name;
+        return _processInfos[rowIndex].argv0 ?: _processInfos[rowIndex].name;
     } else {
         // pid
         return [@(_processInfos[rowIndex].processID) stringValue];
@@ -439,6 +479,7 @@ static const CGFloat kMargin = 4;
 - (void)kill:(id)sender {
     pid_t p = _processInfos[tableView_.selectedRow].processID;
     if (p > 0) {
+        DLog(@"Send signal %@ to %@", signal_, @(p));
         kill(p, [signal_ intValue]);
     }
 }

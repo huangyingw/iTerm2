@@ -7,12 +7,12 @@
 
 #import "iTermStatusBarVariableBaseComponent.h"
 
-#import "iTermLocalHostNameGuesser.h"
 #import "iTermShellHistoryController.h"
 #import "iTermVariableScope.h"
 #import "iTermVariableReference.h"
 #import "NSArray+iTerm.h"
 #import "NSDictionary+iTerm.h"
+#import "NSHost+iTerm.h"
 #import "NSImage+iTerm.h"
 #import "NSObject+iTerm.h"
 #import "NSStringITerm.h"
@@ -100,6 +100,16 @@ NS_ASSUME_NONNULL_BEGIN
     }
 
     NSMutableArray<NSString *> *result = [NSMutableArray array];
+    NSArray<NSString *> *parts = [string componentsSeparatedByString:@"."];
+    if (parts.count > 1) {
+        NSString *localname = parts.firstObject;
+        if ([localname length] > 1) {
+            for (NSInteger numberToOmit = 2; numberToOmit < parts.firstObject.numberOfComposedCharacters - 2; numberToOmit++) {
+                [result addObject:[parts.firstObject byTruncatingComposedCharactersInCenter:numberToOmit]];
+            }
+            [result addObject:parts.firstObject];
+        }
+    }
     NSString *prev = nil;
     while (string != nil && (!prev || string.length < prev.length)) {
         [result addObject:string];
@@ -135,7 +145,7 @@ static NSString *const iTermStatusBarHostnameComponentAbbreviateLocalhost = @"ab
 }
 
 - (NSImage *)statusBarComponentIcon {
-    return [NSImage it_imageNamed:@"StatusBarIconHost" forClass:[self class]];
+    return [NSImage it_cacheableImageNamed:@"StatusBarIconHost" forClass:[self class]];
 }
 
 - (NSString *)statusBarComponentShortDescription {
@@ -155,7 +165,7 @@ static NSString *const iTermStatusBarHostnameComponentAbbreviateLocalhost = @"ab
     NSDictionary *knobValues = self.configuration[iTermStatusBarComponentConfigurationKeyKnobValues];
     NSString *abbreviation = [NSString castFrom:knobValues[iTermStatusBarHostnameComponentAbbreviateLocalhost]];
     if (abbreviation.length &&
-        [[[iTermLocalHostNameGuesser sharedInstance] name] isEqualToString:self.cached]) {
+        [[NSHost fullyQualifiedDomainName] isEqualToString:self.cached]) {
         return @[ abbreviation ];
     }
     return [super stringVariants];
@@ -187,7 +197,7 @@ static NSString *const iTermStatusBarHostnameComponentAbbreviateLocalhost = @"ab
 }
 
 - (NSImage *)statusBarComponentIcon {
-    return [NSImage it_imageNamed:@"StatusBarIconUser" forClass:[self class]];
+    return [NSImage it_cacheableImageNamed:@"StatusBarIconUser" forClass:[self class]];
 }
 
 - (NSString *)statusBarComponentShortDescription {
@@ -239,12 +249,8 @@ static NSString *const iTermStatusBarHostnameComponentAbbreviateLocalhost = @"ab
     }
 }
 
-- (NSArray<iTermStatusBarComponentKnob *> *)statusBarComponentKnobs {
-    return [self.minMaxWidthKnobs arrayByAddingObjectsFromArray:[super statusBarComponentKnobs]];
-}
-
 - (NSImage *)statusBarComponentIcon {
-    return [NSImage it_imageNamed:@"StatusBarIconFolder" forClass:[self class]];
+    return [NSImage it_cacheableImageNamed:@"StatusBarIconFolder" forClass:[self class]];
 }
 
 - (CGFloat)statusBarComponentPreferredWidth {
@@ -287,8 +293,16 @@ static NSString *const iTermStatusBarHostnameComponentAbbreviateLocalhost = @"ab
     return YES;
 }
 
+- (BOOL)statusBarComponentIsEmpty {
+    return [[self.fullString stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] length] == 0;
+}
+
 - (void)statusBarComponentDidClickWithView:(NSView *)view {
     [self openMenuWithView:view];
+}
+
+- (BOOL)statusBarComponentHandlesMouseDown:(NSView *)view {
+    return YES;
 }
 
 - (void)statusBarComponentMouseDownWithView:(NSView *)view {

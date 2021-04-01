@@ -7,6 +7,8 @@
 //
 
 #import <Cocoa/Cocoa.h>
+
+#import "PSMCachedTitle.h"
 #import "PSMProgressIndicator.h"
 
 extern NSString *const kPSMModifierChangedNotification;
@@ -51,6 +53,11 @@ extern PSMTabBarControlOptionKey PSMTabBarControlOptionMinimalStyleTreatLeftInse
 extern PSMTabBarControlOptionKey PSMTabBarControlOptionMinimumSpaceForLabel;  // NSNumber CFGloat points
 extern PSMTabBarControlOptionKey PSMTabBarControlOptionHighVisibility;  // NSNumber boolean
 extern PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForHorizontalTabBar;  // NSNumber boolean
+extern PSMTabBarControlOptionKey PSMTabBarControlOptionFontSizeOverride;  // NSNumber double
+extern PSMTabBarControlOptionKey PSMTabBarControlOptionMinimalSelectedTabUnderlineProminence;  // NSNumber double in 0-1
+extern PSMTabBarControlOptionKey PSMTabBarControlOptionDragEdgeHeight;  // NSNumber CGFloat
+extern PSMTabBarControlOptionKey PSMTabBarControlOptionAttachedToTitleBar;  // NSNumber bool, 10.16+
+extern PSMTabBarControlOptionKey PSMTabBarControlOptionHTMLTabTitles;  // NSNumber bool
 
 // Tab views controlled by the tab bar may expect this protocol to be conformed to by their delegate.
 @protocol PSMTabViewDelegate<NSTabViewDelegate>
@@ -131,18 +138,13 @@ extern PSMTabBarControlOptionKey PSMTabBarControlOptionColoredDrawBottomLineForH
 - (void)tabViewDoubleClickTabBar:(NSTabView *)tabView;
 - (void)setModifier:(int)mask;
 - (void)fillPath:(NSBezierPath*)path;
-- (void)tabView:(NSTabView *)tabView closeTab:(id)identifier;
+- (void)tabView:(NSTabView *)tabView closeTab:(id)identifier button:(int)button;
 - (NSTabViewItem *)tabView:(NSTabView *)tabView unknownObjectWasDropped:(id <NSDraggingInfo>)sender;
 - (id)tabView:(PSMTabBarControl *)tabView valueOfOption:(PSMTabBarControlOptionKey)option;
 - (void)tabViewDidClickAddTabButton:(PSMTabBarControl *)tabView;
-- (BOOL)tabViewShouldDragWindow:(NSTabView *)tabView;
+- (BOOL)tabViewShouldDragWindow:(NSTabView *)tabView event:(NSEvent *)event;
 
 @end
-
-typedef enum {
-    PSMTabBarHorizontalOrientation,
-    PSMTabBarVerticalOrientation
-} PSMTabBarOrientation;
 
 enum {
     PSMTab_SelectedMask = 1 << 1,
@@ -228,7 +230,7 @@ typedef enum {
 
 - (void)setTabColor:(NSColor *)aColor forTabViewItem:(NSTabViewItem *) tabViewItem;
 - (NSColor*)tabColorForTabViewItem:(NSTabViewItem*)tabViewItem;
-- (void)setModifier:(int)mask;
+- (void)setModifier:(NSUInteger)mask;
 - (NSString*)_modifierString;
 - (void)fillPath:(NSBezierPath*)path;
 - (NSTabViewItem *)tabView:(NSTabView *)tabView unknownObjectWasDropped:(id <NSDraggingInfo>)sender;
@@ -256,5 +258,7 @@ typedef enum {
 - (void)backgroundColorWillChange;
 - (id)cellForPoint:(NSPoint)point
          cellFrame:(NSRectPointer)outFrame;
+- (void)dragWillExitTabBar;
+- (void)dragDidFinish;
 
 @end

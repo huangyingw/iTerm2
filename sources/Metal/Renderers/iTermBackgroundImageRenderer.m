@@ -4,7 +4,9 @@
 #import "FutureMethods.h"
 #import "iTermAdvancedSettingsModel.h"
 #import "iTermBackgroundDrawingHelper.h"
+#import "iTermPreferences.h"
 #import "iTermShaderTypes.h"
+#import "iTermSharedImageStore.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -13,6 +15,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic) iTermBackgroundImageMode mode;
 @property (nonatomic) BOOL repeat;
 @property (nonatomic) NSSize imageSize;
+@property (nonatomic) CGFloat imageScale;
 @property (nonatomic) CGRect frame;
 @property (nonatomic) CGRect containerFrame;
 @property (nonatomic) vector_float4 defaultBackgroundColor;
@@ -42,10 +45,11 @@ NS_ASSUME_NONNULL_BEGIN
     iTermMetalBufferPool *_alphaPool;
 #endif
     iTermMetalBufferPool *_colorPool;
+    iTermMetalBufferPool *_solidColorPool;
     iTermMetalBufferPool *_box1Pool;
     iTermMetalBufferPool *_box2Pool;
     iTermBackgroundImageMode _mode;
-    NSImage *_image;
+    iTermImageWrapper *_image;
     id<MTLTexture> _texture;
     CGRect _frame;
     CGRect _containerFrame;
@@ -68,6 +72,7 @@ NS_ASSUME_NONNULL_BEGIN
         _box1Pool = [[iTermMetalBufferPool alloc] initWithDevice:device bufferSize:sizeof(iTermVertex) * 6];
         _box2Pool = [[iTermMetalBufferPool alloc] initWithDevice:device bufferSize:sizeof(iTermVertex) * 6];
         _colorPool = [[iTermMetalBufferPool alloc] initWithDevice:device bufferSize:sizeof(vector_float4)];
+        _solidColorPool = [[iTermMetalBufferPool alloc] initWithDevice:device bufferSize:sizeof(vector_float4)];
     }
     return self;
 }
@@ -80,7 +85,7 @@ NS_ASSUME_NONNULL_BEGIN
     return iTermMetalFrameDataStatPqCreateBackgroundImageTS;
 }
 
-- (void)setImage:(NSImage *)image
+- (void)setImage:(iTermImageWrapper *)image
             mode:(iTermBackgroundImageMode)mode
            frame:(CGRect)frame
    containerRect:(CGRect)containerRect
@@ -109,9 +114,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (id<MTLBuffer>)colorBufferWithColor:(vector_float4)color
                                 alpha:(CGFloat)alpha
                           poolContext:(iTermMetalBufferPoolContext *)poolContext {
-    return [_colorPool requestBufferFromContext:poolContext
-                                      withBytes:&color
-                                 checkIfChanged:YES];
+    vector_float4 premultiplied = color * alpha;
+    premultiplied.w = alpha;
+    iTermMetalBufferPool *pool = (alpha == 1) ? _solidColorPool : _colorPool;
+    return [pool requestBufferFromContext:poolContext
+                                withBytes:&premultiplied
+                           checkIfChanged:YES];
 }
 
 - (id<MTLBuffer>)boxBufferWithRect:(CGRect)rect
@@ -133,6 +141,14 @@ NS_ASSUME_NONNULL_BEGIN
                            checkIfChanged:YES];
 }
 
+- (id<MTLBuffer>)colorBufferForState:(iTermBackgroundImageRendererTransientState *)tState
+                               alpha:(float)alpha {
+    id<MTLBuffer> colorBuffer = [self colorBufferWithColor:tState.defaultBackgroundColor
+                                                     alpha:alpha
+                                               poolContext:tState.poolContext];
+    return colorBuffer;
+}
+
 - (void)drawWithFrameData:(iTermMetalFrameData *)frameData
            transientState:(__kindof iTermMetalRendererTransientState *)transientState {
     iTermBackgroundImageRendererTransientState *tState = transientState;
@@ -140,23 +156,27 @@ NS_ASSUME_NONNULL_BEGIN
     
     NSDictionary *fragmentBuffers = nil;
 #if ENABLE_TRANSPARENT_METAL_WINDOWS
-    float alpha = tState.transparencyAlpha;
+    float alpha = tState.computedAlpha;
+
+    // Alpha=1 here because an overall alpha is applied to the combination of underlayment and image.
+    id<MTLBuffer> underlayColorBuffer = [self colorBufferForState:tState alpha:1];
     if (alpha < 1) {
         _metalRenderer.fragmentFunctionName = tState.repeat ? @"iTermBackgroundImageWithAlphaRepeatFragmentShader" : @"iTermBackgroundImageWithAlphaClampFragmentShader";
         id<MTLBuffer> alphaBuffer = [self alphaBufferWithValue:alpha poolContext:tState.poolContext];
-        fragmentBuffers = @{ @(iTermFragmentInputIndexAlpha): alphaBuffer };
+        fragmentBuffers = @{ @(iTermFragmentInputIndexAlpha): alphaBuffer,
+                             @(iTermFragmentInputIndexColor): underlayColorBuffer
+        };
     } else {
         _metalRenderer.fragmentFunctionName = tState.repeat ? @"iTermBackgroundImageRepeatFragmentShader" : @"iTermBackgroundImageClampFragmentShader";
-        fragmentBuffers = @{};
+        fragmentBuffers = @{ @(iTermFragmentInputIndexColor): underlayColorBuffer };
     }
 #else
     float alpha = 1;
+    id<MTLBuffer> colorBuffer = [self colorBufferForState:tState alpha:alpha];
     _metalRenderer.fragmentFunctionName = tState.repeat ? @"iTermBackgroundImageRepeatFragmentShader" : @"iTermBackgroundImageClampFragmentShader";
     fragmentBuffers = @{};
 #endif
     
-    tState.pipelineState = [_metalRenderer pipelineState];
-
     tState.pipelineState = _metalRenderer.pipelineState;
     [_metalRenderer drawWithTransientState:tState
                              renderEncoder:frameData.renderEncoder
@@ -168,24 +188,22 @@ NS_ASSUME_NONNULL_BEGIN
 
     if (tState.box1) {
         assert(tState.box2);
-        id<MTLBuffer> colorBuffer = [self colorBufferWithColor:tState.defaultBackgroundColor
-                                                         alpha:alpha
-                                                   poolContext:tState.poolContext];
         _metalRenderer.fragmentFunctionName = @"iTermBackgroundImageLetterboxFragmentShader";
+        id<MTLBuffer> letterboxColorBuffer = [self colorBufferForState:tState alpha:alpha];
         tState.pipelineState = _metalRenderer.pipelineState;
         [_metalRenderer drawWithTransientState:tState
                                  renderEncoder:frameData.renderEncoder
                               numberOfVertices:6
                                   numberOfPIUs:0
                                  vertexBuffers:@{ @(iTermVertexInputIndexVertices): tState.box1 }
-                               fragmentBuffers:@{ @(iTermFragmentInputIndexColor): colorBuffer }
+                               fragmentBuffers:@{ @(iTermFragmentInputIndexColor): letterboxColorBuffer }
                                       textures:@{}];
         [_metalRenderer drawWithTransientState:tState
                                  renderEncoder:frameData.renderEncoder
                               numberOfVertices:6
                                   numberOfPIUs:0
                                  vertexBuffers:@{ @(iTermVertexInputIndexVertices): tState.box2 }
-                               fragmentBuffers:@{ @(iTermFragmentInputIndexColor): colorBuffer }
+                               fragmentBuffers:@{ @(iTermFragmentInputIndexColor): letterboxColorBuffer }
                                       textures:@{}];
     }
 }
@@ -207,7 +225,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)initializeTransientState:(iTermBackgroundImageRendererTransientState *)tState {
     tState.texture = _texture;
     tState.mode = _mode;
-    tState.imageSize = _image.size;
+    tState.imageSize = _image.image.size;
+    tState.imageScale = [_image.image recommendedLayerContentsScale:tState.configuration.scale];
     tState.repeat = (_mode == iTermBackgroundImageModeTile);
     tState.frame = _frame;
     tState.defaultBackgroundColor = _color;
@@ -216,8 +235,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (void)loadVertexBuffer:(iTermBackgroundImageRendererTransientState *)tState {
     const CGFloat scale = tState.configuration.scale;
-    const CGSize nativeTextureSize = NSMakeSize(tState.imageSize.width * scale,
-                                                tState.imageSize.height * scale);
+    const CGSize nativeTextureSize = NSMakeSize(tState.imageSize.width * tState.imageScale,
+                                                tState.imageSize.height * tState.imageScale);
     const CGSize viewportSize = CGSizeMake(tState.configuration.viewportSize.x,
                                            tState.configuration.viewportSize.y);
     NSEdgeInsets insets;
@@ -226,7 +245,7 @@ NS_ASSUME_NONNULL_BEGIN
         vmargin = 0;
         insets = NSEdgeInsetsZero;
     } else {
-        vmargin = [iTermAdvancedSettingsModel terminalVMargin] * scale;
+        vmargin = [iTermPreferences intForKey:kPreferenceKeyTopBottomMargins] * scale;
         insets = tState.edgeInsets;
     }
     const CGFloat topMargin = insets.bottom + vmargin;
@@ -278,19 +297,26 @@ NS_ASSUME_NONNULL_BEGIN
                                                          containerRect.origin.y + frame.origin.y * containerRect.size.height,
                                                          frame.size.width * containerRect.size.width,
                                                          frame.size.height * containerRect.size.height);
+            NSRect box1 = NSZeroRect;
+            NSRect box2 = NSZeroRect;
             textureFrame =
             [iTermBackgroundDrawingHelper scaleAspectFitSourceRectForForImageSize:nativeTextureSize
                                                                   destinationRect:containerRect
                                                                         dirtyRect:myFrameInContainer
                                                                          drawRect:&drawRect
-                                                                         boxRect1:nil
-                                                                         boxRect2:nil];
-            quadFrame = drawRect;
-            // Convert the quadFrame to my coordinate system.
-            quadFrame.origin.x = drawRect.origin.x - frame.origin.x * containerRect.size.width - containerRect.origin.x;
-            quadFrame.origin.y = drawRect.origin.y - frame.origin.y * containerRect.size.height - containerRect.origin.y;
-            quadFrame.size.width = drawRect.size.width;
-            quadFrame.size.height = drawRect.size.height;
+                                                                         boxRect1:&box1
+                                                                         boxRect2:&box2];
+
+            // Convert frames into my coordinate system
+            NSRect (^convertRect)(NSRect) = ^NSRect(NSRect drawRect) {
+                return NSMakeRect(drawRect.origin.x - frame.origin.x * containerRect.size.width - containerRect.origin.x,
+                                  drawRect.origin.y - frame.origin.y * containerRect.size.height - containerRect.origin.y,
+                                  drawRect.size.width,
+                                  drawRect.size.height);
+            };
+            quadFrame = convertRect(drawRect);
+            tState.box1 = [self boxBufferWithRect:convertRect(box1) box:1 poolContext:tState.poolContext];
+            tState.box2 = [self boxBufferWithRect:convertRect(box2) box:2 poolContext:tState.poolContext];
             break;
         }
             

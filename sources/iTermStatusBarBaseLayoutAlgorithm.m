@@ -8,6 +8,7 @@
 #import "iTermStatusBarBaseLayoutAlgorithm.h"
 
 #import "DebugLogging.h"
+#import "iTermStatusBarBaseComponent.h"
 #import "iTermStatusBarComponent.h"
 #import "iTermStatusBarContainerView.h"
 #import "NSArray+iTerm.h"
@@ -16,10 +17,12 @@
 
 - (instancetype)initWithContainerViews:(NSArray<iTermStatusBarContainerView *> *)containerViews
                          mandatoryView:(nonnull iTermStatusBarContainerView *)mandatoryView
-                        statusBarWidth:(CGFloat)statusBarWidth {
+                        statusBarWidth:(CGFloat)statusBarWidth
+                 removeEmptyComponents:(BOOL)removeEmptyComponents {
     self = [super initWithContainerViews:containerViews
                            mandatoryView:mandatoryView
-                          statusBarWidth:statusBarWidth];
+                          statusBarWidth:statusBarWidth
+                   removeEmptyComponents:removeEmptyComponents];
     if (self) {
         _statusBarWidth = statusBarWidth;
         _containerViews = [containerViews copy];
@@ -40,7 +43,7 @@
     DLog(@"availableWidthAfterInitializingDesiredWidthForViews available=%@", @(availableWidth));
     // Allocate minimum widths
     [views enumerateObjectsUsingBlock:^(iTermStatusBarContainerView * _Nonnull view, NSUInteger idx, BOOL * _Nonnull stop) {
-        view.desiredWidth = view.component.statusBarComponentMinimumWidth;
+        view.desiredWidth = [self minimumWidthForComponent:view.component];
         if (view.component.statusBarComponentIcon) {
             view.desiredWidth = view.desiredWidth + iTermStatusBarViewControllerIconWidth;
         }
@@ -57,6 +60,7 @@
             preferredWidth += iTermStatusBarViewControllerIconWidth;
         }
         return ([view.component statusBarComponentCanStretch] &&
+                view.desiredWidth < [self maximumWidthForComponent:view.component] &&
                 floor(preferredWidth) > floor(view.desiredWidth));
     }];
 }
@@ -129,10 +133,14 @@
 }
 
 - (NSArray<iTermStatusBarContainerView *> *)unhiddenContainerViews {
+    if (!self.removeEmptyComponents) {
+        return _containerViews;
+    }
+
     return [_containerViews filteredArrayUsingBlock:
             ^BOOL(iTermStatusBarContainerView *view) {
-                return !view.componentHidden;
-            }];
+        return !view.component.statusBarComponentIsEmpty;
+    }];
 }
 
 - (NSArray<iTermStatusBarContainerView *> *)containerViewsSortedByPriority:(NSArray<iTermStatusBarContainerView *> *)eligibleContainerViews {
@@ -187,7 +195,7 @@
 - (CGFloat)minimumWidthOfContainerViews:(NSArray<iTermStatusBarContainerView *> *)views {
     [self updateMargins:views];
     NSNumber *sumOfMinimumWidths = [views reduceWithFirstValue:@0 block:^id(NSNumber *sum, iTermStatusBarContainerView *containerView) {
-        CGFloat minimumWidth = containerView.component.statusBarComponentMinimumWidth;
+        CGFloat minimumWidth = [self minimumWidthForComponent:containerView.component];
         if (containerView.component.statusBarComponentIcon != nil) {
             minimumWidth += iTermStatusBarViewControllerIconWidth;
         }
@@ -218,7 +226,7 @@
 
     NSMutableArray<iTermStatusBarContainerView *> *prioritized = [self containerViewsSortedByPriority:views].mutableCopy;
     NSMutableArray<iTermStatusBarContainerView *> *prioritizedNonzerominimum = [prioritized filteredArrayUsingBlock:^BOOL(iTermStatusBarContainerView *anObject) {
-        return anObject.component.statusBarComponentMinimumWidth > 0 || anObject.component.statusBarComponentIcon != nil;
+        return [self minimumWidthForComponent:anObject.component] > 0 || anObject.component.statusBarComponentIcon != nil;
     }].mutableCopy;
     CGFloat desiredWidth = [self minimumWidthOfContainerViews:prioritized];
     while (desiredWidth > allowedWidth) {
@@ -248,6 +256,30 @@
         view.desiredOrigin = floor(view.desiredOrigin);
         view.desiredWidth = ceil(view.desiredWidth);
     }
+}
+
+- (CGFloat)minimumWidthForComponent:(id<iTermStatusBarComponent>)component {
+    const CGFloat minPreferred = component.statusBarComponentMinimumWidth;
+    NSDictionary *knobValues = component.configuration[iTermStatusBarComponentConfigurationKeyKnobValues];
+    NSNumber *knobValue = knobValues[iTermStatusBarMinimumWidthKey];
+    if (!knobValue) {
+        return minPreferred;
+    }
+    return MAX(knobValue.doubleValue, minPreferred);
+}
+
+- (CGFloat)maximumWidthForComponent:(id<iTermStatusBarComponent>)component {
+    const CGFloat maxPreferred = component.statusBarComponentMaximumWidth;
+    NSDictionary *knobValues = component.configuration[iTermStatusBarComponentConfigurationKeyKnobValues];
+    NSNumber *knobValue = knobValues[iTermStatusBarMaximumWidthKey];
+    // If they conflict, minimum takes precedence over maximum.
+    const CGFloat min = [self minimumWidthForComponent:component];
+    if (!knobValue) {
+        return MAX(min, maxPreferred);
+    }
+    return MAX(min,
+               MIN(knobValue.doubleValue,
+                   maxPreferred));
 }
 
 // Returns non-hidden container views that all satisfy their minimum width requirement.

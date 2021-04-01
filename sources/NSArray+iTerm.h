@@ -13,12 +13,17 @@
 @interface NSArray<ObjectType> (iTerm)
 
 + (NSArray<NSNumber *> *)sequenceWithRange:(NSRange)range;
++ (NSArray<NSString *> *)stringSequenceWithRange:(NSRange)range;
+- (NSIndexSet *)it_indexSetWithIndexesOfObjects:(NSArray *)objects;
+
+- (NSArray<ObjectType> *)it_arrayByRemovingObjectsAtIndexes:(NSIndexSet *)indexes;
 
 - (NSArray *)objectsOfClasses:(NSArray<Class> *)classes;
 - (NSAttributedString *)attributedComponentsJoinedByAttributedString:(NSAttributedString *)joiner;
 
 // Returns an array where each object in self is replaced with block(object).
-- (NSArray *)mapWithBlock:(id (^)(ObjectType anObject))block;
+- (NSArray *)mapWithBlock:(id (^NS_NOESCAPE)(ObjectType anObject))block;
+- (NSArray *)mapEnumeratedWithBlock:(id (^NS_NOESCAPE)(NSUInteger i, id object, BOOL *stop))block;
 - (NSArray *)flatMapWithBlock:(NSArray *(^)(ObjectType anObject))block;
 
 - (NSArray<ObjectType> *)flattenedArray;
@@ -39,7 +44,8 @@
 - (ObjectType)maxWithComparator:(NSComparisonResult (^)(ObjectType a, ObjectType b))comparator;
 
 // All objects equal to the minimum value.
-- (NSArray *)minimumsWithComparator:(NSComparisonResult (^)(id, id))comparator;
+- (NSArray *)minimumsWithComparator:(NSComparisonResult (^ NS_NOESCAPE)(id, id))comparator;
+- (NSArray *)maximumsWithComparator:(NSComparisonResult (^ NS_NOESCAPE)(id, id))comparator;
 
 // Does the array contain at least one object not equal to @c anObject?
 - (BOOL)containsObjectBesides:(ObjectType)anObject;
@@ -55,10 +61,14 @@
 // Hashes elements of class NSArray, NSString, NSNumber, and any other element
 // that responds to hashWithDJB2. Other elements do not modify the hash.
 - (NSUInteger)hashWithDJB2;
+- (NSData *)hashWithSHA256;
 - (BOOL)isEqualIgnoringOrder:(NSArray *)other;
 
 // May reorder the whole array.
 - (NSArray<ObjectType> *)arrayByRemovingDuplicates;
+
+// Removes dups, does not reorder array.
+- (NSArray<ObjectType> *)arrayByRemovingDuplicatesStably;
 
 // Removes consecutive duplicates. Is stable.
 - (NSArray<ObjectType> *)uniq;
@@ -74,6 +84,7 @@
 // For N=1 element:    @"element1"
 // For N=0 elements:   @""
 - (NSString *)componentsJoinedWithOxfordComma;
+- (NSString *)componentsJoinedWithOxfordCommaAndConjunction:(NSString *)conjunction;
 
 - (NSArray *)intersectArray:(NSArray *)other;
 
@@ -95,8 +106,10 @@
 
 - (NSArray<iTermTuple *> *)tuplesWithFirstObjectEqualTo:(id)firstObject;
 - (NSDictionary<id, NSArray<ObjectType> *> *)classifyWithBlock:(id (^)(ObjectType))block;
+- (NSDictionary<id, ObjectType> *)classifyUniquelyWithBlock:(id (^)(ObjectType))block;
 - (ObjectType)uncheckedObjectAtIndex:(NSInteger)index;
 
+- (NSUInteger)indexOfMaxWithBlock:(NSComparisonResult (^)(ObjectType obj1, ObjectType obj2))block;
 - (ObjectType)maxWithBlock:(NSComparisonResult (^)(ObjectType obj1, ObjectType obj2))block;
 - (ObjectType)minWithBlock:(NSComparisonResult (^)(ObjectType obj1, ObjectType obj2))block;
 - (NSArray<ObjectType> *)it_arrayByDroppingLastN:(NSUInteger)n;
@@ -112,8 +125,12 @@
 
 - (double)sumOfNumbers;
 - (NSArray *)it_arrayByReplacingOccurrencesOf:(id)pattern with:(id)replacement;
+- (const char **)nullTerminatedCStringArray;
+- (NSArray<ObjectType> *)reversed;
 
 @end
+
+void iTermFreeeNullTerminatedCStringArray(const char **array);
 
 @interface NSMutableArray<ObjectType> (iTerm)
 - (void)reverse;

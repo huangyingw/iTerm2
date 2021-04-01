@@ -7,6 +7,7 @@
 
 #import "iTermExpressionEvaluator.h"
 
+#import "DebugLogging.h"
 #import "iTermAPIHelper.h"
 #import "iTermExpressionParser.h"
 #import "iTermScriptFunctionCall+Private.h"
@@ -17,6 +18,13 @@
 #import "NSJSONSerialization+iTerm.h"
 #import "NSObject+iTerm.h"
 #import "NSStringITerm.h"
+
+@interface iTermExpressionEvaluator(Private)
+- (void)didCompleteWithResult:(id)result
+                        error:(NSError *)error
+                      missing:(NSSet<NSString *> *)missing
+                   completion:(void (^)(iTermExpressionEvaluator *))completion;
+@end
 
 @implementation iTermExpressionEvaluator {
     BOOL _hasBeenEvaluated;
@@ -51,7 +59,20 @@
                                     scope:scope];
 }
 
-- (instancetype)initWithInterpolatedString:(NSString *)interpolatedString scope:(iTermVariableScope *)scope {
+- (instancetype)initWithStrictInterpolatedString:(NSString *)interpolatedString
+                                           scope:(iTermVariableScope *)scope {
+    iTermParsedExpression *parsedExpression =
+    [iTermExpressionParser parsedExpressionWithInterpolatedString:interpolatedString
+                                                 escapingFunction:nil
+                                                            scope:scope
+                                                           strict:YES];
+    return [self initWithParsedExpression:parsedExpression
+                               invocation:interpolatedString
+                                    scope:scope];
+}
+
+- (instancetype)initWithInterpolatedString:(NSString *)interpolatedString
+                                     scope:(iTermVariableScope *)scope {
     iTermParsedExpression *parsedExpression = [iTermExpressionParser parsedExpressionWithInterpolatedString:interpolatedString
                                                                                                       scope:scope];
     return [self initWithParsedExpression:parsedExpression
@@ -71,6 +92,8 @@
 }
 
 static NSMutableArray *iTermExpressionEvaluatorGlobalStore(void) {
+    ITBetaAssert(dispatch_queue_get_label(DISPATCH_CURRENT_QUEUE_LABEL) == dispatch_queue_get_label(dispatch_get_main_queue()),
+                 @"Expression evaluation should only occur on the main queue.");
     static NSMutableArray *array;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -377,7 +400,7 @@ static NSMutableArray *iTermExpressionEvaluatorGlobalStore(void) {
     NSString *message =
     [NSString stringWithFormat:@"Error evaluating expression %@: %@\n",
      invocation, error.localizedDescription];
-    [[iTermScriptHistoryEntry globalEntry] addOutput:message];
+    [[iTermScriptHistoryEntry globalEntry] addOutput:message completion:^{}];
 }
 
 @end

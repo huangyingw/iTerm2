@@ -9,6 +9,7 @@
 #import "VT100Token.h"
 
 #import "DebugLogging.h"
+#import "iTermAdvancedSettingsModel.h"
 #import "iTermMalloc.h"
 
 #include <stdlib.h>
@@ -26,7 +27,7 @@
     return [[[VT100Token alloc] init] autorelease];
 }
 
-+ (instancetype)tokenForControlCharacter:(unsigned char)controlCharacter {
++ (instancetype)newTokenForControlCharacter:(unsigned char)controlCharacter {
     VT100Token *token = [[VT100Token alloc] init];
     token->type = controlCharacter;
     return token;
@@ -104,6 +105,7 @@
                           @(VT100CSI_CUU):                    @"VT100CSI_CUU",
                           @(VT100CSI_DA):                     @"VT100CSI_DA",
                           @(VT100CSI_DA2):                    @"VT100CSI_DA2",
+                          @(VT100CSI_XDA):                    @"VT100CSI_XDA",
                           @(VT100CSI_DECALN):                 @"VT100CSI_DECALN",
                           @(VT100CSI_DECDHL):                 @"VT100CSI_DECDHL",
                           @(VT100CSI_DECDWL):                 @"VT100CSI_DECDWL",
@@ -144,6 +146,9 @@
                           @(VT100CSI_DECSLRM):                @"VT100CSI_DECSLRM",
                           @(VT100CSI_DECRQM_DEC):             @"VT100CSI_DECRQM_DEC",
                           @(VT100CSI_DECRQM_ANSI):            @"VT100CSI_DECRQM_ANSI",
+                          @(VT100CSI_PUSH_KEY_REPORTING_MODE):@"VT100CSI_PUSH_KEY_REPORTING_MODE",
+                          @(VT100CSI_POP_KEY_REPORTING_MODE): @"VT100CSI_POP_KEY_REPORTING_MODE",
+                          @(VT100CSI_QUERY_KEY_REPORTING_MODE):@"VT100CSI_QUERY_KEY_REPORTING_MODE",
                           @(XTERMCC_WIN_TITLE):               @"XTERMCC_WIN_TITLE",
                           @(XTERMCC_ICON_TITLE):              @"XTERMCC_ICON_TITLE",
                           @(XTERMCC_WINICON_TITLE):           @"XTERMCC_WINICON_TITLE",
@@ -199,7 +204,8 @@
                           @(DCS_TMUX_CODE_WRAP):              @"DCS_TMUX_CODE_WRAP",
                           @(VT100CSI_DECSLRM_OR_ANSICSI_SCP): @"VT100CSI_DECSLRM_OR_ANSICSI_SCP",
                           @(DCS_REQUEST_TERMCAP_TERMINFO):    @"DCS_REQUEST_TERMCAP_TERMINFO",
-                          @(DCS_SIXEL):                       @"DCS_SIXEL" };
+                          @(DCS_SIXEL):                       @"DCS_SIXEL",
+                          @(DCS_DECRQSS):                     @"DCS_DECRQSS" };
     NSString *name = map[@(type)];
     if (name) {
         return name;
@@ -231,7 +237,7 @@
 
 - (CSIParam *)csi {
     if (!_csi) {
-        _csi = calloc(sizeof(*_csi), 1);
+        _csi = iTermCalloc(sizeof(*_csi), 1);
     }
     return _csi;
 }
@@ -275,12 +281,13 @@
 - (void)preInitializeScreenChars {
     // TODO: Expand this beyond just ascii characters.
     if (_asciiData.length > kStaticScreenCharsCount) {
-        _screenChars.buffer = calloc(_asciiData.length, sizeof(screen_char_t));
+        _screenChars.buffer = iTermCalloc(_asciiData.length, sizeof(screen_char_t));
     } else {
         _screenChars.buffer = _screenChars.staticBuffer;
         memset(_screenChars.buffer, 0, _asciiData.length * sizeof(screen_char_t));
     }
-    for (int i = 0; i < _asciiData.length; i++) {
+    const NSInteger length = _asciiData.length;
+    for (NSInteger i = 0; i < length; i++) {
         _screenChars.buffer[i].code = _asciiData.buffer[i];
     }
     _screenChars.length = _asciiData.length;
@@ -295,7 +302,8 @@
             }
             break;
         case VT100CSI_DECSET:
-        case VT100CSI_DECRST: [self translateDECSETFromScreenTerminal];
+        case VT100CSI_DECRST:
+            [self translateDECSETFromScreenTerminal];
             break;
         default:
             break;
@@ -308,10 +316,14 @@
     for (int i = 0; i < self.csi->count; i++) {
         switch (self.csi->p[i]) {
             case 3:
-                self.csi->p[i] = 7;
+                if ([iTermAdvancedSettingsModel convertItalicsToReverseVideoForTmux]) {
+                    self.csi->p[i] = 7;
+                }
                 break;
             case 23:
-                self.csi->p[i] = 27;
+                if ([iTermAdvancedSettingsModel convertItalicsToReverseVideoForTmux]) {
+                    self.csi->p[i] = 27;
+                }
                 break;
         }
     }

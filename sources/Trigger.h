@@ -7,6 +7,8 @@
 
 #import <Cocoa/Cocoa.h>
 
+#import "iTermFocusReportingTextField.h"
+
 @class iTermStringLine;
 @class iTermVariableScope;
 @class PTYSession;
@@ -15,6 +17,7 @@ extern NSString * const kTriggerRegexKey;
 extern NSString * const kTriggerActionKey;
 extern NSString * const kTriggerParameterKey;
 extern NSString * const kTriggerPartialLineKey;
+extern NSString * const kTriggerDisabledKey;
 
 @interface Trigger : NSObject
 
@@ -22,6 +25,7 @@ extern NSString * const kTriggerPartialLineKey;
 @property (nonatomic, copy) NSString *action;
 @property (nonatomic, copy) id param;
 @property (nonatomic, assign) BOOL partialLine;
+@property (nonatomic, assign) BOOL disabled;
 // A non-cryptographic hash for content addressed triggers (helpful for letting serialized data
 // reference a trigger).
 @property (nonatomic, readonly) NSData *digest;
@@ -29,6 +33,7 @@ extern NSString * const kTriggerPartialLineKey;
 @property (nonatomic, retain) NSColor *backgroundColor;
 @property (nonatomic, readonly) BOOL instantTriggerCanFireMultipleTimesPerLine;
 
++ (NSSet<NSString *> *)synonyms;
 + (Trigger *)triggerFromDict:(NSDictionary *)dict;
 - (NSString *)action;
 // Subclasses should implement:
@@ -96,6 +101,6 @@ extern NSString * const kTriggerPartialLineKey;
 // Called before a trigger window opens.
 - (void)reloadData;
 
-- (id<NSTextFieldDelegate>)newParameterDelegateWithPassthrough:(id<NSTextFieldDelegate>)passthrough;
+- (id<iTermFocusReportingTextFieldDelegate>)newParameterDelegateWithPassthrough:(id<NSTextFieldDelegate>)passthrough;
 
 @end

@@ -32,6 +32,7 @@ NSString *const kLineBlockCLLKey = @"Cumulative Line Lengths";
 NSString *const kLineBlockIsPartialKey = @"Is Partial";
 NSString *const kLineBlockMetadataKey = @"Metadata";
 NSString *const kLineBlockMayHaveDWCKey = @"May Have Double Width Character";
+NSString *const kLineBlockGuid = @"GUID";
 
 static NSInteger LineBlockNextGeneration = -1;
 
@@ -109,9 +110,11 @@ struct iTermNumFullLinesCacheKeyHasher {
     std::unordered_map<iTermNumFullLinesCacheKey, int, iTermNumFullLinesCacheKeyHasher> _numberOfFullLinesCache;
 
     std::vector<void *> _observers;
+    NSString *_guid;
 }
 
 NS_INLINE void iTermLineBlockDidChange(__unsafe_unretained LineBlock *lineBlock) {
+    lineBlock->_generation += 1;
     for (auto &observer : lineBlock->_observers) {
         __unsafe_unretained id<iTermLineBlockObserver> obj = static_cast<id<iTermLineBlockObserver> >(observer);
         [obj lineBlockDidChange:lineBlock];
@@ -126,8 +129,7 @@ NS_INLINE void iTermLineBlockDidChange(__unsafe_unretained LineBlock *lineBlock)
     return self;
 }
 
-- (LineBlock*)initWithRawBufferSize:(int)size
-{
+- (LineBlock *)initWithRawBufferSize:(int)size {
     self = [super init];
     if (self) {
         raw_buffer = (screen_char_t*)iTermMalloc(sizeof(screen_char_t) * size);
@@ -150,9 +152,12 @@ NS_INLINE void iTermLineBlockDidChange(__unsafe_unretained LineBlock *lineBlock)
         }
     });
 
+    if (!_guid) {
+        _guid = [[[NSUUID UUID] UUIDString] retain];
+    }
     cached_numlines_width = -1;
     if (cll_capacity > 0) {
-        metadata_ = (LineBlockMetadata *)calloc(sizeof(LineBlockMetadata), cll_capacity);
+        metadata_ = (LineBlockMetadata *)iTermCalloc(sizeof(LineBlockMetadata), cll_capacity);
     }
 }
 
@@ -185,7 +190,11 @@ NS_INLINE void iTermLineBlockDidChange(__unsafe_unretained LineBlock *lineBlock)
         buffer_start = raw_buffer + [dictionary[kLineBlockBufferStartOffsetKey] intValue];
         start_offset = [dictionary[kLineBlockStartOffsetKey] intValue];
         first_entry = [dictionary[kLineBlockFirstEntryKey] intValue];
-
+        if (dictionary[kLineBlockGuid]) {
+            [_guid release];
+            _guid = [dictionary[kLineBlockGuid] copy];
+            DLog(@"Restore block %p with guid %@", self, _guid);
+        }
         NSArray *cllArray = dictionary[kLineBlockCLLKey];
         cll_capacity = [cllArray count];
         cumulative_line_lengths = (int*)iTermMalloc(sizeof(int) * cll_capacity);
@@ -233,6 +242,7 @@ NS_INLINE void iTermLineBlockDidChange(__unsafe_unretained LineBlock *lineBlock)
         }
         free(metadata_);
     }
+    [_guid release];
     [super dealloc];
 }
 
@@ -262,7 +272,8 @@ NS_INLINE void iTermLineBlockDidChange(__unsafe_unretained LineBlock *lineBlock)
     theCopy->is_partial = is_partial;
     theCopy->cached_numlines = cached_numlines;
     theCopy->cached_numlines_width = cached_numlines_width;
-
+    theCopy->_generation = _generation;
+    
     return theCopy;
 }
 
@@ -281,8 +292,8 @@ NS_INLINE void iTermLineBlockDidChange(__unsafe_unretained LineBlock *lineBlock)
     if (cll_entries == cll_capacity) {
         cll_capacity *= 2;
         cll_capacity = MAX(1, cll_capacity);
-        cumulative_line_lengths = (int*) realloc((void*) cumulative_line_lengths, cll_capacity * sizeof(int));
-        metadata_ = (LineBlockMetadata *)realloc((void *)metadata_, cll_capacity * sizeof(LineBlockMetadata));
+        cumulative_line_lengths = (int*) iTermRealloc((void*) cumulative_line_lengths, cll_capacity, sizeof(int));
+        metadata_ = (LineBlockMetadata *)iTermRealloc((void *)metadata_, cll_capacity, sizeof(LineBlockMetadata));
         if (gEnableDoubleWidthCharacterLineCache) {
             memset(metadata_ + cll_entries,
                    0,
@@ -401,7 +412,8 @@ extern "C" int iTermLineBlockNumberOfFullLinesImpl(screen_char_t *buffer,
         }
         return fullLines;
     } else {
-        return (length - 1) / width;
+        // Need to use max(0) because otherwise we get -1 for length=0 width=1.
+        return MAX(0, length - 1) / width;
     }
 }
 
@@ -449,7 +461,7 @@ extern "C" int iTermLineBlockNumberOfFullLinesImpl(screen_char_t *buffer,
     // but that stuff was erased and the EOL_SOFT was left behind.
     if (is_partial && !(!partial && length == 0)) {
         // append to an existing line
-        NSAssert(cll_entries > 0, @"is_partial but has no entries");
+        ITAssertWithMessage(cll_entries > 0, @"is_partial but has no entries");
         // update the numlines cache with the new number of full lines that the updated line has.
         if (width != cached_numlines_width) {
             cached_numlines_width = -1;
@@ -510,15 +522,29 @@ extern "C" int iTermLineBlockNumberOfFullLinesImpl(screen_char_t *buffer,
 {
     int length;
     int eol;
+    BOOL isStartOfWrappedLine = NO;
     screen_char_t* p = [self getWrappedLineWithWrapWidth:width
                                                  lineNum:lineNum
                                               lineLength:&length
                                        includesEndOfLine:&eol
                                                  yOffset:yOffsetPtr
-                                            continuation:NULL];
+                                            continuation:NULL
+                                    isStartOfWrappedLine:&isStartOfWrappedLine];
     if (!p) {
         return -1;
     } else {
+        if (length > 0 && (!isStartOfWrappedLine || x > 0)) {
+            *yOffsetPtr = 0;
+        } else if (length > 0 && isStartOfWrappedLine && x == 0) {
+            // First character of a line. For example, in this grid:
+            //   abc.
+            //   d...
+            // The cell after c has position 3, as does the cell with d. The difference is that
+            // d has a yOffset=1 and the null cell after c has yOffset=0.
+            //
+            // If you wanted the cell after c then x > 0.
+            *yOffsetPtr += 1;
+        }
         if (x >= length) {
             *extendsPtr = YES;
             return p - raw_buffer + length;
@@ -670,7 +696,8 @@ int OffsetOfWrappedLine(screen_char_t* p, int n, int length, int width, BOOL may
                                   lineLength:lineLength
                            includesEndOfLine:includesEndOfLine
                                      yOffset:NULL
-                                continuation:continuationPtr];
+                                continuation:continuationPtr
+                        isStartOfWrappedLine:NULL];
 }
 
 - (screen_char_t*)getWrappedLineWithWrapWidth:(int)width
@@ -679,19 +706,20 @@ int OffsetOfWrappedLine(screen_char_t* p, int n, int length, int width, BOOL may
                             includesEndOfLine:(int*)includesEndOfLine
                                       yOffset:(int*)yOffsetPtr
                                  continuation:(screen_char_t *)continuationPtr
-{
+                         isStartOfWrappedLine:(BOOL *)isStartOfWrappedLine {
     ITBetaAssert(*lineNum >= 0, @"Negative lines to getWrappedLineWithWrapWidth");
     int prev = 0;
     int numEmptyLines = 0;
     for (int i = first_entry; i < cll_entries; ++i) {
         int cll = cumulative_line_lengths[i] - start_offset;
         const int length = cll - prev;
-        if (length == 0) {
-            ++numEmptyLines;
-        } else {
-            numEmptyLines = 0;
+        if (*lineNum > 0) {
+            if (length == 0) {
+                ++numEmptyLines;
+            } else {
+                numEmptyLines = 0;
+            }
         }
-
         int spans;
         const BOOL useCache = gUseCachingNumberOfLines;
         if (useCache && _mayHaveDoubleWidthCharacter) {
@@ -765,6 +793,9 @@ int OffsetOfWrappedLine(screen_char_t* p, int n, int length, int width, BOOL may
                 *continuationPtr = metadata_[i].continuation;
                 continuationPtr->code = *includesEndOfLine;
             }
+            if (isStartOfWrappedLine) {
+                *isStartOfWrappedLine = (offset == 0);
+            }
             return buffer_start + prev + offset;
         }
         prev = cll;
@@ -802,13 +833,27 @@ int OffsetOfWrappedLine(screen_char_t* p, int n, int length, int width, BOOL may
     return count;
 }
 
-- (BOOL) hasCachedNumLinesForWidth: (int) width
-{
+- (BOOL) hasCachedNumLinesForWidth: (int) width {
     return cached_numlines_width == width;
 }
 
-- (BOOL)popLastLineInto:(screen_char_t**)ptr
-             withLength:(int*)length
+- (void)removeLastWrappedLines:(int)numberOfLinesToRemove
+                         width:(int)width {
+    for (int i = 0; i < numberOfLinesToRemove; i++) {
+        int length = 0;
+        const BOOL ok = [self popLastLineInto:nil
+                                   withLength:&length
+                                    upToWidth:width
+                                    timestamp:nil
+                                 continuation:nil];
+        if (!ok) {
+            return;
+        }
+    }
+}
+
+- (BOOL)popLastLineInto:(screen_char_t **)ptr
+             withLength:(int *)length
               upToWidth:(int)width
               timestamp:(NSTimeInterval *)timestampPtr
            continuation:(screen_char_t *)continuationPtr {
@@ -846,7 +891,9 @@ int OffsetOfWrappedLine(screen_char_t* p, int n, int length, int width, BOOL may
                                                     width,
                                                     _mayHaveDoubleWidthCharacter);
         *length = available_len - offset_from_start;
-        *ptr = buffer_start + start + offset_from_start;
+        if (ptr) {
+            *ptr = buffer_start + start + offset_from_start;
+        }
         cumulative_line_lengths[cll_entries - 1] -= *length;
         metadata_[cll_entries - 1].number_of_wrapped_lines = 0;
         if (gEnableDoubleWidthCharacterLineCache) {
@@ -858,7 +905,9 @@ int OffsetOfWrappedLine(screen_char_t* p, int n, int length, int width, BOOL may
     } else {
         // The last raw line is not longer than width. Return the whole thing.
         *length = available_len;
-        *ptr = buffer_start + start;
+        if (ptr) {
+            *ptr = buffer_start + start;
+        }
         --cll_entries;
         is_partial = NO;
     }
@@ -898,7 +947,7 @@ int OffsetOfWrappedLine(screen_char_t* p, int n, int length, int width, BOOL may
 
 - (int)getRawLineLength:(int)linenum
 {
-    NSAssert(linenum < cll_entries && linenum >= 0, @"Out of bounds");
+    ITAssertWithMessage(linenum < cll_entries && linenum >= 0, @"Out of bounds");
     int prev;
     if (linenum == 0) {
         prev = 0;
@@ -920,9 +969,9 @@ int OffsetOfWrappedLine(screen_char_t* p, int n, int length, int width, BOOL may
 }
 
 - (void)changeBufferSize:(int)capacity {
-    NSAssert(capacity >= [self rawSpaceUsed], @"Truncating used space");
+    ITAssertWithMessage(capacity >= [self rawSpaceUsed], @"Truncating used space");
     capacity = MAX(1, capacity);
-    raw_buffer = (screen_char_t*) realloc((void*) raw_buffer, sizeof(screen_char_t) * capacity);
+    raw_buffer = (screen_char_t*) iTermRealloc((void*) raw_buffer, sizeof(screen_char_t), capacity);
     buffer_start = raw_buffer + start_offset;
     buffer_size = capacity;
     cached_numlines_width = -1;
@@ -936,6 +985,14 @@ int OffsetOfWrappedLine(screen_char_t* p, int n, int length, int width, BOOL may
 - (BOOL)hasPartial
 {
     return is_partial;
+}
+
+- (void)setPartial:(BOOL)partial {
+    if (partial == is_partial) {
+        return;
+    }
+    is_partial = partial;
+    iTermLineBlockDidChange(self);
 }
 
 - (void)shrinkToFit
@@ -1452,6 +1509,7 @@ static int Search(NSString* needle,
 // Returns YES if the position is valid for this block.
 - (BOOL)convertPosition:(int)position
               withWidth:(int)width
+              wrapOnEOL:(BOOL)wrapOnEOL
                     toX:(int*)x
                     toY:(int*)y {
     if (width <= 0) {
@@ -1464,7 +1522,7 @@ static int Search(NSString* needle,
     for (i = first_entry; i < cll_entries; ++i) {
         int eol = cumulative_line_lengths[i];
         int line_length = eol - prev;
-        if (position >= eol) {
+        if ((wrapOnEOL && position >= eol) || (!wrapOnEOL && position > eol)) {
             // Get the number of full-width lines in the raw line. If there were
             // only single-width characters the formula would be:
             //     spans = (line_length - 1) / width;
@@ -1547,7 +1605,8 @@ static int Search(NSString* needle,
               kLineBlockCLLKey: [self cumulativeLineLengthsArray],
               kLineBlockIsPartialKey: @(is_partial),
               kLineBlockMetadataKey: [self metadataArray],
-              kLineBlockMayHaveDWCKey: @(_mayHaveDoubleWidthCharacter) };
+              kLineBlockMayHaveDWCKey: @(_mayHaveDoubleWidthCharacter),
+              kLineBlockGuid: _guid };
 }
 
 - (int)numberOfCharacters {
@@ -1590,6 +1649,12 @@ static int Search(NSString* needle,
     void *voidptr = static_cast<void *>(observer);
     auto it = std::find(_observers.begin(), _observers.end(), voidptr);
     return it != _observers.end();
+}
+
+#pragma mark - iTermUniquelyIdentifiable
+
+- (NSString *)stringUniqueIdentifier {
+    return _guid;
 }
 
 @end

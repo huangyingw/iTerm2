@@ -32,7 +32,7 @@
     self = [super init];
     if (self) {
         _pid = processInfo.processID;
-        _name = [processInfo.name copy];
+        _name = [(processInfo.argv0 ?: processInfo.name) copy];
         _children = [[processInfo.sortedChildren mapWithBlock:^id(iTermProcessInfo *anObject) {
             return [[iTermJobProxy alloc] initWithProcessInfo:anObject];
         }] mutableCopy];
@@ -101,6 +101,7 @@
         iTermJobProxy *job = [self->_outlineView itemAtRow:idx];
         pid_t pid = job.pid;
         if (pid) {
+            DLog(@"Send SIGKILL to %@", @(pid));
             kill(pid, SIGKILL);
         }
     }];

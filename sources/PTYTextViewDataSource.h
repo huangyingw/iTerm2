@@ -1,6 +1,7 @@
 // DataSource for PTYTextView.
 #import "iTermCursor.h"
 #import "iTermFindDriver.h"
+#import "iTermLogicalMovementHelper.h"
 #import "ScreenChar.h"
 #import "LineBuffer.h"
 #import "VT100GridTypes.h"
@@ -33,7 +34,7 @@
 @end
 
 
-@protocol PTYTextViewDataSource <iTermTextDataSource>
+@protocol PTYTextViewDataSource <iTermLogicalMovementHelperDelegate, iTermTextDataSource>
 
 - (VT100Terminal *)terminal;
 - (int)height;
@@ -89,7 +90,7 @@
 - (void)resetDirty;
 
 // Save the current state to a new frame in the dvr.
-- (void)saveToDvr;
+- (void)saveToDvr:(NSIndexSet *)cleanLines;
 
 // If this returns true then the textview will broadcast iTermTabContentsChanged
 // when a dirty char is found.
@@ -98,6 +99,8 @@
 // Smallest range that contains all dirty chars for a line at a screen location.
 // NOTE: y is a grid index and cannot refer to scrollback history.
 - (VT100GridRange)dirtyRangeForLine:(int)y;
+
+- (BOOL)textViewGetAndResetHasScrolled;
 
 // Returns the last modified date for a given line.
 - (NSDate *)timestampForLine:(int)y;
@@ -112,13 +115,8 @@
 - (NSArray *)charactersWithNotesOnLine:(int)line;
 - (VT100ScreenMark *)markOnLine:(int)line;
 
-// return -1 if none
-- (int)lineNumberOfMarkAfterLine:(int)line;
-
-// return -1 if none
-- (int)lineNumberOfMarkBeforeLine:(int)line;
-
 - (NSString *)workingDirectoryOnLine:(int)line;
+
 - (SCPPath *)scpPathForFile:(NSString *)filename onLine:(int)line;
 - (VT100RemoteHost *)remoteHostOnLine:(int)line;
 - (VT100GridCoordRange)textViewRangeOfOutputForCommandMark:(VT100ScreenMark *)mark;
@@ -133,5 +131,7 @@
 // returns a nonnil state if the saved grid was swapped in (only possible if useSavedGrid
 // is YES, of course).
 - (PTYTextViewSynchronousUpdateState *)setUseSavedGridIfAvailable:(BOOL)useSavedGrid;
+- (NSString *)compactLineDumpWithContinuationMarks;
+- (NSSet<NSString *> *)sgrCodesForChar:(screen_char_t)c;
 
 @end

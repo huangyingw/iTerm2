@@ -16,6 +16,21 @@
 #import "DebugLogging.h"
 #import "iTermAdvancedSettingsModel.h"
 
+static CGFloat RoundTowardZero(CGFloat value) {
+    if (value > 0) {
+        return floor(value);
+    } else {
+        return ceil(value);
+    }
+}
+
+static CGFloat RoundAwayFromZero(CGFloat value) {
+    if (value > 0) {
+        return ceil(value);
+    } else  {
+        return floor(value);
+    }
+}
 
 @implementation iTermScrollAccumulator {
     CGFloat _accumulatedDeltaY;
@@ -41,7 +56,18 @@
 
 // Get a delta Y out of the event with the most precision available and a consistent interpretation.
 - (CGFloat)adjustedDeltaYForEvent:(NSEvent *)event {
+    DLog(@"scrollingDeltaY=%@ deltaY=%@ lineHeight=%@ hasPreciseScrollingDeltas=%@ fastTrackpad=%@ _lineHeight=%@",
+         @(event.scrollingDeltaY),
+         @(event.deltaY),
+         @(_lineHeight),
+         @(event.hasPreciseScrollingDeltas),
+         @([iTermAdvancedSettingsModel fastTrackpad]),
+         @(_lineHeight));
     if (event.hasPreciseScrollingDeltas) {
+        if ([iTermAdvancedSettingsModel fastTrackpad]) {
+            // This is based on what Terminal.app does. See issue 9427.
+            return RoundAwayFromZero(event.deltaY);
+        }
         return event.scrollingDeltaY / _lineHeight;
     } else {
         return event.scrollingDeltaY;
@@ -78,10 +104,10 @@
     int roundDelta;
     
     // Deltas will be accumulated into _accumulatedDeltaY.
-    // If it is large (>1), return its integer part. This enables quick scroll, which feels like natural trackpad.
+    // If it is large (>=1), return its integer part. This enables quick scroll, which feels like natural trackpad.
     // If `delta * _accumulatedDeltaY < 0`, it means turnaround. Round delta to turn around quickly (fabs 0.5 is enough to move).
     // If it is not large enough, return 0 and keep accumulating.
-    if (absAccumulatedDelta > 1) {
+    if (absAccumulatedDelta >= 1) {
         roundDelta = RoundTowardZero(_accumulatedDeltaY);
         _accumulatedDeltaY -= roundDelta;
     } else if (delta * _accumulatedDeltaY < 0) {
@@ -104,14 +130,6 @@
 
 - (void)reset {
     _accumulatedDeltaY = 0;
-}
-
-static CGFloat RoundTowardZero(CGFloat value) {
-    if (value > 0) {
-        return floor(value);
-    } else {
-        return ceil(value);
-    }
 }
 
 - (CGFloat)legacyDeltaYForEvent:(NSEvent *)theEvent lineHeight:(CGFloat)lineHeight {

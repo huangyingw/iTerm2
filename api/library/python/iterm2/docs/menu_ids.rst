@@ -1,4 +1,6 @@
 
+:orphan:
+
 Menu Item Identifiers
 ---------------------
 
@@ -20,7 +22,6 @@ iTerm2 > Show Tip of the Day                                                    
 iTerm2 > Check For Updates…                                                             `Check For Updates…`                                                          
 iTerm2 > Toggle Debug Logging                                                           `Toggle Debug Logging`                                                        
 iTerm2 > Copy Performance Stats                                                         `Copy Performance Stats`                                                      
-iTerm2 > Profile CPU Usage                                                              `Profile CPU Usage`                                                           
 iTerm2 > Capture GPU Frame                                                              `Capture Metal Frame`                                                         
 iTerm2 > Preferences...                                                                 `Preferences...`                                                              
 iTerm2 > Hide iTerm2                                                                    `Hide iTerm2`                                                                 
@@ -52,6 +53,7 @@ Shell > tmux > Detach                                                           
 Shell > tmux > Force Detach                                                             `tmux.Force Detach`                                                           
 Shell > tmux > New Tmux Window                                                          `tmux.New Tmux Window`                                                        
 Shell > tmux > New Tmux Tab                                                             `tmux.New Tmux Tab`                                                           
+Shell > tmux > Pause Pane                                                               `trmux.Pause Pane`                                                            
 Shell > tmux > Dashboard                                                                `tmux.Dashboard`                                                              
 Shell > Page Setup...                                                                   `Page Setup...`                                                               
 Shell > Print > Screen                                                                  `Print.Screen`                                                                
@@ -62,6 +64,7 @@ Edit > Redo                                                                     
 Edit > Cut                                                                              `Cut`                                                                         
 Edit > Copy                                                                             `Copy`                                                                        
 Edit > Copy with Styles                                                                 `Copy with Styles`                                                            
+Edit > Copy with Control Sequences                                                      `Copy with Control Sequences`                                                 
 Edit > Copy Mode                                                                        `Copy Mode`                                                                   
 Edit > Paste                                                                            `Paste`                                                                       
 Edit > Paste Special > Advanced Paste…                                                  `Paste Special.Advanced Paste…`                                               
@@ -73,9 +76,11 @@ Edit > Paste Special > Paste Slowly Faster                                      
 Edit > Paste Special > Paste Slower                                                     `Paste Special.Paste Slower`                                                  
 Edit > Paste Special > Paste Slowly Slower                                              `Paste Special.Paste Slowly Slower`                                           
 Edit > Paste Special > Warn Before Multi-Line Paste                                     `Paste Special.Warn Before Multi-Line Paste`                                  
+Edit > Paste Special > Prompt to Convert Tabs to Spaces when Pasting                    `Paste Special.Prompt to Convert Tabs to Spaces when Pasting`                 
 Edit > Paste Special > Limit Multi-Line Paste Warning to Shell Prompt                   `Paste Special.Limit Multi-Line Paste Warning to Shell Prompt`                
 Edit > Paste Special > Warn Before Pasting One Line Ending in a Newline at Shell Prompt `Paste Special.Warn Before Pasting One Line Ending in a Newline at Shell Prompt`
 Edit > Open Selection                                                                   `Open Selection`                                                              
+Edit > Jump to Selection                                                                `Find.Jump to Selection`                                                      
 Edit > Select All                                                                       `Select All`                                                                  
 Edit > Selection Respects Soft Boundaries                                               `Selection Respects Soft Boundaries`                                          
 Edit > Select Output of Last Command                                                    `Select Output of Last Command`                                               
@@ -84,13 +89,15 @@ Edit > Find > Find...                                                           
 Edit > Find > Find Next                                                                 `Find.Find Next`                                                              
 Edit > Find > Find Previous                                                             `Find.Find Previous`                                                          
 Edit > Find > Use Selection for Find                                                    `Find.Use Selection for Find`                                                 
-Edit > Find > Jump to Selection                                                         `Find.Jump to Selection`                                                      
+Edit > Find > Find Globally...                                                          `Find.Find Globally...`                                                       
 Edit > Find > Find URLs                                                                 `Find.Find URLs`                                                              
 Edit > Marks and Annotations > Set Mark                                                 `Marks and Annotations.Set Mark`                                              
-Edit > Marks and Annotations > Add Annotation at Cursor                                 `Marks and Annotations.Add Annotation at Cursor`                              
 Edit > Marks and Annotations > Jump to Mark                                             `Marks and Annotations.Jump to Mark`                                          
-Edit > Marks and Annotations > Previous Mark/Annotation                                 `Marks and Annotations.Previous Mark or Annotation`                           
-Edit > Marks and Annotations > Next Mark/Annotation                                     `Marks and Annotations.Next Mark or Annotation`                               
+Edit > Marks and Annotations > Next Mark                                                `Marks and Annotations.Next Mark`                                             
+Edit > Marks and Annotations > Previous Mark                                            `Marks and Annotations.Previous Mark`                                         
+Edit > Marks and Annotations > Add Annotation at Cursor                                 `Marks and Annotations.Add Annotation at Cursor`                              
+Edit > Marks and Annotations > Next Annotation                                          `Marks and Annotations.Next  Annotation`                                      
+Edit > Marks and Annotations > Previous Annotation                                      `Marks and Annotations.Previous  Annotation`                                  
 Edit > Marks and Annotations > Alerts > Alert on Next Mark                              `Marks and Annotations.Alerts.Alert on Next Mark`                             
 Edit > Marks and Annotations > Alerts > Show Modal Alert Box                            `Marks and Annotations.Alerts.Show Modal Alert Box`                           
 Edit > Marks and Annotations > Alerts > Post Notification                               `Marks and Annotations.Alerts.Post Notification`                              
@@ -106,6 +113,7 @@ View > Show Cursor Guide                                                        
 View > Show Timestamps                                                                  `Show Timestamps`                                                             
 View > Show Annotations                                                                 `Show Annotations`                                                            
 View > Auto Command Completion                                                          `Auto Command Completion`                                                     
+View > Composer                                                                         `Composer`                                                                    
 View > Open Quickly                                                                     `Open Quickly`                                                                
 View > Maximize Active Pane                                                             `Maximize Active Pane`                                                        
 View > Make Text Bigger                                                                 `Make Text Bigger`                                                            
@@ -122,10 +130,10 @@ Session > Open Autocomplete…                                                  
 Session > Open Command History…                                                         `Open Command History…`                                                       
 Session > Open Recent Directories…                                                      `Open Recent Directories…`                                                    
 Session > Open Paste History…                                                           `Open Paste History…`                                                         
+Session > Add Trigger…                                                                  `Add Trigger`                                                                 
 Session > Reset                                                                         `Reset`                                                                       
 Session > Reset Character Set                                                           `Reset Character Set`                                                         
-Session > Log > Start                                                                   `Log.Start`                                                                   
-Session > Log > Stop                                                                    `Log.Stop`                                                                    
+Session > Log > Log to File                                                             `Log.Toggle`                                                                  
 Session > Log > Import Recording                                                        `Log.ImportRecording`                                                         
 Session > Log > Export Recording                                                        `Log.ExportRecording`                                                         
 Session > Log > Save Contents…                                                          `Log.SaveContents`                                                            
@@ -135,6 +143,11 @@ Session > Terminal State > Mouse Reporting                                      
 Session > Terminal State > Paste Bracketing                                             `Paste Bracketing`                                                            
 Session > Terminal State > Application Cursor                                           `Application Cursor`                                                          
 Session > Terminal State > Application Keypad                                           `Application Keypad`                                                          
+Session > Terminal State > Standard Key Reporting Mode                                  `Terminal State.Standard Key Reporting`                                       
+Session > Terminal State > modifyOtherKeys Mode 1                                       `Terminal State.Report Modifiers like xterm 1`                                
+Session > Terminal State > modifyOtherKeys Mode 2                                       `Terminal State.Report Modifiers like xterm 2`                                
+Session > Terminal State > CSI u Mode                                                   `Terminal State.Report Modifiers with CSI u`                                  
+Session > Terminal State > Raw Key Reporting Mode                                       `Terminal State.Raw Key Reporting`                                            
 Session > Terminal State > Reset                                                        `Reset Terminal State`                                                        
 Session > Bury Session                                                                  `Bury Session`                                                                
 Scripts > Manage > New Python Script                                                    `New Python Script`                                                           
@@ -154,10 +167,21 @@ Window > Minimize                                                               
 Window > Zoom                                                                           `Zoom`                                                                        
 Window > Edit Tab Title                                                                 `Edit Tab Title`                                                              
 Window > Edit Window Title                                                              `Edit Window Title`                                                           
+Window > Window Style > Normal                                                          `Window Style.Normal`                                                         
+Window > Window Style > Full Screen                                                     `Window Style.Full Screen`                                                    
+Window > Window Style > Maximized                                                       `Window Style.Maximized`                                                      
+Window > Window Style > No Title Bar                                                    `Window Style.No Title Bar`                                                   
+Window > Window Style > Full-Width Bottom of Screen                                     `Window Style.FullWidth Bottom of Screen`                                     
+Window > Window Style > Full-Width Top of Screen                                        `Window Style.FullWidth Top of Screen`                                        
+Window > Window Style > Full-Height Left of Screen                                      `Window Style..FullHeight Left of Screen`                                     
+Window > Window Style > Full-Height Right of Screen                                     `Window Style.FullHeight Right of Screen`                                     
+Window > Window Style > Bottom of Screen                                                `Window Style.Bottom of Screen`                                               
+Window > Window Style > Top of Screen                                                   `Window Style.Top of Screen`                                                  
+Window > Window Style > Left of Screen                                                  `Window Style.Left of Screen`                                                 
+Window > Window Style > Right of Screen                                                 `Window Style.Right of Screen`                                                
 Window > Merge All Windows                                                              `Merge All Windows`                                                           
 Window > Arrange Windows Horizontally                                                   `Arrange Windows Horizontally`                                                
 Window > Arrange Split Panes Evenly                                                     `Arrange Split Panes Evenly`                                                  
-Window > Exposé all Tabs                                                                `Exposé all Tabs`                                                             
 Window > Save Window Arrangement                                                        `Save Window Arrangement`                                                     
 Window > Save Current Window as Arrangement                                             `Save Current Window as Arrangement`                                          
 Window > Select Split Pane > Select Pane Above                                          `Select Split Pane.Select Pane Above`                                         

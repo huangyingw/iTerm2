@@ -13,7 +13,6 @@
 #import "iTermController.h"
 #import "iTermDynamicProfileManager.h"
 #import "iTermFlippedView.h"
-#import "iTermKeyBindingMgr.h"
 #import "iTermProfilePreferences.h"
 #import "iTermProfilePreferencesTabViewWrapperView.h"
 #import "iTermSavePanel.h"
@@ -151,7 +150,7 @@ NSString *const kProfileSessionHotkeyDidChange = @"kProfileSessionHotkeyDidChang
 
 #pragma mark - iTermPreferencesBaseViewController
 
-- (void)setPreferencePanel:(NSWindowController *)preferencePanel {
+- (void)setPreferencePanel:(NSWindowController<iTermPreferencePanelSizing> *)preferencePanel {
     for (iTermPreferencesBaseViewController *viewController in [self tabViewControllers]) {
         viewController.preferencePanel = preferencePanel;
     }
@@ -309,6 +308,16 @@ NSString *const kProfileSessionHotkeyDidChange = @"kProfileSessionHotkeyDidChang
     if (!self.view.window.attachedSheet) {
         [_tabView selectTabViewItem:_keysTab];
         [_keysViewController openHotKeyPanel:nil];
+    }
+}
+
+- (void)openToProfileWithGuid:(NSString *)guid {
+    self.scope = nil;
+    [_profilesListView reloadData];
+    if ([[self selectedProfile][KEY_GUID] isEqualToString:guid]) {
+        [self reloadProfileInProfileViewControllers];
+    } else {
+        [self selectGuid:guid];
     }
 }
 
@@ -493,7 +502,8 @@ andEditComponentWithIdentifier:(NSString *)identifier
     NSPoint windowTopLeft = NSMakePoint(NSMinX(window.frame), NSMaxY(window.frame));
     NSRect frame = [window frameRectForContentRect:NSMakeRect(windowTopLeft.x, 0, contentSize.width, contentSize.height)];
     frame.origin.y = windowTopLeft.y - frame.size.height;
-    frame.size.width = MAX(iTermSharedPreferencePanelWindowMinimumWidth, frame.size.width);
+    frame.size.width = MAX([self.preferencePanel preferencePanelMinimumWidth] ?: iTermPreferencePanelGetWindowMinimumWidth(NO),
+                           frame.size.width);
 
     if (NSEqualRects(_desiredFrame, frame)) {
         return;
@@ -532,6 +542,7 @@ andEditComponentWithIdentifier:(NSString *)identifier
     ProfileModel *model = [_delegate profilePreferencesModel];
 
     if (![ITAddressBookMgr canRemoveProfile:profile fromModel:model]) {
+        DLog(@"Beep: failed to remove profile");
         NSBeep();
     } else if ([self confirmProfileDeletion:profile]) {
         NSString *guid = profile[KEY_GUID];
@@ -578,7 +589,7 @@ andEditComponentWithIdentifier:(NSString *)identifier
         [newDict removeObjectForKey:KEY_BONJOUR_SERVICE_ADDRESS];
         newDict[KEY_COMMAND_LINE] = @"";
         newDict[KEY_INITIAL_TEXT] = @"";
-        newDict[KEY_CUSTOM_COMMAND] = @"No";
+        newDict[KEY_CUSTOM_COMMAND] = kProfilePreferenceCommandTypeLoginShellValue;
         newDict[KEY_WORKING_DIRECTORY] = @"";
         newDict[KEY_CUSTOM_DIRECTORY] = @"No";
     }
@@ -620,6 +631,9 @@ andEditComponentWithIdentifier:(NSString *)identifier
                                silenceable:kiTermWarningTypePermanentlySilenceable
                                     window:self.view.window] == kiTermWarningSelection1) {
         return;
+    }
+    if (destination.profileIsDynamic) {
+        [self showDynamicProfileWarning];
     }
 
     NSMutableDictionary* copyOfSource = [sourceProfile mutableCopy];
@@ -667,6 +681,7 @@ andEditComponentWithIdentifier:(NSString *)identifier
 {
     Profile* profile = [self selectedProfile];
     if (!profile) {
+        DLog(@"Beep: no profile selected");
         NSBeep();
         return;
     }
@@ -689,6 +704,7 @@ andEditComponentWithIdentifier:(NSString *)identifier
     Profile *origProfile = [self selectedProfile];
     NSString* guid = origProfile[KEY_GUID];
     if (!guid) {
+        DLog(@"Beep: no selected profile or guid");
         NSBeep();
         return;
     }
@@ -867,6 +883,7 @@ andEditComponentWithIdentifier:(NSString *)identifier
 - (IBAction)saveProfileAsJSON:(id)sender {
     NSDictionary* profile = [self selectedProfile];
     if (!profile) {
+        DLog(@"Beep: no profile selected");
         NSBeep();
         return;
     }
@@ -971,6 +988,9 @@ andEditComponentWithIdentifier:(NSString *)identifier
     }
     _needsWarning = YES;
     __weak __typeof(self) weakSelf = self;
+    if (viewController.delegate.profilePreferencesCurrentModel == [ProfileModel sessionsInstance]) {
+        return;
+    }
     dispatch_async(dispatch_get_main_queue(), ^{
         [weakSelf showWarningIfNeeded];
     });
@@ -981,7 +1001,10 @@ andEditComponentWithIdentifier:(NSString *)identifier
         return;
     }
     _needsWarning = NO;
-    
+    [self showDynamicProfileWarning];
+}
+
+- (void)showDynamicProfileWarning {
     Profile *profile = [self selectedProfile];
     NSString *guid = [NSString castFrom:[profile objectForKey:KEY_GUID]];
     if (!guid) {

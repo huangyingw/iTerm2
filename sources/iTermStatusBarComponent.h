@@ -7,6 +7,7 @@
 
 #import <Cocoa/Cocoa.h>
 
+#import "iTermActivityInfo.h"
 #import "iTermFindViewController.h"
 #import "iTermStatusBarComponentKnob.h"
 #import "iTermStatusBarLayoutAlgorithm.h"
@@ -25,7 +26,8 @@ static NSString *const iTermStatusBarSharedTextColorKey = @"shared text color";
 @class iTermVariableScope;
 
 @protocol iTermStatusBarComponentDelegate<NSObject>
-- (void)statusBarComponentKnobsDidChange:(id<iTermStatusBarComponent>)component;
+- (void)statusBarComponentKnobsDidChange:(id<iTermStatusBarComponent>)component
+                             updatedKeys:(NSSet<NSString *> *)updatedKeys;
 - (BOOL)statusBarComponentIsInSetupUI:(id<iTermStatusBarComponent>)component;
 - (void)statusBarComponentPreferredSizeDidChange:(id<iTermStatusBarComponent>)component;
 - (NSColor *)statusBarComponentDefaultTextColor;
@@ -35,9 +37,18 @@ static NSString *const iTermStatusBarSharedTextColorKey = @"shared text color";
 - (void)statusBarComponent:(id<iTermStatusBarComponent>)component writeString:(NSString *)string;
 - (void)statusBarComponentOpenStatusBarPreferences:(id<iTermStatusBarComponent>)component;
 - (void)statusBarComponentPerformAction:(iTermAction *)action;
+- (void)statusBarComponentEditActions:(id<iTermStatusBarComponent>)component;
+- (void)statusBarComponentEditSnippets:(id<iTermStatusBarComponent>)component;
+- (void)statusBarComponentResignFirstResponder:(id<iTermStatusBarComponent>)component;
+- (void)statusBarComponent:(id<iTermStatusBarComponent>)component
+      reportScriptingError:(NSError *)error
+forInvocation:(NSString *)invocation
+                    origin:(NSString *)origin;
+- (void)statusBarComponentComposerRevealComposer:(id<iTermStatusBarComponent>)component;
+- (iTermActivityInfo)statusBarComponentActivityInfo:(id<iTermStatusBarComponent>)component;
 @end
 
-@protocol iTermStatusBarComponentFactory<NSCoding, NSCopying, NSObject>
+@protocol iTermStatusBarComponentFactory<NSSecureCoding, NSCopying, NSObject>
 
 - (id<iTermStatusBarComponent>)newComponentWithKnobs:(NSDictionary *)knobs
                                      layoutAlgorithm:(iTermStatusBarLayoutAlgorithmSetting)layoutAlgorithm
@@ -81,6 +92,9 @@ static NSString *const iTermStatusBarSharedTextColorKey = @"shared text color";
 
 // Returns the minimum width in points of this component.
 - (CGFloat)statusBarComponentMinimumWidth;
+// Returns the maximum width in points of this component. If this is smaller than the minimum
+// width, the minimum width supersedes it.
+- (CGFloat)statusBarComponentMaximumWidth;
 
 // Returns the largest useful width of this component.
 - (CGFloat)statusBarComponentPreferredWidth;
@@ -134,7 +148,9 @@ static NSString *const iTermStatusBarSharedTextColorKey = @"shared text color";
 - (void)statusBarComponentDidMoveToWindow;
 
 - (BOOL)statusBarComponentHandlesClicks;
+- (BOOL)statusBarComponentHandlesMouseDown;
 - (void)statusBarComponentDidClickWithView:(NSView *)view;
 - (void)statusBarComponentMouseDownWithView:(NSView *)view;
+- (BOOL)statusBarComponentIsEmpty;
 
 @end

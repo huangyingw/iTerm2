@@ -16,6 +16,7 @@
 #import "iTermTuple.h"
 #import "iTermWarning.h"
 #import "NSArray+iTerm.h"
+#import "NSFileManager+iTerm.h"
 #import "NSStringITerm.h"
 #import "NSTextField+iTerm.h"
 
@@ -38,6 +39,9 @@
 }
 
 + (instancetype)sharedInstance {
+    if (![[NSFileManager defaultManager] homeDirectoryDotDir]) {
+        return nil;
+    }
     static id instance;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -292,12 +296,14 @@
     if (selection == kiTermWarningSelection1) {
         return;
     }
+    // Escape the path to pip3 because it gets evaluated as a swifty string.
     [[iTermController sharedInstance] openSingleUseWindowWithCommand:pip3
                                                            arguments:arguments
                                                               inject:nil
                                                          environment:nil
                                                                  pwd:nil
-                                                             options:0
+                                                             options:iTermSingleUseWindowOptionsCommandNotSwiftyString
+                                                      didMakeSession:nil
                                                           completion:^{
                                                               completion();
                                                           }];

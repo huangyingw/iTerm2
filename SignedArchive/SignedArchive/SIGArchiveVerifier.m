@@ -9,6 +9,7 @@
 #import "SIGArchiveVerifier.h"
 
 #import "SIGArchiveChunk.h"
+#import "SIGArchiveCommon.h"
 #import "SIGArchiveReader.h"
 #import "SIGCertificate.h"
 #import "SIGError.h"
@@ -18,16 +19,27 @@
 #import "SIGTrust.h"
 #import "SIGVerificationAlgorithm.h"
 
-static NSInteger SIGArchiveVerifiedHighestSupportedVersion = 1;
+static NSInteger SIGArchiveVerifiedHighestSupportedVersion = 2;
+
+#if ENABLE_SIGARCHIVE_MIGRATION_VALIDATION
 static NSInteger SIGArchiveVerifiedLowestSupportedVersion = 1;
+#else
+static NSInteger SIGArchiveVerifiedLowestSupportedVersion = 2;
+#endif
 
 @implementation SIGArchiveVerifier {
     SIGArchiveReader *_reader;
     NSError *_readerLoadError;
     SIGTrust *_trust;
     NSInputStream *_payloadInputStream;
+    NSInputStream *_payload2InputStream;
     NSArray<SIGCertificate *> *_certificates;
+
+#if ENABLE_SIGARCHIVE_MIGRATION_VALIDATION
     NSData *_signatureData;
+#endif
+
+    NSData *_signature2Data;
     BOOL _called;
     BOOL _prepared;
 }
@@ -36,6 +48,11 @@ static NSInteger SIGArchiveVerifiedLowestSupportedVersion = 1;
     self = [super init];
     if (self) {
         _url = url;
+#if ENABLE_SIGARCHIVE_MIGRATION_VALIDATION
+        _minimumVersion = 1;
+#else
+        _minimumVersion = 2;
+#endif
     }
     return self;
 }
@@ -160,24 +177,40 @@ static NSInteger SIGArchiveVerifiedLowestSupportedVersion = 1;
 
 #pragma mark - Private
 
-- (NSDictionary<NSString *, NSString *> *)metadataDictionaryFromString:(NSString *)metadata {
+- (NSDictionary<NSString *, NSString *> *)metadataDictionaryFromString:(NSString *)metadata
+                                                                 error:(out NSError **)error {
     NSMutableDictionary *dictionary = [NSMutableDictionary dictionary];
     NSArray<NSString *> *rows = [metadata componentsSeparatedByString:@"\n"];
+    NSArray<NSString *> *knownKeys = SIGArchiveGetKnownKeys();
+
     for (NSString *row in rows) {
         NSInteger index = [row rangeOfString:@"="].location;
         if (index == NSNotFound) {
             continue;
         }
         NSString *key = [row substringToIndex:index];
-        NSString *value = [row substringFromIndex:index + 1];
+        if (![knownKeys containsObject:key]) {
+            continue;
+        }
+        if (dictionary[key]) {
+            if (error) {
+                *error = [SIGError errorWithCode:SIGErrorCodeMalformedMetadata];
+            }
+            return nil;
+        }
+        NSString *value = [row substringFromIndex:SIGAddNonnegativeInt64s(index, 1)];
         dictionary[key] = value;
     }
     return dictionary;
 }
 
 - (BOOL)verifyMetadata:(NSString *)metadata error:(out NSError **)error {
-    NSDictionary *const dictionary = [self metadataDictionaryFromString:metadata];
-    NSString *const versionString = dictionary[@"version"];
+    NSDictionary *const dictionary = [self metadataDictionaryFromString:metadata
+                                                                  error:error];
+    if (!dictionary) {
+        return NO;
+    }
+    NSString *const versionString = dictionary[SIGArchiveMetadataKeyVersion];
     if (!versionString) {
         if (error) {
             *error = [SIGError errorWithCode:SIGErrorCodeMalformedMetadata];
@@ -191,14 +224,14 @@ static NSInteger SIGArchiveVerifiedLowestSupportedVersion = 1;
         }
         return NO;
     }
-    if (version < SIGArchiveVerifiedLowestSupportedVersion) {
+    if (version < SIGArchiveVerifiedLowestSupportedVersion || version < _minimumVersion) {
         if (error) {
-            *error = [SIGError errorWithCode:SIGErrorCodeMalformedMetadata];
+            *error = [SIGError errorWithCode:SIGErrorCodeDeprecatedOldVersion];
         }
         return NO;
     }
-    
-    NSString *const digestType = dictionary[@"digest-type"];
+
+    NSString *const digestType = dictionary[SIGArchiveMetadataKeyDigestType];
     if (!digestType) {
         if (error) {
             *error = [SIGError errorWithCode:SIGErrorCodeMalformedMetadata];
@@ -245,14 +278,30 @@ static NSInteger SIGArchiveVerifiedLowestSupportedVersion = 1;
         return NO;
     }
     
-    _payloadInputStream = [_reader payloadInputStream:error];
-    if (!_payloadInputStream) {
-        return NO;
+    _signature2Data = [_reader signature2:error];
+#if ENABLE_SIGARCHIVE_MIGRATION_VALIDATION
+    if (!_signature2Data) {
+        _signatureData = [_reader signature:error];
+        if (!_signatureData) {
+            return NO;
+        }
     }
+#endif
 
-    _signatureData = [_reader signature:error];
-    if (!_signatureData) {
+    if (_signature2Data) {
+        _payload2InputStream = [_reader payload2InputStream:error];
+        if (!_payload2InputStream) {
+            return NO;
+        }
+    } else {
+#if ENABLE_SIGARCHIVE_MIGRATION_VALIDATION
+        _payloadInputStream = [_reader payloadInputStream:error];
+        if (!_payloadInputStream) {
+            return NO;
+        }
+#else
         return NO;
+#endif
     }
 
     NSArray<NSData *> *certificateDatas = [_reader signingCertificates:error];
@@ -306,10 +355,23 @@ static NSInteger SIGArchiveVerifiedLowestSupportedVersion = 1;
     if (!algorithm) {
         return NO;
     }
+    if (_signature2Data) {
+        return [algorithm verifyInputStream:_payload2InputStream
+                              signatureData:_signature2Data
+                                  publicKey:_certificates.firstObject.publicKey.secKey
+                                      error:error];
+    }
+#if ENABLE_SIGARCHIVE_MIGRATION_VALIDATION
     return [algorithm verifyInputStream:_payloadInputStream
                           signatureData:_signatureData
                               publicKey:_certificates.firstObject.publicKey.secKey
                                   error:error];
+#else
+    if (error) {
+        *error = [SIGError errorWithCode:SIGErrorCodeNoSignature];
+    }
+    return NO;
+#endif
 }
 
 - (SIGArchiveReader *)reader {

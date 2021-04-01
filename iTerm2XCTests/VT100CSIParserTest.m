@@ -251,7 +251,11 @@
         // '| not supported (Request Locator Position (DECRQLP))
         // '} not supported (Insert P s Column(s) (default = 1) (DECIC), VT420 and up)
         // '~ not supported (Delete P s Column(s) (default = 1) (DECDC), VT420 and up)
-        { 0, '#', '|', VT100CSI_XTREPORTSGR, 1, 1, 1, 1 }
+        { 0, '#', '|', VT100CSI_XTREPORTSGR, 1, 1, 1, 1 },
+        { '>', 0, 'q', VT100CSI_XDA, 0, -1, -1, -1},
+        { '>', 1, 'u', VT100CSI_PUSH_KEY_REPORTING_MODE, 1, -1, -1, -1 },
+        { '<', 0, 'u', VT100CSI_POP_KEY_REPORTING_MODE, -1, -1, -1, -1 },
+        { '?', 0, 'u', VT100CSI_QUERY_KEY_REPORTING_MODE, -1, -1, -1, -1 }
     };
 
     const int n = sizeof(simpleCodes) / sizeof(*simpleCodes);
@@ -374,6 +378,11 @@
         XCTAssert(token->type == codes[i].type);
         XCTAssert(token.csi->p[0] == codes[i].p0);
     }
+}
+
+- (void)testParameterOverflow {
+    VT100Token *token = [self tokenForDataWithFormat:@"%c[9999999999m", VT100CC_ESC];
+    XCTAssert(token->type == VT100_UNKNOWNCHAR);
 }
 
 @end

@@ -1,3 +1,5 @@
+:orphan:
+
 Running a Script
 ================
 
@@ -59,9 +61,11 @@ a minimum, install the `iterm2` module.
 .. note::
 
     iTerm2 creates the `ApplicationSupport` symlink to `Application
-    Support` because shell scripts may not have spaces in their paths.
+    Support` because shell scripts may not have spaces in their paths
+    and the `pip` utiltiy does not work correctly in directories with
+    spaces.
 
-If you'd like your script to launch iTerm2, you'll need to use pybobjc. To install it:
+If you'd like your script to launch iTerm2, you'll need to use pyobjc. To install it:
 
 .. code-block:: bash
 
@@ -76,9 +80,30 @@ Then put this in your script:
     if not AppKit.NSRunningApplication.runningApplicationsWithBundleIdentifier_(bundle):
         AppKit.NSWorkspace.sharedWorkspace().launchApplication_("iTerm")
 
+Note that the `iterm2` module includes `pyobjc` (which vends `AppKit`) as a dependency, so
+you don't need to install it separately.
+
 The `iterm2.run_forever` or `iterm2.run_until_complete` call will block until
 it is able to make a connection, so you don't need to add any logic that waits
 for the launch to complete. Just try to connect right away.
+
+When you run a script from the command line on iTerm2 version 3.3.9 or later you will
+be prompted for permission. This is a security measure to ensure that scripts not launched
+by iTerm2 are not being run without your knowledge. The purpose is to prevent untrusted
+code, such as Javascript that's able to escape a web browser's sandbox, from silently
+gaining access to your terminal.
+
+To circumvent the dialog, use the `it2run` script provided in
+`iTerm.app/Resources/it2run` to launch it. The `it2run` script uses
+`osascript` to ask iTerm2 to launch your Python script. macOS will ask for a
+one-time grant of permission for `osascript` to control iTerm2.
+
+You may also pass command line arguments to it2run that get forwarded to the script.
+For example:
+
+```
+/Applications/iTerm.app/Contents/Resources/it2run myscript.py firstarg secondarg thirdarg
+```
 
 
 Auto-Run Scripts
